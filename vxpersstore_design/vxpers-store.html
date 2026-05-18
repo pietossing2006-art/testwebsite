@@ -1,0 +1,743 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vxpers Store | KeyForge - Instant Game Keys</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: oklch(8% 0.02 250);
+            --surface: oklch(15% 0.04 250 / 0.6);
+            --surface-bright: oklch(22% 0.05 250 / 0.8);
+            --fg: oklch(95% 0.01 250);
+            --muted: oklch(60% 0.05 250);
+            --border: oklch(30% 0.08 250 / 0.5);
+            --accent: oklch(70% 0.25 240);
+            --accent-alt: oklch(65% 0.3 300);
+            --glow: oklch(70% 0.25 240 / 0.3);
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--fg);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            margin: 0;
+        }
+
+        .crt-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+            z-index: 100;
+            opacity: 0.15;
+        }
+
+        .glass {
+            background: var(--surface);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+        }
+
+        .neon-text {
+            text-shadow: 0 0 10px var(--glow), 0 0 20px var(--glow);
+        }
+
+        .neon-border {
+            box-shadow: 0 0 15px var(--glow);
+        }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+
+        .scanline {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100px;
+            background: linear-gradient(to bottom, transparent, rgba(0, 191, 255, 0.05), transparent);
+            animation: scanline 8s linear infinite;
+            pointer-events: none;
+        }
+
+        /* Hero Sequence Animations */
+        @keyframes crt-on {
+            0% { transform: scaleY(0.005) scaleX(0); opacity: 0; }
+            50% { transform: scaleY(0.005) scaleX(1); opacity: 1; }
+            100% { transform: scaleY(1) scaleX(1); opacity: 1; }
+        }
+
+        .hero-sequence-container {
+            animation: crt-on 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        @keyframes pulse-cyan {
+            0% { box-shadow: 0 0 0 0 oklch(70% 0.25 240 / 0.4); }
+            70% { box-shadow: 0 0 0 10px oklch(70% 0.25 240 / 0); }
+            100% { box-shadow: 0 0 0 0 oklch(70% 0.25 240 / 0); }
+        }
+
+        .btn-pulse {
+            animation: pulse-cyan 2s infinite;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <div class="crt-overlay"></div>
+
+    <!-- UI Components -->
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- MOCK DATA ---
+        const GAMES = [
+            { id: 1, title: "Cyberpunk 2077: Phantom Liberty", platform: "Steam", region: "Global", price: 29.99, oldPrice: 59.99, discount: 50, category: "RPG", rating: 4.8, stock: "In Stock", image: "https://images.unsplash.com/photo-1605898835373-02f741d58300?auto=format&fit=crop&q=80&w=800" },
+            { id: 2, title: "Elden Ring: Shadow of the Erdtree", platform: "Steam", region: "Global", price: 34.50, oldPrice: 39.99, discount: 15, category: "Action", rating: 4.9, stock: "In Stock", image: "https://images.unsplash.com/photo-1614732414444-096e5f1122d5?auto=format&fit=crop&q=80&w=800" },
+            { id: 3, title: "Modern Warfare III", platform: "Battle.net", region: "Global", price: 45.00, oldPrice: 69.99, discount: 35, category: "Shooter", rating: 4.5, stock: "In Stock", image: "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&q=80&w=800" },
+            { id: 4, title: "Steam Gift Card $50", platform: "Steam", region: "US", price: 48.99, oldPrice: 50.00, discount: 2, category: "Gift Card", rating: 5.0, stock: "Instant", image: "https://images.unsplash.com/photo-1612036782180-6f0b6cd846fe?auto=format&fit=crop&q=80&w=800" },
+            { id: 5, title: "Final Fantasy VII Rebirth", platform: "PS5", region: "Global", price: 55.99, oldPrice: 69.99, discount: 20, category: "RPG", rating: 4.9, stock: "In Stock", image: "https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800" },
+            { id: 6, title: "The Last of Us Part II Remastered", platform: "PS5", region: "Global", price: 39.99, oldPrice: 49.99, discount: 20, category: "Action", rating: 4.7, stock: "In Stock", image: "https://images.unsplash.com/photo-1593305841991-05c297ba4575?auto=format&fit=crop&q=80&w=800" },
+        ];
+
+        // --- COMPONENTS ---
+
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const icons = {
+                search: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>,
+                cart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>,
+                user: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
+                menu: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>,
+                check: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12"></polyline></svg>,
+                chevronRight: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="9 18 15 12 9 6"></polyline></svg>,
+                star: <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>,
+                shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>,
+                zap: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>,
+                key: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3L15.5 7.5z"></path></svg>,
+                trend: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>,
+            };
+            return icons[name] || null;
+        };
+
+        const Button = ({ children, variant = "primary", className = "", pulse = false, ...props }) => {
+            const variants = {
+                primary: "bg-cyan-500 hover:bg-cyan-400 text-black font-bold neon-border",
+                secondary: "bg-purple-600 hover:bg-purple-500 text-white font-bold",
+                outline: "border border-cyan-500/50 hover:border-cyan-400 text-cyan-400 font-medium",
+                ghost: "hover:bg-white/10 text-white",
+            };
+            return (
+                <button className={`px-6 py-3 rounded-md transition-all duration-300 flex items-center justify-center gap-2 ${variants[variant]} ${pulse ? 'btn-pulse' : ''} ${className}`} {...props}>
+                    {children}
+                </button>
+            );
+        };
+
+        const Card = ({ children, className = "" }) => (
+            <div className={`glass rounded-xl overflow-hidden group transition-all duration-500 hover:-translate-y-2 hover:border-cyan-500/50 ${className}`}>
+                {children}
+            </div>
+        );
+
+        // --- VIEWS ---
+
+        const HeroSequence = ({ onFinish }) => {
+            const [step, setStep] = useState(0);
+
+            useEffect(() => {
+                const timer1 = setTimeout(() => setStep(1), 1000); 
+                const timer2 = setTimeout(() => setStep(2), 2500); 
+                const timer3 = setTimeout(() => setStep(3), 4500); 
+                const timer4 = setTimeout(() => setStep(4), 6500); 
+                return () => { clearTimeout(timer1); clearTimeout(timer2); clearTimeout(timer3); clearTimeout(timer4); };
+            }, []);
+
+            return (
+                <div className="relative w-full h-[80vh] bg-black flex items-center justify-center overflow-hidden">
+                    <div className="absolute inset-0 scanline"></div>
+                    
+                    {step === 0 && (
+                        <div className="text-cyan-500 font-mono text-xl animate-pulse uppercase tracking-widest">System Booting...</div>
+                    )}
+
+                    {step === 1 && (
+                        <div className="flex flex-col items-center">
+                            <div className="w-32 h-32 text-cyan-400 animate-bounce">
+                                <Icon name="key" size={128} />
+                            </div>
+                            <div className="mt-4 font-mono text-cyan-300 tracking-[0.3em] uppercase italic">Forging Your Key</div>
+                        </div>
+                    )}
+
+                    {step === 2 && (
+                        <div className="relative w-full h-full flex items-center justify-center">
+                            {[1,2,3,4,5].map(i => (
+                                <div key={i} className={`absolute glass p-4 w-48 h-64 border-cyan-500/20 opacity-40 transition-all duration-1000`}
+                                     style={{ transform: `rotate(${i*15-45}deg) translate(${i*100-300}px, ${Math.sin(i)*50}px)` }}>
+                                    <div className="w-full h-32 bg-white/5 rounded"></div>
+                                    <div className="mt-2 h-4 w-3/4 bg-white/10 rounded"></div>
+                                    <div className="mt-2 h-4 w-1/2 bg-cyan-500/20 rounded"></div>
+                                </div>
+                            ))}
+                            <div className="z-10 text-4xl font-black neon-text italic uppercase">UNLIMITED MARKETPLACE</div>
+                        </div>
+                    )}
+
+                    {step === 3 && (
+                        <div className="flex flex-col items-center gap-8">
+                            <div className="flex gap-4 items-center">
+                                <div className="p-4 glass rounded-full"><Icon name="search" size={32} /></div>
+                                <div className="w-16 h-[2px] bg-cyan-500"></div>
+                                <div className="p-4 glass rounded-full text-cyan-400"><Icon name="cart" size={32} /></div>
+                                <div className="w-16 h-[2px] bg-cyan-500"></div>
+                                <div className="p-4 glass rounded-full text-green-400"><Icon name="check" size={32} /></div>
+                            </div>
+                            <div className="text-3xl font-mono tracking-widest text-green-400 uppercase italic">INSTANT DELIVERY SECURED</div>
+                        </div>
+                    )}
+
+                    {step === 4 && (
+                        <div className="text-center animate-fade-in px-4">
+                            <h1 className="text-6xl md:text-8xl font-black mb-6 tracking-tighter neon-text leading-tight uppercase italic">
+                                UNLOCK YOUR<br/>NEXT GAME <span className="text-cyan-400">INSTANTLY</span>
+                            </h1>
+                            <p className="text-xl text-gray-400 mb-10 max-w-2xl mx-auto">
+                                Buy verified digital keys, gift cards, and software at the best prices. Global delivery. Secure payment. Gamer-focused.
+                            </p>
+                            <div className="flex flex-wrap justify-center gap-6">
+                                <Button className="text-lg px-10 py-5 uppercase" pulse={true} onClick={onFinish}>BROWSE DEALS</Button>
+                                <Button variant="outline" className="text-lg px-10 py-5 uppercase" onClick={onFinish}>BEST SELLERS</Button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [view, setView] = useState('home'); 
+            const [cart, setCart] = useState([]);
+            const [user, setUser] = useState(null);
+            const [searchQuery, setSearchQuery] = useState("");
+
+            const addToCart = (game) => {
+                setCart([...cart, game]);
+            };
+
+            const navigate = (newView) => {
+                setView(newView);
+                window.scrollTo(0, 0);
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <nav className="sticky top-0 z-50 glass border-b border-white/5 py-4 px-6 md:px-12 flex items-center justify-between">
+                        <div className="flex items-center gap-12">
+                            <div className="text-2xl font-black tracking-tighter cursor-pointer flex items-center gap-2 group" onClick={() => navigate('home')}>
+                                <div className="w-8 h-8 bg-cyan-500 rounded-sm rotate-45 group-hover:rotate-180 transition-transform duration-700"></div>
+                                <span className="neon-text uppercase italic">VXPERS <span className="text-cyan-400">STORE</span></span>
+                            </div>
+                            <div className="hidden lg:flex items-center gap-8 text-sm font-medium text-gray-400">
+                                <span className="hover:text-cyan-400 cursor-pointer transition-colors uppercase" onClick={() => navigate('store')}>Store</span>
+                                <span className="hover:text-cyan-400 cursor-pointer transition-colors uppercase" onClick={() => navigate('store')}>Deals</span>
+                                <span className="hover:text-cyan-400 cursor-pointer transition-colors uppercase" onClick={() => navigate('admin')}>Admin</span>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 max-w-xl mx-12 hidden md:block">
+                            <div className="relative group">
+                                <Icon name="search" className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-cyan-400 transition-colors" />
+                                <input 
+                                    type="text" 
+                                    placeholder="Search games, keys, software..."
+                                    className="w-full bg-black/40 border border-white/10 rounded-full py-2.5 pl-12 pr-6 outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 transition-all"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-6">
+                            <div className="relative cursor-pointer hover:text-cyan-400 transition-colors" onClick={() => navigate('cart')}>
+                                <Icon name="cart" />
+                                {cart.length > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-[10px] w-4 h-4 flex items-center justify-center rounded-full font-bold">{cart.length}</span>}
+                            </div>
+                            <div className="cursor-pointer hover:text-cyan-400 transition-colors" onClick={() => navigate(user ? 'dashboard' : 'auth')}>
+                                <Icon name="user" />
+                            </div>
+                        </div>
+                    </nav>
+
+                    <main className="flex-1">
+                        {view === 'home' && <HomeView onBrowse={() => setView('store')} onGameClick={() => setView('product')} addToCart={addToCart} />}
+                        {view === 'store' && <StoreView onGameClick={() => setView('product')} addToCart={addToCart} />}
+                        {view === 'product' && <ProductView addToCart={addToCart} onBuyNow={() => { addToCart(GAMES[0]); setView('cart'); }} />}
+                        {view === 'cart' && <CartView cart={cart} onCheckout={() => setView('checkout')} />}
+                        {view === 'checkout' && <CheckoutView onComplete={() => setView('dashboard')} />}
+                        {view === 'auth' && <AuthView onLogin={() => { setUser({ name: 'Gamer' }); setView('dashboard'); }} />}
+                        {view === 'dashboard' && <DashboardView user={user} />}
+                        {view === 'admin' && <AdminView />}
+                    </main>
+
+                    <footer className="bg-black/60 border-t border-white/5 py-16 px-6 md:px-12 mt-20">
+                        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-12">
+                            <div className="col-span-1 md:col-span-1">
+                                <div className="text-xl font-black tracking-tighter mb-6 uppercase italic">VXPERS STORE</div>
+                                <p className="text-gray-500 text-sm leading-relaxed mb-6">
+                                    The ultimate destination for gamers looking for premium keys, instant delivery, and the best market prices.
+                                </p>
+                                <div className="flex gap-4">
+                                    {[1,2,3,4].map(i => <div key={i} className="w-8 h-8 rounded-full bg-white/5 hover:bg-cyan-500/20 transition-colors cursor-pointer"></div>)}
+                                </div>
+                            </div>
+                            <div>
+                                <h4 className="font-bold mb-6 text-sm uppercase tracking-widest text-cyan-400">Store</h4>
+                                <ul className="space-y-4 text-sm text-gray-500">
+                                    <li className="hover:text-white cursor-pointer transition-colors">Hot Deals</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">New Releases</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Best Sellers</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Gift Cards</li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h4 className="font-bold mb-6 text-sm uppercase tracking-widest text-cyan-400">Support</h4>
+                                <ul className="space-y-4 text-sm text-gray-500">
+                                    <li className="hover:text-white cursor-pointer transition-colors">FAQ</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Refund Policy</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Order Tracking</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Contact Us</li>
+                                </ul>
+                            </div>
+                            <div>
+                                <h4 className="font-bold mb-6 text-sm uppercase tracking-widest text-cyan-400">Legal</h4>
+                                <ul className="space-y-4 text-sm text-gray-500">
+                                    <li className="hover:text-white cursor-pointer transition-colors">Terms of Service</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Privacy Policy</li>
+                                    <li className="hover:text-white cursor-pointer transition-colors">Cookie Policy</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div className="max-w-7xl mx-auto border-t border-white/5 mt-16 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-gray-600">
+                            <div>&copy; 2026 VXPERS STORE. All Rights Reserved.</div>
+                            <div className="flex gap-6">
+                                <span>English (US)</span>
+                                <span>USD ($)</span>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const AdminView = () => {
+            return (
+                <div className="max-w-7xl mx-auto px-6 py-12">
+                    <div className="flex items-center justify-between mb-12">
+                        <h2 className="text-3xl font-black italic uppercase neon-text">Terminal Admin</h2>
+                        <div className="flex gap-4">
+                            <Button className="px-4 py-2 text-xs uppercase">+ Add Product</Button>
+                            <Button variant="outline" className="px-4 py-2 text-xs uppercase">Refresh Stack</Button>
+                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
+                        {[
+                            { l: 'Total Sales', v: '$128,450', d: '+12.5%' },
+                            { l: 'Orders Today', v: '482', d: '+5.2%' },
+                            { l: 'Pending Support', v: '12', d: '-2' },
+                            { l: 'Active Stock', v: '1,240 Keys', d: 'Stable' }
+                        ].map(s => (
+                            <div key={s.l} className="glass p-6 rounded-xl">
+                                <div className="text-[10px] uppercase font-bold text-gray-500 mb-2">{s.l}</div>
+                                <div className="text-2xl font-black text-cyan-400">{s.v}</div>
+                                <div className="text-[10px] text-green-400 mt-2">{s.d}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="glass rounded-xl overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                            <thead className="bg-white/5 border-b border-white/10">
+                                <tr>
+                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-gray-500">Order ID</th>
+                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-gray-500">Product</th>
+                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-gray-500">Customer</th>
+                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-gray-500">Price</th>
+                                    <th className="p-4 font-bold uppercase tracking-widest text-[10px] text-gray-500">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                                {[1,2,3,4,5].map(i => (
+                                    <tr key={i} className="hover:bg-white/5 transition-colors">
+                                        <td className="p-4 font-mono text-cyan-500">#VX-1029{i}</td>
+                                        <td className="p-4">Cyberpunk 2077</td>
+                                        <td className="p-4">gamer_elite_{i}@mail.com</td>
+                                        <td className="p-4 font-bold">$29.99</td>
+                                        <td className="p-4"><span className="bg-green-500/20 text-green-400 text-[10px] font-bold px-2 py-1 rounded">DELIVERED</span></td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        const HomeView = ({ onBrowse, onGameClick, addToCart }) => {
+            return (
+                <div className="animate-in fade-in duration-700">
+                    <HeroSequence onFinish={onBrowse} />
+                    <section className="px-6 md:px-12 py-20 max-w-7xl mx-auto">
+                        <div className="flex items-end justify-between mb-12">
+                            <div>
+                                <h2 className="text-4xl font-black neon-text mb-2 uppercase italic">Flash Deals</h2>
+                                <p className="text-gray-500">Limited time offers. Huge savings.</p>
+                            </div>
+                            <div className="flex items-center gap-2 text-cyan-400 font-mono text-sm bg-cyan-500/10 px-4 py-2 rounded-full border border-cyan-500/20">
+                                <span>ENDS IN</span>
+                                <span className="font-bold">04 : 12 : 55</span>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            {GAMES.slice(0, 3).map(game => (
+                                <Card key={game.id} className="relative">
+                                    <div className="absolute top-4 left-4 z-10 bg-red-500 text-white font-bold px-3 py-1 rounded-sm text-sm">-{game.discount}%</div>
+                                    <div className="h-64 relative overflow-hidden">
+                                        <img src={game.image} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-60"></div>
+                                        <div className="absolute bottom-4 left-4 flex gap-2">
+                                            <span className="bg-white/10 backdrop-blur-md px-2 py-1 rounded text-[10px] uppercase font-bold border border-white/10">{game.platform}</span>
+                                            <span className="bg-white/10 backdrop-blur-md px-2 py-1 rounded text-[10px] uppercase font-bold border border-white/10">{game.region}</span>
+                                        </div>
+                                    </div>
+                                    <div className="p-6">
+                                        <h3 className="text-lg font-bold mb-2 line-clamp-1 group-hover:text-cyan-400 transition-colors cursor-pointer" onClick={onGameClick}>{game.title}</h3>
+                                        <div className="flex items-center justify-between mt-6">
+                                            <div className="flex flex-col">
+                                                <span className="text-gray-500 line-through text-sm">${game.oldPrice}</span>
+                                                <span className="text-2xl font-black text-cyan-400">${game.price}</span>
+                                            </div>
+                                            <Button onClick={() => addToCart(game)} className="px-4 py-2 text-sm uppercase"><Icon name="cart" size={16} /> Add</Button>
+                                        </div>
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    </section>
+
+                    <section className="bg-white/5 border-y border-white/5 py-12">
+                        <div className="max-w-7xl mx-auto px-6 flex flex-wrap justify-center md:justify-between gap-8">
+                            <div className="flex items-center gap-4">
+                                <div className="text-cyan-400"><Icon name="zap" size={24} /></div>
+                                <div>
+                                    <div className="font-bold text-sm uppercase">Instant Delivery</div>
+                                    <div className="text-xs text-gray-500">Receive your key in seconds</div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="text-cyan-400"><Icon name="shield" size={24} /></div>
+                                <div>
+                                    <div className="font-bold text-sm uppercase">Secure Payment</div>
+                                    <div className="text-xs text-gray-500">100% encrypted & verified</div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="text-cyan-400"><Icon name="check" size={24} /></div>
+                                <div>
+                                    <div className="font-bold text-sm uppercase">Verified Keys</div>
+                                    <div className="text-xs text-gray-500">Only genuine digital products</div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="text-cyan-400"><Icon name="user" size={24} /></div>
+                                <div>
+                                    <div className="font-bold text-sm uppercase">24/7 Support</div>
+                                    <div className="text-xs text-gray-500">Help whenever you need it</div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="px-6 md:px-12 py-20 max-w-7xl mx-auto">
+                         <h2 className="text-4xl font-black neon-text mb-12 uppercase italic text-center">Top Platforms</h2>
+                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                            {['Steam', 'Xbox', 'PlayStation', 'Epic Games', 'Nintendo', 'Battle.net'].map(p => (
+                                <div key={p} className="glass p-8 rounded-lg flex flex-col items-center justify-center gap-4 hover:border-cyan-500/50 cursor-pointer transition-all hover:bg-cyan-500/5">
+                                    <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center font-bold text-lg text-cyan-400">{p[0]}</div>
+                                    <div className="text-xs font-bold uppercase tracking-widest">{p}</div>
+                                </div>
+                            ))}
+                         </div>
+                    </section>
+                </div>
+            );
+        };
+
+        const StoreView = ({ onGameClick, addToCart }) => {
+            return (
+                <div className="animate-in slide-in-from-bottom-4 duration-500 px-6 md:px-12 py-12 max-w-7xl mx-auto flex flex-col lg:flex-row gap-12">
+                    <aside className="w-full lg:w-64 space-y-8">
+                        <div>
+                            <h3 className="text-sm font-black uppercase tracking-widest text-cyan-400 mb-6 italic">Platforms</h3>
+                            <div className="space-y-3">
+                                {['Steam', 'Xbox', 'PS5', 'Epic', 'Nintendo'].map(p => (
+                                    <label key={p} className="flex items-center gap-3 cursor-pointer group">
+                                        <div className="w-4 h-4 border border-white/20 rounded group-hover:border-cyan-500 transition-colors"></div>
+                                        <span className="text-sm text-gray-400 group-hover:text-white uppercase">{p}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-black uppercase tracking-widest text-cyan-400 mb-6 italic">Genres</h3>
+                            <div className="space-y-3">
+                                {['Action', 'RPG', 'Shooter', 'Sports', 'Survival'].map(p => (
+                                    <label key={p} className="flex items-center gap-3 cursor-pointer group">
+                                        <div className="w-4 h-4 border border-white/20 rounded group-hover:border-cyan-500 transition-colors"></div>
+                                        <span className="text-sm text-gray-400 group-hover:text-white uppercase">{p}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-black uppercase tracking-widest text-cyan-400 mb-6 italic">Price Range</h3>
+                            <input type="range" className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500" />
+                            <div className="flex justify-between mt-2 text-[10px] text-gray-500 font-mono">
+                                <span>$0</span>
+                                <span>$100+</span>
+                            </div>
+                        </div>
+                    </aside>
+
+                    <div className="flex-1">
+                        <div className="flex items-center justify-between mb-8">
+                            <h2 className="text-2xl font-black italic uppercase">All Deals <span className="text-gray-600 text-sm font-mono not-italic ml-2">(154 ITEMS)</span></h2>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+                            {GAMES.map(game => (
+                                <Card key={game.id}>
+                                    <div className="h-48 relative overflow-hidden">
+                                        <img src={game.image} className="w-full h-full object-cover" />
+                                        <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-cyan-400 font-bold px-2 py-1 rounded text-xs">-{game.discount}%</div>
+                                    </div>
+                                    <div className="p-5">
+                                        <div className="text-[10px] font-bold text-gray-500 uppercase tracking-tighter mb-1 italic">{game.platform} • {game.region}</div>
+                                        <h3 className="font-bold text-md mb-4 line-clamp-1 cursor-pointer hover:text-cyan-400" onClick={onGameClick}>{game.title}</h3>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xl font-black italic">${game.price}</span>
+                                            <Button onClick={() => addToCart(game)} className="px-3 py-1.5 text-xs uppercase">Add</Button>
+                                        </div>
+                                    </div>
+                                </Card>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ProductView = ({ addToCart, onBuyNow }) => {
+            const game = GAMES[0];
+            return (
+                <div className="animate-in fade-in duration-500 pb-20">
+                    <div className="relative h-[40vh] md:h-[60vh] overflow-hidden">
+                        <img src={game.image} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-bg via-bg/40 to-transparent"></div>
+                        <div className="absolute bottom-0 left-0 w-full p-6 md:p-12 max-w-7xl mx-auto">
+                            <div className="flex flex-col md:flex-row md:items-end justify-between gap-8">
+                                <div className="max-w-2xl">
+                                    <div className="flex gap-2 mb-4">
+                                        <span className="bg-cyan-500 text-black text-[10px] font-black px-2 py-1 rounded italic uppercase">Hot Deal</span>
+                                        <span className="bg-white/10 backdrop-blur-md text-[10px] font-bold px-2 py-1 rounded border border-white/20 uppercase tracking-widest">{game.platform}</span>
+                                    </div>
+                                    <h1 className="text-4xl md:text-6xl font-black neon-text mb-4 uppercase italic leading-none">{game.title}</h1>
+                                    <div className="flex items-center gap-6 text-sm text-gray-400">
+                                        <div className="flex items-center gap-1 text-yellow-500"><Icon name="star" size={14} /> <span className="text-white font-bold">{game.rating}</span></div>
+                                        <div className="flex items-center gap-2"><Icon name="check" size={14} className="text-green-500" /> Instant Digital Delivery</div>
+                                        <div className="flex items-center gap-2"><Icon name="shield" size={14} className="text-blue-400" /> Global Region</div>
+                                    </div>
+                                </div>
+                                <div className="glass p-8 rounded-xl border-cyan-500/20 w-full md:w-80">
+                                    <div className="text-gray-500 line-through text-sm mb-1">${game.oldPrice}</div>
+                                    <div className="text-4xl font-black mb-6 text-cyan-400 italic">${game.price}</div>
+                                    <div className="space-y-4">
+                                        <Button className="w-full py-4 text-lg uppercase" pulse={true} onClick={onBuyNow}>Buy Now</Button>
+                                        <Button variant="outline" className="w-full py-4 uppercase" onClick={() => addToCart(game)}>Add to Cart</Button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="max-w-7xl mx-auto px-6 md:px-12 mt-12 grid grid-cols-1 lg:grid-cols-3 gap-16">
+                        <div className="lg:col-span-2 space-y-12">
+                            <div>
+                                <h2 className="text-2xl font-black italic uppercase mb-6 text-cyan-400">About the Game</h2>
+                                <p className="text-gray-400 leading-relaxed">
+                                    Cyberpunk 2077: Phantom Liberty is a new spy-thriller expansion for the open-world action-adventure RPG. Infiltrate Dogtown, the deadliest district of Night City, and save the President.
+                                </p>
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-black italic uppercase mb-6 text-cyan-400">How to Redeem</h2>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    {[
+                                        { s: '01', t: 'Purchase', d: 'Securely buy the key' },
+                                        { s: '02', t: 'Receive', d: 'Get key instantly' },
+                                        { s: '03', t: 'Launch', d: 'Open platform client' },
+                                        { s: '04', t: 'Activate', d: 'Redeem and play' }
+                                    ].map(item => (
+                                        <div key={item.s} className="glass p-6 rounded-lg text-center border-white/5">
+                                            <div className="text-cyan-400 font-mono text-xl mb-2">{item.s}</div>
+                                            <div className="font-bold text-sm mb-1 uppercase italic">{item.t}</div>
+                                            <div className="text-[10px] text-gray-500">{item.d}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const CartView = ({ cart, onCheckout }) => {
+            const total = cart.reduce((sum, item) => sum + item.price, 0);
+            return (
+                <div className="max-w-5xl mx-auto px-6 py-20 animate-in slide-in-from-bottom-4">
+                    <h1 className="text-4xl font-black italic uppercase mb-12 neon-text">Your Cart <span className="text-gray-600">({cart.length})</span></h1>
+                    {cart.length === 0 ? (
+                        <div className="glass p-20 text-center rounded-2xl">
+                            <div className="text-gray-600 mb-6 flex justify-center"><Icon name="cart" size={64} /></div>
+                            <div className="text-xl text-gray-400 mb-8 italic">Your cart is empty. Start forging your collection.</div>
+                            <Button className="mx-auto uppercase">Browse Deals</Button>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+                            <div className="lg:col-span-2 space-y-4">
+                                {cart.map((item, i) => (
+                                    <div key={i} className="glass p-4 rounded-xl flex gap-6 items-center border-white/5">
+                                        <img src={item.image} className="w-24 h-32 object-cover rounded" />
+                                        <div className="flex-1">
+                                            <div className="text-[10px] text-gray-500 uppercase font-bold italic">{item.platform} • {item.region}</div>
+                                            <div className="font-bold text-lg mb-2">{item.title}</div>
+                                            <div className="text-xs text-green-400 flex items-center gap-1"><Icon name="zap" size={12} /> Instant Delivery</div>
+                                        </div>
+                                        <div className="text-xl font-black italic text-cyan-400">${item.price}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="space-y-6">
+                                <div className="glass p-8 rounded-xl sticky top-32">
+                                    <h3 className="font-black italic uppercase text-lg mb-6">Order Summary</h3>
+                                    <div className="space-y-4 text-gray-400 mb-8 font-mono">
+                                        <div className="flex justify-between"><span>Subtotal</span><span className="text-white">${total.toFixed(2)}</span></div>
+                                        <div className="flex justify-between border-t border-white/10 pt-4 font-bold text-white uppercase italic">
+                                            <span>Total</span>
+                                            <span className="text-2xl font-black text-cyan-400">${total.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                    <Button className="w-full py-4 uppercase" onClick={onCheckout}>Proceed to Checkout</Button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const CheckoutView = ({ onComplete }) => {
+            const [isProcessing, setIsProcessing] = useState(false);
+            const handlePay = () => {
+                setIsProcessing(true);
+                setTimeout(() => { setIsProcessing(false); onComplete(); }, 2000);
+            };
+            return (
+                <div className="max-w-xl mx-auto px-6 py-20">
+                    <div className="glass p-10 rounded-2xl border-cyan-500/20">
+                        <h1 className="text-3xl font-black italic uppercase mb-8 text-center neon-text">Checkout</h1>
+                        <div className="space-y-6">
+                            <div>
+                                <label className="block text-[10px] font-black uppercase text-gray-500 mb-2">Key Delivery Email</label>
+                                <input type="email" placeholder="gamer@keyforge.io" className="w-full bg-black/40 border border-white/10 rounded-md py-3 px-4 outline-none focus:border-cyan-500" />
+                            </div>
+                            <Button className="w-full py-4 text-lg uppercase" onClick={handlePay} disabled={isProcessing}>
+                                {isProcessing ? 'Encrypting...' : 'Pay Securely'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const DashboardView = ({ user }) => {
+            const [revealed, setRevealed] = useState(false);
+            return (
+                <div className="max-w-7xl mx-auto px-6 md:px-12 py-12 flex flex-col md:flex-row gap-12 animate-in fade-in">
+                    <aside className="w-full md:w-64">
+                        <div className="glass p-6 rounded-xl mb-8 flex items-center gap-4">
+                            <div className="w-12 h-12 bg-cyan-500 rounded-full flex items-center justify-center font-black text-xl text-black">G</div>
+                            <div className="font-bold">Gamer #829</div>
+                        </div>
+                        <div className="space-y-1">
+                            {['Orders', 'Keys', 'Security'].map(item => (
+                                <div key={item} className={`px-4 py-3 rounded text-xs uppercase font-bold cursor-pointer ${item === 'Keys' ? 'bg-cyan-500/10 text-cyan-400 border-l-2 border-cyan-500' : 'text-gray-500 hover:bg-white/5'}`}>{item}</div>
+                            ))}
+                        </div>
+                    </aside>
+                    <div className="flex-1 space-y-8">
+                        <h2 className="text-3xl font-black italic uppercase neon-text">Digital Vault</h2>
+                        <div className="glass p-6 rounded-xl border-cyan-500/20">
+                            <div className="flex flex-col md:flex-row items-center gap-8">
+                                <img src={GAMES[0].image} className="w-20 h-28 object-cover rounded" />
+                                <div className="flex-1">
+                                    <div className="text-xl font-bold mb-4">{GAMES[0].title}</div>
+                                    <div className="bg-black/40 border border-white/10 rounded px-4 py-3 font-mono tracking-widest text-lg flex items-center justify-between">
+                                        <span className="text-cyan-400">{revealed ? 'VXPR-FORT-KEY-2026' : '••••-••••-••••-••••'}</span>
+                                        <Icon name="key" size={16} className="cursor-pointer hover:text-white" onClick={() => setRevealed(!revealed)} />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AuthView = ({ onLogin }) => (
+            <div className="max-w-md mx-auto px-6 py-20">
+                <div className="glass p-10 rounded-2xl border-white/10 text-center">
+                    <h1 className="text-3xl font-black italic uppercase mb-2 neon-text italic">Welcome Back</h1>
+                    <p className="text-gray-500 text-xs mb-8 uppercase tracking-widest">Authorize access to vault</p>
+                    <Button className="w-full py-4 uppercase" onClick={onLogin}>Access Vault</Button>
+                </div>
+            </div>
+        );
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

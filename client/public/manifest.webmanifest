@@ -1,0 +1,66 @@
+{
+  "name": "VxperS Store",
+  "short_name": "VxperS",
+  "description": "ร้านค้าไอเท็มเกมและสินค้าดิจิทัล เติมพ้อยท์รวดเร็ว ปลอดภัย",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f0f14",
+  "theme_color": "#7c3aed",
+  "lang": "th",
+  "dir": "ltr",
+  "categories": ["shopping", "games"],
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/og-cover.jpg",
+      "sizes": "1200x630",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "หน้าแรก VxperS Store"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "เติมเงิน",
+      "short_name": "เติมเงิน",
+      "description": "เติมพ้อยท์",
+      "url": "/topup",
+      "icons": [{ "src": "/favicon.ico", "sizes": "48x48" }]
+    },
+    {
+      "name": "กล่องรับของ",
+      "short_name": "กล่องของ",
+      "description": "ดูรายการส่งมอบ",
+      "url": "/inbox",
+      "icons": [{ "src": "/favicon.ico", "sizes": "48x48" }]
+    },
+    {
+      "name": "ประวัติการซื้อ",
+      "short_name": "ประวัติ",
+      "description": "ดูประวัติการสั่งซื้อ",
+      "url": "/history/purchases",
+      "icons": [{ "src": "/favicon.ico", "sizes": "48x48" }]
+    }
+  ],
+  "prefer_related_applications": false
+}

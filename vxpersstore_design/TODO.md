@@ -1,0 +1,10 @@
+﻿- [x] 1. Define Brand Spec (Digital Void / Cyber / Glass) in brand-spec.md
+- [x] 2. Create Mock Data (Games, Categories, Reviews, Orders)
+- [x] 3. Setup React SPA Architecture (State-based routing for 8+ views)
+- [x] 4. Build Foundation: CRT/Scanline Overlays + Global Glassmorphism Styles
+- [x] 5. Implement Cinematic Hero: CRT Startup -> Key Reveal -> Platform Breakout
+- [x] 6. Build Core Commerce Flow: Landing, Store (Filters), Product Detail, Cart, Checkout
+- [x] 7. Build Identity & Account: Login/Register, User Dashboard (My Keys), Admin Dashboard
+- [x] 8. Self-check against 'Anti-AI-slop' + 5-dim Critique
+- [x] 9. Final Polish: Micro-interactions (Add to Cart, Key Reveal Animation)
+- [x] 10. Emit Final Artifact
