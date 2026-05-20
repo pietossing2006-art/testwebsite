@@ -134,6 +134,28 @@ function CountdownPill({ endsAt, tone = 'cyan' }) {
   )
 }
 
+function IconPlaceholder({ className = 'h-8 w-8 text-white/15' }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.5">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
+    </svg>
+  )
+}
+
+function EmptyState({ title, description }) {
+  return (
+    <div className="home-empty-state">
+      <div>
+        <div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-cyan-300/15 bg-cyan-500/10">
+          <IconPlaceholder className="h-5 w-5 text-cyan-200/70" />
+        </div>
+        <div className="mt-3 text-sm font-black text-white/85">{title}</div>
+        {description ? <div className="mt-1 text-xs leading-5 text-white/45">{description}</div> : null}
+      </div>
+    </div>
+  )
+}
+
 function ProductCard({ product, optionStock, imageRatio, forceFit = true, compact = false }) {
   const options = Array.isArray(product?.product_options) ? product.product_options : []
   const price = getProductPrice(product)
@@ -153,9 +175,9 @@ function ProductCard({ product, optionStock, imageRatio, forceFit = true, compac
   return (
     <Link
       to={`/product/${product.id}`}
-      className={`group motion-card motion-hover motion-soft-glow motion-sweep block overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] transition duration-200 hover:border-cyan-300/25 hover:bg-white/[0.055] hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] ${compact ? '' : 'p-3'}`}
+      className={`home-product-card group motion-card motion-hover motion-soft-glow motion-sweep block overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] transition duration-200 hover:border-cyan-300/25 hover:bg-white/[0.055] ${compact ? '' : 'p-3'}`}
     >
-      <div className={`relative overflow-hidden bg-white/[0.04] ${compact ? '' : 'rounded-xl border border-white/[0.06]'}`} style={{ aspectRatio: imageRatio }}>
+      <div className={`home-product-image relative overflow-hidden bg-white/[0.04] ${compact ? '' : 'rounded-xl border border-white/[0.06]'}`} style={{ aspectRatio: imageRatio }}>
         {price.hasPromo ? (
           <span className="absolute left-2 top-2 z-10 rounded-full border border-cyan-300/20 bg-cyan-500/20 px-2 py-1 text-[10px] font-black text-cyan-100 backdrop-blur">
             {price.discountBadge}
@@ -171,9 +193,7 @@ function ProductCard({ product, optionStock, imageRatio, forceFit = true, compac
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
-            <svg viewBox="0 0 24 24" className="h-8 w-8 text-white/15" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
-            </svg>
+            <IconPlaceholder />
           </div>
         )}
       </div>
@@ -385,30 +405,30 @@ export default function Home() {
 
   return (
     <div className="space-y-10 sm:space-y-14">
-      <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] glass-strong px-4 py-6 shadow-[0_30px_100px_rgba(0,0,0,0.35)] sm:px-7 sm:py-8 md:px-12 md:py-14">
-        <div className="absolute inset-0 scanline opacity-40" />
-        <div className="absolute inset-0 grid-pattern opacity-45" />
+      <section className="home-hero home-premium-panel relative overflow-hidden rounded-3xl border border-white/[0.1] px-4 py-6 sm:px-7 sm:py-8 md:px-10 md:py-12">
+        <div className="absolute inset-0 grid-pattern opacity-25" />
+        <div className="absolute left-0 top-0 h-px w-full bg-gradient-to-r from-transparent via-cyan-200/35 to-transparent" />
         <div className="absolute -right-28 -top-28 h-80 w-80 rounded-full bg-cyan-500/[0.08] blur-[90px]" />
-        <div className="absolute -bottom-24 left-1/3 h-64 w-64 rounded-full bg-red-500/[0.06] blur-[90px]" />
 
-        <div className="relative grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_440px]">
+        <div className="relative grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_430px] xl:gap-9">
           <div className="fade-in-up motion-stagger">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-4 py-1.5 text-[11px] font-bold text-emerald-200">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-500/[0.08] px-3.5 py-1.5 text-[11px] font-bold text-emerald-100/85">
               <span className="hero-status-dot-pulse h-2 w-2 rounded-full bg-emerald-300" />
               ร้านค้าออนไลน์พร้อมใช้งาน
             </div>
 
-            <h1 className="font-display mt-6 text-4xl font-black leading-[1.05] text-white sm:text-5xl lg:text-7xl">
-              <span className="hero-title-glow bg-gradient-to-r from-white via-cyan-100 to-cyan-300 bg-clip-text text-transparent">{heroTitle}</span>
+            <h1 className="font-display mt-5 max-w-4xl text-4xl font-black leading-[1.04] text-white sm:text-5xl lg:text-6xl xl:text-7xl">
+              <span className="bg-gradient-to-r from-white via-cyan-50 to-cyan-200 bg-clip-text text-transparent">{heroTitle}</span>
             </h1>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <span className="text-[11px] font-bold uppercase tracking-[0.22em] text-white/45">{heroSubtitle}</span>
-              <span className="h-px w-10 bg-gradient-to-r from-cyan-300/35 to-transparent" />
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-bold uppercase tracking-[0.16em] text-white/46">
+              <span>{heroSubtitle}</span>
+              <span className="hidden h-px w-10 bg-gradient-to-r from-cyan-300/35 to-transparent sm:block" />
+              <span className="text-cyan-100/55">Instant digital delivery</span>
             </div>
-            <p className="mt-5 max-w-2xl text-sm leading-7 text-white/62">{heroDesc}</p>
+            <p className="mt-5 max-w-2xl text-sm leading-7 text-white/66 sm:text-[15px]">{heroDesc}</p>
 
             <div className="mt-7 grid gap-3 sm:mt-8 sm:flex sm:flex-wrap">
-              <Link to={heroBtnLink} className="ui-btn-primary neon-border w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
+              <Link to={heroBtnLink} className="ui-btn-primary w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
                 {heroBtnText}
               </Link>
               {!hasToken ? (
@@ -439,18 +459,18 @@ export default function Home() {
           </div>
 
           <div className="fade-in-up fade-in-delay-1">
-            <div className="motion-hover motion-soft-glow rounded-3xl border border-white/[0.08] bg-white/[0.035] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="home-premium-panel motion-hover motion-soft-glow rounded-3xl border border-white/[0.09] bg-black/15 p-3">
               <div className="mb-3 flex items-center justify-between px-2">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-red-400/75" />
                   <span className="h-2 w-2 rounded-full bg-white/25" />
                   <span className="h-2 w-2 rounded-full bg-white/15" />
                 </div>
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/35">Featured</span>
+                <span className="rounded-full border border-cyan-300/15 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100/75">Featured</span>
               </div>
               {loading ? (
                 <div className="motion-stagger grid grid-cols-2 gap-2">
-                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-2xl bg-white/[0.04]" />)}
+                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.04]" />)}
                 </div>
               ) : featuredProducts.length > 0 ? (
                 <div className="grid grid-cols-2 gap-2">
@@ -512,7 +532,7 @@ export default function Home() {
               <Link
                 key={bundle.id}
                 to={`/bundle/${bundle.id}`}
-                className="group motion-card motion-hover motion-soft-glow motion-sweep overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 transition hover:border-violet-300/25 hover:bg-white/[0.055]"
+                className="home-offer-card group motion-card motion-hover motion-soft-glow motion-sweep overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 transition hover:border-violet-300/25 hover:bg-white/[0.055]"
               >
                 {bundle.image_url ? (
                   <div className="mb-3 overflow-hidden rounded-xl border border-white/[0.06]" style={{ aspectRatio: '16/7' }}>
@@ -547,6 +567,8 @@ export default function Home() {
 
         {loading ? (
           <HomeSkeleton />
+        ) : categories.length === 0 ? (
+          <EmptyState title="No categories yet" description="Categories configured in admin will appear here." />
         ) : (
           <div className="motion-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {categories.slice(0, 8).map((category) => (
