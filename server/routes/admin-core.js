@@ -66,8 +66,13 @@ function getStorageMediaToken(req) {
   return typeof raw === 'string' ? raw : ''
 }
 
+function getStorageRequestPath(req) {
+  if (typeof req.params?.[0] === 'string') return req.params[0]
+  return typeof req.query.path === 'string' ? req.query.path : ''
+}
+
 function requireStorageMediaAccess(req, res, next) {
-  const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+  const rawPath = getStorageRequestPath(req)
   const token = getStorageMediaToken(req)
   if (token && verifyStorageAccessToken(token, rawPath)) {
     req.storageMediaAccess = true
@@ -257,8 +262,8 @@ router.get('/api/admin/storage/list', requireAuth, requireOwner, async (req, res
   }
 })
 
-router.get('/api/admin/storage/file', requireStorageMediaAccess, async (req, res) => {
-  const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+router.get(['/api/admin/storage/file', '/api/admin/storage/file/raw/*'], requireStorageMediaAccess, async (req, res) => {
+  const rawPath = getStorageRequestPath(req)
   let target
   try {
     target = resolveStoragePath(rawPath)
@@ -311,8 +316,8 @@ router.get('/api/admin/storage/file', requireStorageMediaAccess, async (req, res
   }
 })
 
-router.get('/api/admin/storage/thumb', requireStorageMediaAccess, async (req, res) => {
-  const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+router.get(['/api/admin/storage/thumb', '/api/admin/storage/thumb/raw/*'], requireStorageMediaAccess, async (req, res) => {
+  const rawPath = getStorageRequestPath(req)
   let target
   try {
     target = resolveStoragePath(rawPath)
@@ -358,8 +363,8 @@ router.get('/api/admin/storage/thumb', requireStorageMediaAccess, async (req, re
   }
 })
 
-router.get('/api/admin/storage/video-thumb', requireStorageMediaAccess, async (req, res) => {
-  const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+router.get(['/api/admin/storage/video-thumb', '/api/admin/storage/video-thumb/raw/*'], requireStorageMediaAccess, async (req, res) => {
+  const rawPath = getStorageRequestPath(req)
   let target
   try {
     target = resolveStoragePath(rawPath)

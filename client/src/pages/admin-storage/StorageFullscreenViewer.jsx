@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState } from 'react'
+import { copyToClipboard } from '../../api.js'
 import { Icon } from './StoragePrimitives.jsx'
 import { clampMediaTime, getDoubleTapSeekDelta, getSwipeNavigationAction } from './storageInteractionUtils.js'
 import { canPreviewInBrowser, formatBytes, formatDate, getExtension } from './storageMediaUtils.js'
@@ -9,9 +10,11 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
   const lastVideoTapRef = useRef(null)
   const videoRef = useRef(null)
   const [previewFailed, setPreviewFailed] = useState(false)
+  const [copyState, setCopyState] = useState('')
 
   useEffect(() => {
     setPreviewFailed(false)
+    setCopyState('')
   }, [media?.path, mediaUrl, previewUrl])
 
   if (!media || typeof document === 'undefined') return null
@@ -82,6 +85,12 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
     seekVideoAt(videoRef.current, e.clientX)
   }
 
+  const handleCopyLink = async () => {
+    const ok = await copyToClipboard(mediaUrl)
+    setCopyState(ok ? 'copied' : 'failed')
+    window.setTimeout(() => setCopyState(''), 1400)
+  }
+
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/92 p-3" onClick={onClose}>
       <button
@@ -107,14 +116,25 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
             <div className="truncate font-black text-white">{media.name}</div>
             <div className="mt-0.5 truncate text-[11px] text-white/42">{media.path}</div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid h-8 w-8 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-white/65 hover:bg-white/[0.08] hover:text-white"
-            aria-label="Close"
-          >
-            <Icon name="close" className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopyLink}
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-2.5 text-[11px] font-bold text-white/65 hover:bg-white/[0.08] hover:text-white"
+              aria-label="Copy exact link"
+            >
+              <Icon name="copy" className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Failed' : 'Copy link'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-8 w-8 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-white/65 hover:bg-white/[0.08] hover:text-white"
+              aria-label="Close"
+            >
+              <Icon name="close" className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/86">

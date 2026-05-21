@@ -82,14 +82,22 @@ export function getExtension(name) {
   return idx >= 0 ? txt.slice(idx + 1).toUpperCase() : ''
 }
 
+export function encodeStoragePathForRoute(pathValue) {
+  return String(pathValue || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/')
+}
+
 export function buildStorageMediaUrl(endpoint, row, extraParams = {}) {
+  const pathPart = encodeStoragePathForRoute(row?.path)
   const qs = new URLSearchParams()
-  qs.set('path', String(row?.path || ''))
   for (const [key, value] of Object.entries(extraParams)) {
     if (value !== undefined && value !== null && value !== '') qs.set(key, String(value))
   }
-  if (row?.access_token) qs.set('st', String(row.access_token))
-  return resolveApiUrl(`/api/admin/storage/${endpoint}?${qs.toString()}`)
+  const query = qs.toString()
+  return resolveApiUrl(`/api/admin/storage/${endpoint}/raw/${pathPart}${query ? `?${query}` : ''}`)
 }
 
 export function canPreviewInBrowser(row) {
