@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { fetchJson, resolveApiUrl } from '../api.js'
+import { fetchJson, resolveApiUrl, setAuthToken } from '../api.js'
 
 function discordErrorMessage(code) {
   const raw = String(code || '').trim()
@@ -56,11 +56,12 @@ export default function Login() {
     setStatus('submitting')
     setErrorText('')
     try {
-      await fetchJson('/api/auth/login', {
+      const data = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login, password, remember }),
       })
+      setAuthToken(data?.token ?? null)
       setStatus('success')
       window.location.assign('/')
     } catch (e) {
