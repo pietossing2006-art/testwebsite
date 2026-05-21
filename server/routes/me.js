@@ -26,7 +26,9 @@ import {
   getMyOrderDetail,
 } from '../db.js'
 import { requireAuth, rateLimitMiddleware } from '../lib/auth.js'
-import { decodeDataUrlImage } from '../lib/image.js'
+import { decodeDataUrlImage, sanitizeAvatarImage } from '../lib/image.js'
+import { AvatarUploadBodySchema, PasswordChangeBodySchema, ProfileBodySchema } from '../lib/requestSchemas.js'
+import { validateBody } from '../lib/validation.js'
 import { publishSupportEvent } from '../lib/events.js'
 import { requestDiscordPasswordResetCode, verifyDiscordPasswordResetCode } from '../lib/discordBot.js'
 
@@ -59,7 +61,9 @@ router.get('/api/me', requireAuth, async (req, res) => {
 })
 
 router.put('/api/me/profile', requireAuth, async (req, res) => {
-  const { display_name, avatar_url } = req.body ?? {}
+  const parsed = validateBody(ProfileBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { display_name, avatar_url } = parsed.data
   try {
     const user = await updateUserProfile({ userId: req.user.id, displayName: display_name, avatarUrl: avatar_url })
     res.json({ ok: true, user })
@@ -69,10 +73,9 @@ router.put('/api/me/profile', requireAuth, async (req, res) => {
 })
 
 router.post('/api/me/password', requireAuth, async (req, res) => {
-  const { old_password, new_password, discord_code } = req.body ?? {}
-  if (typeof old_password !== 'string' || typeof new_password !== 'string') return res.status(400).json({ error: 'invalid_payload' })
-  if (new_password.length < 8) return res.status(400).json({ error: 'weak_password' })
-  if (!/^[\x20-\x7E]+$/.test(new_password)) return res.status(400).json({ error: 'invalid_password_charset' })
+  const parsed = validateBody(PasswordChangeBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { old_password, new_password, discord_code } = parsed.data
 
   try {
     const discordLink = await getDiscordLinkForUser(req.user.id)
@@ -120,10 +123,13 @@ router.post(
 )
 
 router.post('/api/me/avatar-upload', requireAuth, async (req, res) => {
-  const imageData = req.body?.image_data
+  const parsed = validateBody(AvatarUploadBodySchema, req.body, { fallbackError: 'invalid_image_data' })
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
   try {
-    const { buffer, ext } = decodeDataUrlImage(imageData)
+    const decoded = decodeDataUrlImage(parsed.data.image_data)
     const maxBytes = 6 * 1024 * 1024
+    if (decoded.buffer.length > maxBytes) return res.status(413).json({ error: 'image_too_large' })
+    const { buffer, ext } = await sanitizeAvatarImage(decoded)
     if (buffer.length > maxBytes) return res.status(413).json({ error: 'image_too_large' })
     const filename = `${Date.now()}-${req.user.id}-${Math.floor(Math.random() * 1_000_000)}.${ext}`
     const target = path.join(AVATAR_UPLOADS_ROOT, filename)
@@ -340,7 +346,9 @@ router.post('/api/me/push-subscribe', requireAuth, async (req, res) => {
     await savePushSubscription(req.user.id, req.body?.subscription)
     res.json({ ok: true })
   } catch (e) {
-    res.status(400).json({ error: e?.message || 'invalid_subscription' })
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_subscription') return res.status(400).json({ error: 'invalid_subscription' })
+    res.status(400).json({ error: 'invalid_subscription' })
   }
 })
 

@@ -44,6 +44,7 @@ import {
   getStorageMimeByPath,
   parseStorageNumberInRange,
   mapThumbQualityToFfmpegQ,
+  buildStorageVideoThumbFfmpegArgs,
   createStorageAccessToken,
   verifyStorageAccessToken,
 } from '../lib/storage.js'
@@ -169,7 +170,7 @@ router.get('/api/admin/audit-logs', requireAuth, requireOwner, async (req, res) 
   }
 })
 
-router.get('/api/admin/rbac/matrix', requireAuth, async (req, res) => {
+router.get('/api/admin/rbac/matrix', requireAuth, requireAnyRole(['finance', 'support', 'booster', 'admin', 'owner']), async (req, res) => {
   const role = typeof req.user?.role === 'string' ? req.user.role.trim().toLowerCase() : 'user'
   const modules = ADMIN_ROLE_MODULE_ACCESS[role] || []
   const actions = Object.fromEntries(
@@ -388,27 +389,7 @@ router.get('/api/admin/storage/video-thumb', requireStorageMediaAccess, async (r
     const etag = `W/"vthumb-${stat.size}-${Number(stat.mtimeMs || 0)}-${width}-${quality}"`
     if (req.headers['if-none-match'] === etag) return res.status(304).end()
 
-    const args = [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-nostdin',
-      '-ss',
-      '00:00:01',
-      '-i',
-      target.absolute,
-      '-frames:v',
-      '1',
-      '-vf',
-      `scale=${width}:-2:force_original_aspect_ratio=decrease`,
-      '-f',
-      'image2pipe',
-      '-vcodec',
-      'mjpeg',
-      '-q:v',
-      String(ffmpegQ),
-      'pipe:1',
-    ]
+    const args = buildStorageVideoThumbFfmpegArgs({ inputPath: target.absolute, width, ffmpegQ })
 
     const child = spawn('ffmpeg', args, { windowsHide: true })
     const outChunks = []
@@ -676,7 +657,7 @@ router.get('/api/admin/owner/stats', requireAuth, requireOwner, async (req, res)
       top_admins: adminActivity.rows,
     })
   } catch (e) {
-    res.status(500).json({ error: 'db_error', message: String(e?.message ?? '') })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 

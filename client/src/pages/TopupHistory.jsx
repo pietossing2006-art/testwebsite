@@ -46,7 +46,6 @@ function methodLabel(item) {
   if (method === 'angpao' || provider === 'twvoucher') return 'อั่งเปา'
   if (method === 'coupon') return 'คูปองเติมเงิน'
   if (method === 'promptpay' || provider === 'promptpay_manual') return 'PromptPay'
-  if (method === 'omise' || provider === 'omise') return 'Omise'
   return 'ช่องทางอื่น'
 }
 

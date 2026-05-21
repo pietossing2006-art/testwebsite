@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import pg from 'pg'
+import argon2 from 'argon2'
 
 const { Pool } = pg
 
@@ -3042,17 +3043,37 @@ export async function updateUiSettings({ imageSettings, brandingSettings, homepa
   }
 }
 
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex')
-  const derived = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('hex')
-  return `${salt}:${derived}`
+const PBKDF2_ITERATIONS = 120_000
+
+export async function hashPassword(password) {
+  return argon2.hash(String(password), {
+    type: argon2.argon2id,
+    memoryCost: 19_456,
+    timeCost: 2,
+    parallelism: 1,
+  })
 }
 
-function verifyPassword(password, stored) {
+function verifyLegacyPbkdf2Password(password, stored) {
   const [salt, expected] = String(stored).split(':')
   if (!salt || !expected) return false
-  const derived = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('hex')
-  return crypto.timingSafeEqual(Buffer.from(derived, 'hex'), Buffer.from(expected, 'hex'))
+  const derived = crypto.pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, 32, 'sha256')
+  const expectedBuffer = Buffer.from(expected, 'hex')
+  if (expectedBuffer.length !== derived.length) return false
+  return crypto.timingSafeEqual(derived, expectedBuffer)
+}
+
+export async function verifyPassword(password, stored) {
+  const hash = String(stored || '')
+  if (!hash) return false
+  if (hash.startsWith('$argon2')) {
+    try {
+      return await argon2.verify(hash, String(password))
+    } catch {
+      return false
+    }
+  }
+  return verifyLegacyPbkdf2Password(password, hash)
 }
 
 export function initDb() {
@@ -5499,7 +5520,7 @@ export async function findOrCreateUserFromDiscord({
       const role = isFirst ? 'owner' : 'user'
       const userEmail = verifiedEmail || `discord-${did}@discord.local`
       const userName = await buildUniqueDiscordUsername({ discordUserId: did, username, displayName })
-      const passwordHash = hashPassword(crypto.randomBytes(32).toString('base64url'))
+      const passwordHash = await hashPassword(crypto.randomBytes(32).toString('base64url'))
 
       const created = await client.query(
         `INSERT INTO users (email, password_hash, role, username, display_name, avatar_url)
@@ -5872,7 +5893,7 @@ export async function seedDb() {
 }
 
 export async function registerUser(email, password, username = null) {
-  const passwordHash = hashPassword(password)
+  const passwordHash = await hashPassword(password)
   const row = await get('SELECT COUNT(*)::int AS c FROM users')
   const isFirst = (row?.c ?? 0) === 0
   const role = isFirst ? 'owner' : 'user'
@@ -6331,7 +6352,7 @@ export async function adminRemoveUserAccount({ userId, actorUserId, performedByO
 }
 
 export async function setUserPassword({ userId, password }) {
-  const passwordHash = hashPassword(password)
+  const passwordHash = await hashPassword(password)
   await query('UPDATE users SET password_hash = $2 WHERE id = $1', [userId, passwordHash])
   return { ok: true }
 }
@@ -6339,7 +6360,7 @@ export async function setUserPassword({ userId, password }) {
 export async function changeUserPassword({ userId, oldPassword, newPassword }) {
   const user = await get('SELECT password_hash FROM users WHERE id = $1', [userId])
   if (!user) throw new Error('user_not_found')
-  if (!verifyPassword(oldPassword, user.password_hash)) throw new Error('invalid_old_password')
+  if (!(await verifyPassword(oldPassword, user.password_hash))) throw new Error('invalid_old_password')
   await setUserPassword({ userId, password: newPassword })
   return { ok: true }
 }
@@ -7463,7 +7484,7 @@ export async function listAllTransactions({ limit = 50, offset = 0 } = {}) {
   )
 }
 
-export function checkPassword(password, passwordHash) {
+export async function checkPassword(password, passwordHash) {
   return verifyPassword(password, passwordHash)
 }
 

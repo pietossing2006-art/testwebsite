@@ -18,6 +18,7 @@ import adminCoreRoutes from './routes/admin-core.js'
 import adminCatalogRoutes from './routes/admin-catalog.js'
 import adminOpsRoutes from './routes/admin-ops.js'
 import { startDiscordBot } from './lib/discordBot.js'
+import { csrfOriginGuard, globalErrorHandler, securityHeaders } from './lib/security.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -61,16 +62,14 @@ const corsOriginFn = (origin, cb) => {
 }
 
 app.use(compression())
+app.use(securityHeaders({ clientOrigins: CLIENT_ORIGINS, allowLocalDevOrigins: ALLOW_LOCAL_DEV_ORIGINS }))
 app.use(cors({ origin: corsOriginFn, credentials: true }))
 app.use(cookieParser())
+app.use(csrfOriginGuard({ clientOrigins: CLIENT_ORIGINS, allowLocalDevOrigins: ALLOW_LOCAL_DEV_ORIGINS }))
 app.use(express.json({ limit: '10mb' }))
 
-// Mobile / PWA friendly headers
+// Mobile / PWA friendly cache headers
 app.use((req, res, next) => {
-  // Allow PWA installation and cross-origin isolation for push
-  res.setHeader('X-Content-Type-Options', 'nosniff')
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN')
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   // Allow service worker scope at root
   if (req.path === '/sw-push.js') {
     res.setHeader('Service-Worker-Allowed', '/')
@@ -142,6 +141,8 @@ function enableClientServing() {
 }
 
 enableClientServing()
+
+app.use(globalErrorHandler)
 
 const httpServer = http.createServer(app)
 initSocketIO(httpServer, { origin: corsOriginFn, credentials: true })

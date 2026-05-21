@@ -1,7 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { copyToClipboard, fetchJson, setAuthToken } from '../api.js'
-import StorageFocusViewer from './admin-storage/StorageFocusViewer.jsx'
 import StorageFullscreenViewer from './admin-storage/StorageFullscreenViewer.jsx'
 import StorageMediaGrid from './admin-storage/StorageMediaGrid.jsx'
 import StoragePathBar from './admin-storage/StoragePathBar.jsx'
@@ -12,6 +11,7 @@ import {
   decodeViewMode,
   encodeViewMode,
   getCookieValue,
+  getEntryThumbnailUrl,
   INITIAL_MEDIA_RENDER_LIMIT,
   joinClasses,
   MEDIA_RENDER_STEP,
@@ -40,6 +40,25 @@ export default function AdminStorage() {
   const [copiedKey, setCopiedKey] = useState('')
   const [selectedMediaPath, setSelectedMediaPath] = useState('')
   const [isFullscreenOpen, setIsFullscreenOpen] = useState(false)
+  const [isCompactDevice, setIsCompactDevice] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
+    const mediaQuery = window.matchMedia('(max-width: 767px), (pointer: coarse)')
+    const updateCompactMode = () => setIsCompactDevice(Boolean(mediaQuery.matches))
+    updateCompactMode()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', updateCompactMode)
+      return () => mediaQuery.removeEventListener('change', updateCompactMode)
+    }
+
+    mediaQuery.addListener(updateCompactMode)
+    return () => mediaQuery.removeListener(updateCompactMode)
+  }, [])
+
+  const initialRenderLimit = isCompactDevice ? 48 : INITIAL_MEDIA_RENDER_LIMIT
+  const mediaRenderStep = isCompactDevice ? 48 : MEDIA_RENDER_STEP
 
   const urlPath = useMemo(() => {
     const raw = String(searchParams.get('path') || '').trim()
@@ -82,14 +101,14 @@ export default function AdminStorage() {
       setRole(userRole)
       if (userRole !== 'owner') {
         setStatus('forbidden')
-        setErrorText('˹�ҹ������Ѻ Owner ��ҹ��')
+        setErrorText('หน้านี้สำหรับ Owner เท่านั้น')
         return
       }
       setRootPath(String(data?.root || ''))
       setCurrentPath(String(data?.path || ''))
       setEntries(Array.isArray(data?.entries) ? data.entries : [])
       setTruncated(Boolean(data?.truncated))
-      setMediaRenderLimit(INITIAL_MEDIA_RENDER_LIMIT)
+      setMediaRenderLimit(initialRenderLimit)
       setStatus('idle')
     } catch (e) {
       if (e?.status === 401) {
@@ -99,18 +118,18 @@ export default function AdminStorage() {
       }
       if (e?.status === 403) {
         setStatus('forbidden')
-        setErrorText('˹�ҹ������Ѻ Owner ��ҹ��')
+        setErrorText('หน้านี้สำหรับ Owner เท่านั้น')
         return
       }
       if (e?.status === 404) {
         setStatus('error')
-        setErrorText('��辺�����������͡')
+        setErrorText('ไม่พบโฟลเดอร์ที่เลือก')
         return
       }
       setStatus('error')
-      setErrorText('��Ŵ���ҡ Storage Host ��������')
+      setErrorText('โหลดไฟล์จาก Storage Host ไม่สำเร็จ')
     }
-  }, [nav])
+  }, [initialRenderLimit, nav])
 
   useEffect(() => {
     loadFolder(urlPath)
@@ -156,27 +175,34 @@ export default function AdminStorage() {
   }, [entries, mediaFilter, sortBy, sortOrder, visibleEntryMatcher])
 
   useEffect(() => {
-    setMediaRenderLimit(INITIAL_MEDIA_RENDER_LIMIT)
-  }, [queryText, mediaFilter, sortBy, sortOrder, currentPath])
+    setMediaRenderLimit(initialRenderLimit)
+  }, [initialRenderLimit, queryText, mediaFilter, sortBy, sortOrder, currentPath])
 
   useEffect(() => {
+    if (!selectedMediaPath) return
     if (!mediaEntries.length) {
       setSelectedMediaPath('')
       setIsFullscreenOpen(false)
       return
     }
     if (!mediaEntries.some((item) => item.path === selectedMediaPath)) {
-      setSelectedMediaPath(mediaEntries[0].path)
+      setSelectedMediaPath('')
+      setIsFullscreenOpen(false)
     }
   }, [mediaEntries, selectedMediaPath])
 
   const selectedMedia = useMemo(
-    () => mediaEntries.find((item) => item.path === selectedMediaPath) || mediaEntries[0] || null,
+    () => mediaEntries.find((item) => item.path === selectedMediaPath) || null,
     [mediaEntries, selectedMediaPath],
   )
 
   const selectedMediaUrl = useMemo(
     () => (selectedMedia ? buildStorageMediaUrl('file', selectedMedia) : ''),
+    [selectedMedia],
+  )
+
+  const selectedMediaPreviewUrl = useMemo(
+    () => (selectedMedia ? getEntryThumbnailUrl(selectedMedia) : ''),
     [selectedMedia],
   )
 
@@ -194,11 +220,6 @@ export default function AdminStorage() {
     }
     return rows
   }, [currentPath])
-
-  const selectedMediaIndex = useMemo(
-    () => mediaEntries.findIndex((item) => item.path === selectedMedia?.path),
-    [mediaEntries, selectedMedia],
-  )
 
   useEffect(() => {
     if (!isFullscreenOpen || !selectedMedia) return undefined
@@ -260,6 +281,7 @@ export default function AdminStorage() {
 
   const handleSelectMedia = useCallback((path) => {
     setSelectedMediaPath(path)
+    setIsFullscreenOpen(true)
   }, [])
 
   const handleRefresh = useCallback(() => {
@@ -303,9 +325,9 @@ export default function AdminStorage() {
 
         <Link
           to="/admin-v3"
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-xs font-bold text-white/70 transition hover:border-white/18 hover:bg-white/[0.08] hover:text-white"
+          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-xs font-bold text-white/70 transition hover:border-white/18 hover:bg-white/[0.08] hover:text-white sm:w-auto"
         >
-          ��Ѻ�ʹ�Թ
+          กลับแอดมิน
         </Link>
       </div>
 
@@ -318,7 +340,7 @@ export default function AdminStorage() {
           {folderEntries.length ? (
             <section className="rounded-[24px] border border-white/10 bg-[#07101a]/70 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.22)] backdrop-blur">
               <div className="mb-3 text-xs font-black uppercase tracking-[0.16em] text-white/38">Folders</div>
-              <div className="flex flex-wrap gap-2">
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
                 {folderEntries.map((row) => (
                   <FolderChip key={row.path} name={row.name} path={String(row.path || '')} onClick={setPathInUrl} />
                 ))}
@@ -327,36 +349,26 @@ export default function AdminStorage() {
           ) : null}
 
           {status === 'loading' ? <LoadingGrid /> : null}
-          {status === 'error' ? <EmptyState title={errorText} detail="�ͧ���ê���͡�Ѻ价����������ѡ�ա����" /> : null}
+          {status === 'error' ? <EmptyState title={errorText} detail="ลองรีเฟรชหรือกลับไปที่โฟลเดอร์หลักอีกครั้ง" /> : null}
 
           {status === 'idle' ? (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.12fr)_minmax(420px,0.88fr)]">
-              <StorageFocusViewer
-                media={selectedMedia}
-                mediaUrl={selectedMediaUrl}
-                onPrev={goPrevMedia}
-                onNext={goNextMedia}
-                onOpenFullscreen={() => setIsFullscreenOpen(true)}
-              />
-
-              <StorageMediaGrid
-                items={visibleMediaEntries}
-                viewMode={viewMode}
-                selectedPath={selectedMediaPath}
-                onSelect={handleSelectMedia}
-                renderLimit={mediaRenderLimit}
-                onLoadMore={() => setMediaRenderLimit((n) => n + MEDIA_RENDER_STEP)}
-                hasMore={hasMoreMedia}
-                totalCount={mediaEntries.length}
-                emptyTitle={queryText ? '��辺�����ç�Ѻ�Ӥ���' : '���������ѧ������ٻ�Ҿ�����Դ���'}
-                emptyDetail={queryText ? '�ͧŴ�Ӥ�����������¹��ǡ�ͧ media' : '������ͧ�Ѻ���ʴ��� thumbnail �ѵ��ѵ�'}
-              />
-            </div>
+            <StorageMediaGrid
+              items={visibleMediaEntries}
+              viewMode={viewMode}
+              selectedPath={selectedMediaPath}
+              onSelect={handleSelectMedia}
+              renderLimit={mediaRenderLimit}
+              onLoadMore={() => setMediaRenderLimit((n) => n + mediaRenderStep)}
+              hasMore={hasMoreMedia}
+              totalCount={mediaEntries.length}
+              emptyTitle={queryText ? 'ไม่พบไฟล์ที่ตรงกับคำค้นหา' : 'โฟลเดอร์นี้ยังไม่มีรูปภาพหรือวิดีโอ'}
+              emptyDetail={queryText ? 'ลองลดคำค้นหาหรือเปลี่ยนตัวกรอง media' : 'ไฟล์ที่รองรับจะแสดงเป็น thumbnail อัตโนมัติ'}
+            />
           ) : null}
 
           {truncated ? (
             <div className="rounded-2xl border border-amber-300/20 bg-amber-400/8 px-3 py-2 text-[11px] font-semibold text-amber-100">
-              �ʴ�੾�кҧ��ǹ�ͧ�������� ������¡���ըӹǹ�ҡ
+              แสดงเฉพาะบางส่วนของโฟลเดอร์นี้ เพราะรายการมีจำนวนมาก
             </div>
           ) : null}
         </div>
@@ -365,19 +377,14 @@ export default function AdminStorage() {
       <StorageFullscreenViewer
         media={isFullscreenOpen ? selectedMedia : null}
         mediaUrl={selectedMediaUrl}
+        previewUrl={selectedMediaPreviewUrl}
         onClose={() => setIsFullscreenOpen(false)}
         onPrev={goPrevMedia}
         onNext={goNextMedia}
       />
 
       {role && role !== 'owner' && status !== 'forbidden' ? (
-        <div className={joinClasses('mt-4 text-xs font-semibold text-cyan-200', role === 'owner' ? 'hidden' : '')}>�Է���ͧ�س: {role}</div>
-      ) : null}
-
-      {selectedMedia && status === 'idle' ? (
-        <div className="mt-3 text-[11px] text-white/35">
-          ���ѧ���͡��� {selectedMediaIndex + 1}/{mediaEntries.length.toLocaleString('th-TH')}
-        </div>
+        <div className={joinClasses('mt-4 text-xs font-semibold text-cyan-200', role === 'owner' ? 'hidden' : '')}>สิทธิ์ของคุณ: {role}</div>
       ) : null}
     </div>
   )

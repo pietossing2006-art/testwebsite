@@ -117,6 +117,32 @@ export function mapThumbQualityToFfmpegQ(quality) {
   return Math.max(3, Math.min(20, Math.round(20 - ratio * 17)))
 }
 
+export function buildStorageVideoThumbFfmpegArgs({ inputPath, width, ffmpegQ }) {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-ss',
+    '00:00:01',
+    '-protocol_whitelist',
+    'file,pipe',
+    '-i',
+    String(inputPath || ''),
+    '-frames:v',
+    '1',
+    '-vf',
+    `scale=${width}:-2:force_original_aspect_ratio=decrease`,
+    '-f',
+    'image2pipe',
+    '-vcodec',
+    'mjpeg',
+    '-q:v',
+    String(ffmpegQ),
+    'pipe:1',
+  ]
+}
+
 function getStorageAccessSecret() {
   return String(
     process.env.STORAGE_BROWSER_TOKEN_SECRET ||

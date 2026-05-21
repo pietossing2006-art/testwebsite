@@ -230,9 +230,11 @@ export default function Navbar() {
     <header className="glass sticky top-0 z-50 border-b border-white/5 px-3 py-3 sm:px-4 md:px-12 md:py-4">
       <div className="mx-auto flex w-full max-w-[80rem] items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-4 lg:gap-12">
-          <Link to="/" className="flex items-center gap-2" onMouseEnter={() => setLogoHover(true)} onMouseLeave={() => setLogoHover(false)}>
+          <Link to="/" className="flex min-w-0 items-center gap-2 lg:min-w-max" onMouseEnter={() => setLogoHover(true)} onMouseLeave={() => setLogoHover(false)}>
             <div className="shrink-0" style={{ width: 'clamp(1.55rem, 7vw, 2rem)', height: 'clamp(1.55rem, 7vw, 2rem)', background: '#06b6d4', borderRadius: '0.125rem', transform: logoHover ? 'rotate(180deg)' : 'rotate(45deg)', transition: 'transform 0.7s' }} />
-            <span className="max-w-[58vw] truncate text-base font-black uppercase italic tracking-tight neon-text sm:text-xl">{siteNameFirst} <span style={{ color: '#22d3ee' }}>{siteNameRest}</span></span>
+            <span className="block max-w-[calc(100vw-6rem)] overflow-hidden pr-1 text-base font-black uppercase italic tracking-tight text-ellipsis whitespace-nowrap neon-text sm:max-w-[58vw] sm:text-xl lg:max-w-none lg:overflow-visible">
+              {siteNameFirst} <span style={{ color: '#22d3ee' }}>{siteNameRest}</span>
+            </span>
           </Link>
           <nav className="hidden items-center gap-8 lg:flex">
             {navLinks.map((item) => (

@@ -26,6 +26,8 @@ import {
 } from '../db.js'
 import { requireAuth, requireAdmin, rateLimitMiddleware } from '../lib/auth.js'
 import { sendDiscordOrderTracking } from '../lib/discordBot.js'
+import { CouponRedeemBodySchema } from '../lib/requestSchemas.js'
+import { validateBody } from '../lib/validation.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -105,12 +107,6 @@ router.get('/api/version', requireAuth, requireAdmin, (req, res) => {
     cwd: process.cwd(),
     dirname: path.resolve(__dirname, '..'),
   })
-})
-
-router.get('/api/omise/public-key', (req, res) => {
-  const key = process.env.OMISE_PUBLIC_KEY ? String(process.env.OMISE_PUBLIC_KEY) : ''
-  if (!key) return res.status(404).json({ error: 'not_configured' })
-  res.json({ ok: true, public_key: key })
 })
 
 router.get('/api/vapid-public-key', (req, res) => {
@@ -313,7 +309,7 @@ router.post('/api/purchase', requireAuth, rateLimitMiddleware({ windowMs: 60_000
       err: msg,
       code: e?.code,
     })
-    res.status(500).json({ error: 'db_error', detail: msg || String(e?.code || '') || 'unknown' })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
@@ -334,10 +330,11 @@ router.get('/api/products/:id/mystery-prizes', async (req, res) => {
 })
 
 router.post('/api/coupons/redeem', requireAuth, async (req, res) => {
-  const { code } = req.body ?? {}
-  if (typeof code !== 'string' || !code.trim()) return res.status(400).json({ error: 'invalid_code' })
+  const parsed = validateBody(CouponRedeemBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { code } = parsed.data
   try {
-    const result = await redeemCoupon({ userId: req.user.id, code: code.trim() })
+    const result = await redeemCoupon({ userId: req.user.id, code })
     res.json({ ok: true, result })
   } catch (e) {
     const msg = String(e?.message ?? '')

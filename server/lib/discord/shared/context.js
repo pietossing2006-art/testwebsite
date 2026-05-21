@@ -15,11 +15,14 @@ import { createPromptpayTopup, redeemAngpaoVoucher, verifyPromptpaySlip } from '
 
 const EPHEMERAL = 64
 const EMBED_COLORS = {
-  primary: 0x00c8ff,
-  discord: 0x5865f2,
-  success: 0x22c55e,
-  warning: 0xf59e0b,
-  danger: 0xef4444,
+  primary: 0x3aa0ff,
+  discord: 0x4c5bd4,
+  panel: 0x2d4f8f,
+  highlight: 0xd4a64a,
+  success: 0x2fbf71,
+  warning: 0xe7a93b,
+  danger: 0xd9534f,
+  orders: 0x3d6fd6,
 }
 const TOPUP_ARROW_EMOJI_NAME = '32877animatedarrowbluelite'
 const TOPUP_ARROW_EMOJI_ID = '1505093928976908298'
@@ -95,6 +98,28 @@ export function createDiscordContext() {
 
   function warningEmbed(title, description, fields) {
     return buildEmbed({ title, description, fields, color: EMBED_COLORS.warning })
+  }
+
+  function panelEmbed(title, description, fields, imageUrl) {
+    return buildEmbed({
+      title,
+      description,
+      fields,
+      imageUrl,
+      color: EMBED_COLORS.panel,
+      footer: 'VxperS Store',
+    })
+  }
+
+  function highlightEmbed(title, description, fields, imageUrl) {
+    return buildEmbed({
+      title,
+      description,
+      fields,
+      imageUrl,
+      color: EMBED_COLORS.highlight,
+      footer: 'VxperS Store',
+    })
   }
 
   function siteBaseUrl() {
@@ -256,7 +281,7 @@ export function createDiscordContext() {
           `${arrow} สถานะ: ${orderStatusLabel(order.status)}`,
           `${arrow} เวลา: ${created}`,
         ].join('\n'),
-        color: EMBED_COLORS.primary,
+        color: EMBED_COLORS.orders,
         footer: 'VxperS Store - Orders',
       })
       const image = makeMediaUrl(order.product_image_url)
@@ -292,6 +317,8 @@ export function createDiscordContext() {
     errorEmbed,
     infoEmbed,
     warningEmbed,
+    panelEmbed,
+    highlightEmbed,
     makeSiteUrl,
     makeMediaUrl,
     storeIconUrl,

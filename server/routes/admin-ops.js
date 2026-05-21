@@ -61,6 +61,8 @@ import {
   requireStaff,
 } from '../lib/auth.js'
 import { publishSupportEvent, publishFulfillmentEvent } from '../lib/events.js'
+import { AdminPasswordBodySchema } from '../lib/requestSchemas.js'
+import { validateBody } from '../lib/validation.js'
 
 const router = Router()
 
@@ -726,8 +728,9 @@ router.post('/api/admin/users/:id/password', requireAuth, requireAdmin, async (r
   const userId = Number(req.params.id)
   if (!Number.isFinite(userId)) return res.status(400).json({ error: 'invalid_id' })
 
-  const { password } = req.body ?? {}
-  if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: 'weak_password' })
+  const parsed = validateBody(AdminPasswordBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { password } = parsed.data
 
   try {
     await setUserPassword({ userId, password })
@@ -748,7 +751,7 @@ router.post('/api/admin/users/:id/password', requireAuth, requireAdmin, async (r
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
     if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
-    res.status(500).json({ error: 'db_error', code: e?.code ?? null, message: String(e?.message ?? '') })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
@@ -947,7 +950,7 @@ router.post('/api/staff/clock-in', requireAuth, requireStaff, async (req, res) =
     const result = await staffClockIn(req.user.id, { durationMinutes })
     res.json({ ok: true, ...result })
   } catch (e) {
-    res.status(500).json({ error: e?.message || 'db_error' })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
@@ -957,7 +960,7 @@ router.post('/api/staff/clock-out', requireAuth, requireStaff, async (req, res) 
     res.json({ ok: true, ...result })
   } catch (e) {
     if (e?.message === 'not_clocked_in') return res.status(400).json({ error: 'not_clocked_in' })
-    res.status(500).json({ error: e?.message || 'db_error' })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
@@ -1030,7 +1033,9 @@ router.post('/api/staff/push-subscribe', requireAuth, requireStaff, async (req, 
     await savePushSubscription(req.user.id, req.body?.subscription)
     res.json({ ok: true })
   } catch (e) {
-    res.status(400).json({ error: e?.message || 'invalid_subscription' })
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_subscription') return res.status(400).json({ error: 'invalid_subscription' })
+    res.status(400).json({ error: 'invalid_subscription' })
   }
 })
 

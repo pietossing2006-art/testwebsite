@@ -63,6 +63,8 @@ import {
   updateProduct,
 } from '../db.js'
 import { requireAuth, requireAdmin, requireFinance } from '../lib/auth.js'
+import { CategoryBodySchema, ProductBodySchema, StockItemsBodySchema } from '../lib/requestSchemas.js'
+import { validateBody } from '../lib/validation.js'
 
 const router = Router()
 
@@ -78,16 +80,16 @@ router.get('/api/admin/categories', requireAuth, requireAdmin, async (req, res) 
 })
 
 router.post('/api/admin/categories', requireAuth, requireAdmin, async (req, res) => {
-  const { name, slug, image_url, description } = req.body ?? {}
-  if (typeof name !== 'string' || name.trim().length < 1) return res.status(400).json({ error: 'invalid_name' })
-  if (typeof slug !== 'string' || slug.trim().length < 1) return res.status(400).json({ error: 'invalid_slug' })
+  const parsed = validateBody(CategoryBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { name, slug, image_url, description } = parsed.data
 
   try {
     const id = await createCategory({
-      name: name.trim(),
-      slug: slug.trim(),
+      name,
+      slug,
       imageUrl: image_url,
-      description: typeof description === 'string' ? description.trim() : '',
+      description,
     })
     res.status(201).json({ ok: true, id })
   } catch (e) {
@@ -99,17 +101,17 @@ router.post('/api/admin/categories', requireAuth, requireAdmin, async (req, res)
 router.put('/api/admin/categories/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
-  const { name, slug, image_url, description } = req.body ?? {}
-  if (typeof name !== 'string' || name.trim().length < 1) return res.status(400).json({ error: 'invalid_name' })
-  if (typeof slug !== 'string' || slug.trim().length < 1) return res.status(400).json({ error: 'invalid_slug' })
+  const parsed = validateBody(CategoryBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { name, slug, image_url, description } = parsed.data
 
   try {
     const category = await updateCategory({
       id,
-      name: name.trim(),
-      slug: slug.trim(),
+      name,
+      slug,
       imageUrl: image_url,
-      description: typeof description === 'string' ? description.trim() : '',
+      description,
     })
     res.json({ ok: true, category })
   } catch (e) {
@@ -128,7 +130,7 @@ router.delete('/api/admin/categories/:id', requireAuth, requireAdmin, async (req
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
     if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
-    if (msg === 'category_in_use') return res.status(409).json({ error: 'category_in_use', detail: e?.detail })
+    if (msg === 'category_in_use') return res.status(409).json({ error: 'category_in_use' })
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -170,19 +172,21 @@ router.put('/api/admin/products/:id/hidden', requireAuth, requireAdmin, async (r
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_id' })
     if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
-    res.status(500).json({ error: 'db_error', code: e?.code ?? null, message: String(e?.message ?? '') })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
 router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) => {
+  const parsed = validateBody(ProductBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
   const {
-    category_id,
+    category_id: cid,
     name,
     slug,
-    price,
+    price: pr,
     description,
     image_url,
-    stock,
+    stock: st,
     highlights,
     manual_url,
     manual_text,
@@ -193,26 +197,16 @@ router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) =
     farm_form_auth_key_enabled,
     farm_form_fields,
     product_options,
-    sort_order,
+    sort_order: so,
     is_featured,
     is_unlimited_stock,
-  } = req.body ?? {}
-  const cid = Number(category_id)
-  const pr = Number(price)
-  const st = Number(stock ?? 0)
-  const so = Number(sort_order ?? 0)
-  if (!Number.isFinite(cid)) return res.status(400).json({ error: 'invalid_category_id' })
-  if (typeof name !== 'string' || name.trim().length < 1) return res.status(400).json({ error: 'invalid_name' })
-  if (typeof slug !== 'string' || slug.trim().length < 1) return res.status(400).json({ error: 'invalid_slug' })
-  if (!Number.isFinite(pr)) return res.status(400).json({ error: 'invalid_price' })
-  if (!Number.isFinite(st) || st < 0) return res.status(400).json({ error: 'invalid_stock' })
-  if (!Number.isFinite(so)) return res.status(400).json({ error: 'invalid_sort_order' })
+  } = parsed.data
 
   try {
     const productId = await createProduct({
       categoryId: cid,
-      name: name.trim(),
-      slug: slug.trim(),
+      name,
+      slug,
       price: pr,
       description,
       imageUrl: image_url,
@@ -238,7 +232,7 @@ router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) =
         action: 'product.create',
         entityType: 'product',
         entityId: String(productId),
-        detail: { name: name?.trim?.() ?? null, slug: slug?.trim?.() ?? null, price: pr },
+        detail: { name, slug, price: pr },
       })
     } catch {
       // ignore
@@ -247,21 +241,23 @@ router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) =
   } catch (e) {
     if (String(e?.message ?? '') === 'invalid_product_option') return res.status(400).json({ error: 'invalid_product_option' })
     if (e?.code === '23505') return res.status(409).json({ error: 'slug_taken' })
-    res.status(500).json({ error: 'db_error', code: e?.code ?? null, message: String(e?.message ?? '') })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
 router.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  const parsed = validateBody(ProductBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
   const {
-    category_id,
+    category_id: cid,
     name,
     slug,
-    price,
+    price: pr,
     description,
     image_url,
-    stock,
+    stock: st,
     highlights,
     manual_url,
     manual_text,
@@ -272,27 +268,17 @@ router.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res
     farm_form_auth_key_enabled,
     farm_form_fields,
     product_options,
-    sort_order,
+    sort_order: so,
     is_featured,
     is_unlimited_stock,
-  } = req.body ?? {}
-  const cid = Number(category_id)
-  const pr = Number(price)
-  const st = Number(stock ?? 0)
-  const so = Number(sort_order ?? 0)
-  if (!Number.isFinite(cid)) return res.status(400).json({ error: 'invalid_category_id' })
-  if (typeof name !== 'string' || name.trim().length < 1) return res.status(400).json({ error: 'invalid_name' })
-  if (typeof slug !== 'string' || slug.trim().length < 1) return res.status(400).json({ error: 'invalid_slug' })
-  if (!Number.isFinite(pr)) return res.status(400).json({ error: 'invalid_price' })
-  if (!Number.isFinite(st) || st < 0) return res.status(400).json({ error: 'invalid_stock' })
-  if (!Number.isFinite(so)) return res.status(400).json({ error: 'invalid_sort_order' })
+  } = parsed.data
 
   try {
     const product = await updateProduct({
       id,
       categoryId: cid,
-      name: name.trim(),
-      slug: slug.trim(),
+      name,
+      slug,
       price: pr,
       description,
       imageUrl: image_url,
@@ -318,7 +304,7 @@ router.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res
         action: 'product.update',
         entityType: 'product',
         entityId: String(id),
-        detail: { name: name?.trim?.() ?? null, slug: slug?.trim?.() ?? null, price: pr, stock: st },
+        detail: { name, slug, price: pr, stock: st },
       })
     } catch {
       // ignore
@@ -327,7 +313,7 @@ router.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res
   } catch (e) {
     if (String(e?.message ?? '') === 'invalid_product_option') return res.status(400).json({ error: 'invalid_product_option' })
     if (e?.code === '23505') return res.status(409).json({ error: 'slug_taken' })
-    res.status(500).json({ error: 'db_error', code: e?.code ?? null, message: String(e?.message ?? '') })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
@@ -353,26 +339,17 @@ router.delete('/api/admin/products/:id', requireAuth, requireAdmin, async (req, 
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
     if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
-    if (msg === 'product_in_use') return res.status(409).json({ error: 'product_in_use', detail: e?.detail ?? null })
-    res.status(500).json({ error: 'db_error', code: e?.code ?? null, message: msg })
+    if (msg === 'product_in_use') return res.status(409).json({ error: 'product_in_use' })
+    res.status(500).json({ error: 'db_error' })
   }
 })
 
 // ── Digital Stock ──
 
 router.post('/api/admin/stock', requireAuth, requireAdmin, async (req, res) => {
-  const { product_id, items, text } = req.body ?? {}
-  const productId = Number(product_id)
-  if (!Number.isFinite(productId)) return res.status(400).json({ error: 'invalid_product_id' })
-
-  const arr = Array.isArray(items)
-    ? items
-    : typeof text === 'string'
-      ? text
-          .split(/\r?\n/)
-          .map((x) => x.trim())
-          .filter(Boolean)
-      : []
+  const parsed = validateBody(StockItemsBodySchema, { ...(req.body ?? {}), target_id: req.body?.product_id })
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error === 'invalid_id' ? 'invalid_product_id' : parsed.error })
+  const { target_id: productId, items: arr } = parsed.data
 
   try {
     const result = await adminAddDigitalStock({ productId, items: arr })
@@ -590,18 +567,9 @@ router.get('/api/admin/stock-pool-items', requireAuth, requireAdmin, async (req,
 })
 
 router.post('/api/admin/stock-pool-items', requireAuth, requireAdmin, async (req, res) => {
-  const { pool_id, items, text } = req.body ?? {}
-  const poolId = Number(pool_id)
-  if (!Number.isFinite(poolId)) return res.status(400).json({ error: 'invalid_pool_id' })
-
-  const arr = Array.isArray(items)
-    ? items
-    : typeof text === 'string'
-      ? text
-          .split(/\r?\n/)
-          .map((x) => x.trim())
-          .filter(Boolean)
-      : []
+  const parsed = validateBody(StockItemsBodySchema, { ...(req.body ?? {}), target_id: req.body?.pool_id })
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error === 'invalid_id' ? 'invalid_pool_id' : parsed.error })
+  const { target_id: poolId, items: arr } = parsed.data
 
   try {
     const result = await adminAddStockPoolItems({ poolId, items: arr })

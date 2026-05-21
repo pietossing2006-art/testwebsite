@@ -60,24 +60,18 @@ export function buildTopupPanelRows(ctx, emoji) {
   ]
 }
 
-function buildTopupsPanelEmbed(ctx, profile, emoji) {
+export function buildTopupsPanelEmbed(ctx, profile, emoji) {
   const arrow = ctx.topupArrow(emoji)
-  const embed = ctx.buildEmbed({
-    title: 'VxperS Top Up',
-    description: [
-      `${arrow} PromptPay - เลือกจากเมนู แล้วกรอกยอดเพื่อสร้าง QR`,
-      `${arrow} TrueMoney Angpao - กรอกลิงก์ซองของขวัญผ่านแบบฟอร์ม`,
-      `${arrow} Coupon - กรอกโค้ดคูปองเพื่อรับพ้อยท์`,
-    ].join('\n'),
-    color: ctx.EMBED_COLORS.discord,
-    imageUrl: ctx.promptpayPanelImageUrl(),
-    fields: [
-      { name: 'Account', value: ctx.profileName(profile), inline: true },
-      { name: 'PromptPay QR', value: `${arrow} สร้าง QR จากบอทและมีอายุ 10 นาที`, inline: true },
-      { name: 'Slip Verify', value: `${arrow} หลังโอนให้ใช้ \`/topup verify-slip\` และแนบรูปสลิป`, inline: false },
+  const embed = ctx.panelEmbed(
+    'VxperS Top Up',
+    'เลือกวิธีการเติมเงิน',
+    [
+      { name: 'บัญชี', value: ctx.profileName(profile), inline: true },
+      { name: 'PromptPay QR', value: `${arrow} QR มีอายุการใช้งาน 10 นาที`, inline: false },
+      { name: 'ยืนยันสลิป', value: `${arrow} หลังชำระเงิน ให้ใช้ \`/topup verify-slip\` พร้อมรูปสลิป`, inline: false },
     ],
-    footer: 'VxperS Store - Discord Top Up',
-  })
+    ctx.promptpayPanelImageUrl(),
+  )
   const icon = ctx.storeIconUrl()
   if (/^https?:\/\//i.test(icon)) embed.setThumbnail(icon)
   return embed
@@ -106,12 +100,12 @@ export async function openTopupsPanel(ctx, interaction, profile = null) {
 
 function friendlyCouponError(err) {
   const msg = String(err?.message || '')
-  if (msg === 'coupon_not_found') return 'Coupon code not found.'
-  if (msg === 'coupon_inactive') return 'This coupon is inactive.'
-  if (msg === 'coupon_expired') return 'This coupon has expired.'
-  if (msg === 'coupon_exhausted') return 'This coupon has already reached its usage limit.'
-  if (msg === 'coupon_already_used') return 'You have already used this coupon.'
-  return 'Coupon redeem failed. Please try again.'
+  if (msg === 'coupon_not_found') return 'ไม่พบโค้ดคูปอง'
+  if (msg === 'coupon_inactive') return 'คูปองนี้ไม่ทำงาน'
+  if (msg === 'coupon_expired') return 'คูปองนี้หมดอายุแล้ว'
+  if (msg === 'coupon_exhausted') return 'คูปองนี้ใช้หมดแล้ว'
+  if (msg === 'coupon_already_used') return 'คุณใช้คูปองนี้แล้ว'
+  return 'แลกคูปองไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
 }
 
 function friendlyAngpaoError(err) {
@@ -162,15 +156,15 @@ function buildPromptpayCreatedPayload(ctx, result) {
   const qrDataUrl = String(result.qr?.imageDataUrl || '')
   const qrBase64 = qrDataUrl.includes(',') ? qrDataUrl.split(',').pop() : ''
   const files = []
-  const embed = ctx.successEmbed(
+  const embed = ctx.highlightEmbed(
     'PromptPay QR Created',
-    'สแกน QR นี้เพื่อโอนเงิน แล้วใช้ `/topup verify-slip` พร้อมแนบรูปสลิปเพื่อเติมพ้อยท์เข้าบัญชี',
+    'Scan the QR to pay, then verify the transfer slip to credit points to your account.',
     [
       { name: 'Topup ID', value: `#${result.topupId}`, inline: true },
       { name: 'Amount', value: `${ctx.formatPoints(result.points)} points`, inline: true },
       { name: 'Expires', value: `${ctx.formatDateTime(result.expiresAt)} (${ctx.formatDuration(result.ttlSeconds)})`, inline: true },
       { name: 'Reference', value: String(result.reference || '-'), inline: false },
-      { name: 'Verify Slip', value: `ใช้ \`/topup verify-slip topup_id:${result.topupId}\` แล้วแนบรูปสลิป`, inline: false },
+      { name: 'Verify Slip', value: `Use \`/topup verify-slip topup_id:${result.topupId}\` and attach the transfer slip`, inline: false },
     ],
   )
 

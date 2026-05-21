@@ -3,6 +3,7 @@ const COOKIE_CONSENT_NAME = 'cookie_consent'
 const COOKIE_MAX_AGE_REMEMBER_MS = 1000 * 60 * 60 * 24 * 30
 const COOKIE_MAX_AGE_SESSION_MS = 1000 * 60 * 60 * 24
 const COOKIE_CONSENT_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 180
+const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
 
 export { COOKIE_NAME, COOKIE_CONSENT_NAME }
 export { cookieDomain, cookieSameSite }
@@ -22,7 +23,16 @@ function cookieDomain(req) {
 }
 
 function cookieSameSite(req, secure) {
-  if (secure && cookieDomain(req)) return 'none'
+  const explicit = String(process.env.COOKIE_SAME_SITE || process.env.COOKIE_SAMESITE || '').trim().toLowerCase()
+  if (explicit === 'strict' || explicit === 'lax') return explicit
+  if (explicit === 'none') return secure ? 'none' : 'lax'
+  if (
+    secure &&
+    cookieDomain(req) &&
+    TRUE_VALUES.has(String(process.env.COOKIE_SAMESITE_NONE || '').trim().toLowerCase())
+  ) {
+    return 'none'
+  }
   return 'lax'
 }
 

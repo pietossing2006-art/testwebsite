@@ -16,19 +16,18 @@ export async function execute(interaction, handlers) {
   return handlers.handleGlobalPanel(interaction)
 }
 
-function buildGlobalPanelEmbed(ctx, emoji) {
+export function buildGlobalPanelEmbed(ctx, emoji) {
   const arrow = ctx.topupArrow(emoji)
   const image = String(ctx.envValue('DISCORD_GLOBAL_PANEL_IMAGE_URL') || ctx.envValue('DISCORD_PANEL_IMAGE_URL') || '').trim()
-  const embed = ctx.buildEmbed({
-    title: 'VxperS Store',
-    description: [
-      `${arrow} เติมเงินผ่าน PromptPay, TrueMoney Angpao และ Coupon`,
-      `${arrow} ลิงก์บัญชีเว็บกับ Discord`,
-    ].join('\n'),
-    color: ctx.EMBED_COLORS.discord,
-    imageUrl: image,
-    footer: 'VxperS Store - Global Panel',
-  })
+  const embed = ctx.panelEmbed(
+    'VxperS Store',
+    'ระบบเติมเงิน PromptPay และเครื่องมือจัดการบัญชี Discord ในที่เดียว',
+    [
+      { name: 'เติมเงิน', value: `${arrow} PromptPay, TrueMoney อังเปา และ คูปอง`, inline: true },
+      { name: 'บัญชี', value: `${arrow} ลิงก์, ยกเลิกการลิงก์ และอื่นๆ`, inline: true },
+    ],
+    image,
+  )
   const icon = ctx.storeIconUrl()
   if (/^https?:\/\//i.test(icon)) embed.setThumbnail(icon)
   return embed
@@ -46,7 +45,7 @@ function buildGlobalPanelRows(ctx, emoji) {
         .addOptions([
           withEmoji({
             label: 'เติมเงิน',
-            description: 'PromptPay, TrueMoney Angpao และ Coupon',
+            description: 'PromptPay, TrueMoney อังเปา และ คูปอง',
             value: 'topups',
           }),
           withEmoji({
@@ -63,12 +62,7 @@ function buildGlobalPanelRows(ctx, emoji) {
             label: 'Unlink',
             description: 'ยกเลิกการลิงก์บัญชี',
             value: 'unlink',
-          }),
-          withEmoji({
-            label: 'Admin',
-            description: 'คำสั่งสำหรับผู้ดูแลระบบ',
-            value: 'admin',
-          }),
+          })
         ]),
     ),
   ]

@@ -1,0 +1,89 @@
+<h2>Premium Storefront direction</h2>
+<p class="subtitle">แนวทางที่เลือก: ทำให้ HOME ดูเป็นหน้าร้านที่น่าเชื่อถือและซื้อได้เร็วขึ้น โดยยังคง dark/cyan identity ของ VxperS Store</p>
+
+<div class="section">
+  <h3>Approach options inside Premium Storefront</h3>
+  <div class="options">
+    <div class="option" data-choice="balanced-premium" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content">
+        <h3>Recommended: Balanced Premium</h3>
+        <p>ปรับ hierarchy, spacing, CTA, card polish และ empty/loading states โดยไม่เปลี่ยน data flow หลัก ความเสี่ยงต่ำและเห็นผลชัดที่สุด</p>
+      </div>
+    </div>
+    <div class="option" data-choice="visual-heavy-premium" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content">
+        <h3>Visual-heavy Premium</h3>
+        <p>เพิ่ม hero visual ใหญ่กว่าเดิมและ motion มากขึ้น สวยขึ้นเร็ว แต่เสี่ยงรกบนมือถือและอาจต้องจูน performance เพิ่ม</p>
+      </div>
+    </div>
+    <div class="option" data-choice="conversion-first" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content">
+        <h3>Conversion-first</h3>
+        <p>ลดความตกแต่งลงและดันหมวด/สินค้า/เติมเงินขึ้นบนสุด เหมาะกับยอดขาย แต่ brand feel จะนิ่งกว่าแบบที่เลือกไว้</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Proposed HOME structure</h3>
+  <div class="mockup">
+    <div class="mockup-header">Desktop preview structure</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px;">
+        <div style="padding:22px;border-radius:18px;background:linear-gradient(135deg,rgba(34,211,238,.13),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.14);">
+          <div style="width:150px;height:22px;border-radius:999px;background:rgba(16,185,129,.18);margin-bottom:18px;"></div>
+          <div style="width:78%;height:44px;border-radius:12px;background:rgba(255,255,255,.82);margin-bottom:10px;"></div>
+          <div style="width:58%;height:18px;border-radius:999px;background:rgba(103,232,249,.48);margin-bottom:18px;"></div>
+          <div style="width:88%;height:10px;border-radius:999px;background:rgba(255,255,255,.25);margin-bottom:8px;"></div>
+          <div style="width:70%;height:10px;border-radius:999px;background:rgba(255,255,255,.18);margin-bottom:22px;"></div>
+          <div style="display:flex;gap:10px;">
+            <div style="width:110px;height:38px;border-radius:12px;background:#0891b2;"></div>
+            <div style="width:100px;height:38px;border-radius:12px;background:rgba(255,255,255,.11);border:1px solid rgba(255,255,255,.18);"></div>
+          </div>
+        </div>
+        <div style="padding:12px;border-radius:18px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.12);">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="height:130px;border-radius:14px;background:rgba(255,255,255,.12);"></div>
+            <div style="height:130px;border-radius:14px;background:rgba(255,255,255,.09);"></div>
+            <div style="height:130px;border-radius:14px;background:rgba(255,255,255,.09);"></div>
+            <div style="height:130px;border-radius:14px;background:rgba(255,255,255,.12);"></div>
+          </div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;">
+        <div style="height:96px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.11);"></div>
+        <div style="height:96px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.11);"></div>
+        <div style="height:96px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.11);"></div>
+        <div style="height:96px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.11);"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+        <div style="height:58px;border-radius:12px;background:rgba(34,211,238,.09);border:1px solid rgba(34,211,238,.15);"></div>
+        <div style="height:58px;border-radius:12px;background:rgba(34,211,238,.09);border:1px solid rgba(34,211,238,.15);"></div>
+        <div style="height:58px;border-radius:12px;background:rgba(34,211,238,.09);border:1px solid rgba(34,211,238,.15);"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>What improves</h4>
+    <ul>
+      <li>Hero อ่านง่ายขึ้นและ CTA ชัดขึ้น</li>
+      <li>Featured cards ดูเป็นสินค้าเด่น ไม่ใช่แค่ grid ตกแต่ง</li>
+      <li>หมวดหมู่และ bundle ถูกจัดให้สแกนง่ายขึ้น</li>
+      <li>มือถือมีลำดับข้อมูลแน่นขึ้น ไม่เสียพื้นที่ด้านบนมากเกินไป</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Trade-offs</h4>
+    <ul>
+      <li>จะลดเอฟเฟกต์บางจุดที่ทำให้ดู cyber หนักเกินไป</li>
+      <li>ยังไม่เพิ่ม API ใหม่ในรอบนี้ เพื่อให้ scope คุมได้</li>
+    </ul>
+  </div>
+</div>

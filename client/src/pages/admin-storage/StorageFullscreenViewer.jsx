@@ -1,9 +1,81 @@
 import { createPortal } from 'react-dom'
+import { useRef } from 'react'
 import { Icon } from './StoragePrimitives.jsx'
-import { formatBytes, formatDate } from './storageMediaUtils.js'
+import { clampMediaTime, getDoubleTapSeekDelta, getSwipeNavigationAction } from './storageInteractionUtils.js'
+import { canPreviewInBrowser, formatBytes, formatDate, getExtension } from './storageMediaUtils.js'
 
-export default function StorageFullscreenViewer({ media, mediaUrl, onClose, onPrev, onNext }) {
+export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, onClose, onPrev, onNext }) {
+  const touchStartRef = useRef(null)
+  const lastVideoTapRef = useRef(null)
+  const videoRef = useRef(null)
+
   if (!media || typeof document === 'undefined') return null
+
+  const canInlinePreview = canPreviewInBrowser(media)
+
+  const handleTouchStart = (e) => {
+    const touch = e.changedTouches?.[0]
+    if (!touch) return
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY }
+  }
+
+  const seekVideoAt = (video, clientX) => {
+    if (!video) return
+    const rect = video.getBoundingClientRect()
+    const deltaSeconds = getDoubleTapSeekDelta({
+      clientX,
+      rectLeft: rect.left,
+      rectWidth: rect.width,
+    })
+    video.currentTime = clampMediaTime({
+      currentTime: video.currentTime,
+      deltaSeconds,
+      duration: video.duration,
+    })
+  }
+
+  const handleTouchEnd = (e) => {
+    const start = touchStartRef.current
+    const touch = e.changedTouches?.[0]
+    touchStartRef.current = null
+    if (!start || !touch) return
+
+    const action = getSwipeNavigationAction({
+      startX: start.x,
+      startY: start.y,
+      endX: touch.clientX,
+      endY: touch.clientY,
+    })
+    if (action === 'next') {
+      lastVideoTapRef.current = null
+      onNext()
+      return
+    }
+    if (action === 'prev') {
+      lastVideoTapRef.current = null
+      onPrev()
+      return
+    }
+
+    const targetVideo = e.target?.tagName === 'VIDEO' ? e.target : e.target?.closest?.('video')
+    if (media.media_kind !== 'video' || !targetVideo) return
+
+    const now = Date.now()
+    const lastTap = lastVideoTapRef.current
+    if (lastTap && now - lastTap.time < 320 && Math.abs(touch.clientX - lastTap.x) < 28 && Math.abs(touch.clientY - lastTap.y) < 28) {
+      lastVideoTapRef.current = null
+      seekVideoAt(targetVideo, touch.clientX)
+      return
+    }
+
+    lastVideoTapRef.current = { time: now, x: touch.clientX, y: touch.clientY }
+  }
+
+  const handleVideoDoubleClick = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    seekVideoAt(videoRef.current, e.clientX)
+  }
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/92 p-3" onClick={onClose}>
@@ -19,7 +91,12 @@ export default function StorageFullscreenViewer({ media, mediaUrl, onClose, onPr
         <Icon name="arrow-left" className="h-5 w-5" />
       </button>
 
-      <div className="relative max-h-[95vh] w-full max-w-[min(1280px,96vw)]" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="relative max-h-[95vh] w-full max-w-[min(1280px,96vw)]"
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/12 bg-black/58 px-3 py-2 text-xs text-white/72 backdrop-blur">
           <div className="min-w-0">
             <div className="truncate font-black text-white">{media.name}</div>
@@ -36,10 +113,43 @@ export default function StorageFullscreenViewer({ media, mediaUrl, onClose, onPr
         </div>
 
         <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/86">
-          {media.media_kind === 'image' ? (
-            <img src={mediaUrl} alt={media.name} className="max-h-[84vh] w-full object-contain" />
+          {!canInlinePreview ? (
+            <div className="grid min-h-[60vh] place-items-center px-6 py-10 text-center text-white/70">
+              <div className="max-w-md">
+                <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl border border-white/10 bg-white/[0.04]">
+                  <Icon name={media.media_kind === 'video' ? 'play' : 'image'} className="h-5 w-5" />
+                </div>
+                <div className="mt-3 text-sm font-bold text-white/88">
+                  ไฟล์ชนิดนี้ไม่เหมาะสำหรับพรีวิวเต็มจอในเบราว์เซอร์โดยตรง
+                </div>
+                <div className="mt-2 text-xs text-white/48">
+                  {media.name}
+                  {getExtension(media.name) ? ` | ${getExtension(media.name)}` : ''}
+                </div>
+                <a
+                  href={mediaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 inline-flex h-10 items-center justify-center rounded-xl border border-cyan-300/30 bg-cyan-400/10 px-4 text-xs font-bold text-cyan-100 transition hover:bg-cyan-400/16"
+                >
+                  เปิดไฟล์ในแท็บใหม่
+                </a>
+              </div>
+            </div>
+          ) : media.media_kind === 'image' ? (
+            <img key={media.path} src={mediaUrl} alt={media.name} className="max-h-[84vh] w-full object-contain" />
           ) : (
-            <video src={mediaUrl} autoPlay loop playsInline preload="metadata" controls className="max-h-[84vh] w-full bg-black" />
+            <video
+              key={media.path}
+              ref={videoRef}
+              src={mediaUrl}
+              poster={previewUrl || undefined}
+              playsInline
+              preload="metadata"
+              controls
+              onDoubleClick={handleVideoDoubleClick}
+              className="max-h-[84vh] w-full bg-black"
+            />
           )}
         </div>
 
@@ -47,8 +157,6 @@ export default function StorageFullscreenViewer({ media, mediaUrl, onClose, onPr
           <span>{formatBytes(media.size)}</span>
           <span className="text-white/22">|</span>
           <span>{formatDate(media.mtime)}</span>
-          <span className="text-white/22">|</span>
-          <span>Arrow keys / Esc</span>
         </div>
       </div>
 

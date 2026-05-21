@@ -22,10 +22,11 @@ import {
   chooseConsent,
 } from '../lib/cookies.js'
 import { getBearerToken, getCookieToken, requireAuth, rateLimitMiddleware } from '../lib/auth.js'
+import { LoginBodySchema, RegisterBodySchema, VALID_USERNAME_RE } from '../lib/requestSchemas.js'
+import { validateBody } from '../lib/validation.js'
 
 const router = Router()
 
-const VALID_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
 const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state'
 const DISCORD_OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 const pendingDiscordOauthStates = new Map()
@@ -104,8 +105,9 @@ function normalizeReturnTo(raw) {
   return value.slice(0, 300)
 }
 
-function encodeDiscordError(code, detail = '') {
+export function encodeDiscordError(code, detail = '') {
   const safeCode = String(code || 'discord_login_failed').trim() || 'discord_login_failed'
+  if (safeCode === 'discord_login_failed') return safeCode
   const safeDetail = String(detail || '').trim().slice(0, 120)
   return safeDetail ? `${safeCode}:${encodeURIComponent(safeDetail)}` : safeCode
 }
@@ -356,20 +358,17 @@ router.get('/api/auth/discord/callback', rateLimitMiddleware({ windowMs: 60_000,
     if (msg === 'banned') return redirectToClient(res, `/login?discord_error=${encodeDiscordError('banned')}`, clientOrigin)
     if (msg === 'user_already_linked') return redirectToClient(res, `/login?discord_error=${encodeDiscordError('user_already_linked')}`, clientOrigin)
     if (code === '23505') return redirectToClient(res, `/login?discord_error=${encodeDiscordError('db_unique_violation')}`, clientOrigin)
-    return redirectToClient(res, `/login?discord_error=${encodeDiscordError('discord_login_failed', msg || code || 'unknown')}`, clientOrigin)
+    return redirectToClient(res, `/login?discord_error=${encodeDiscordError('discord_login_failed')}`, clientOrigin)
   }
 })
 
 router.post('/api/auth/register', rateLimitMiddleware({ windowMs: 60_000, max: 5, keyPrefix: 'register' }), async (req, res) => {
-  const { email, password, username, remember } = req.body ?? {}
-  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return res.status(400).json({ error: 'invalid_email' })
-  if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: 'weak_password' })
-  if (!/^[\x20-\x7E]+$/.test(password)) return res.status(400).json({ error: 'invalid_password_charset' })
-  if (typeof username !== 'string' || username.trim().length < 6) return res.status(400).json({ error: 'invalid_username' })
-  if (!VALID_USERNAME_RE.test(username.trim())) return res.status(400).json({ error: 'invalid_username_charset' })
+  const parsed = validateBody(RegisterBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { email, password, username, remember } = parsed.data
 
   try {
-    const user = await registerUser(email.trim().toLowerCase(), password, username)
+    const user = await registerUser(email, password, username)
     const token = await createSession(user.id)
     const u = await getUserById(user.id)
     const secure = isSecureCookie(req)
@@ -398,16 +397,14 @@ router.post('/api/auth/register', rateLimitMiddleware({ windowMs: 60_000, max: 5
 })
 
 router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: 'login' }), async (req, res) => {
-  const { login, email, password, remember } = req.body ?? {}
-  const identifier = typeof login === 'string' ? login : email
-  if (typeof identifier !== 'string' || typeof password !== 'string') {
-    return res.status(400).json({ error: 'invalid_payload' })
-  }
+  const parsed = validateBody(LoginBodySchema, req.body)
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+  const { identifier, password, remember } = parsed.data
 
   try {
     const user = await getUserByLogin(identifier)
     if (!user) return res.status(401).json({ error: 'invalid_credentials' })
-    if (!checkPassword(password, user.password_hash)) return res.status(401).json({ error: 'invalid_credentials' })
+    if (!(await checkPassword(password, user.password_hash))) return res.status(401).json({ error: 'invalid_credentials' })
     if (Boolean(user?.is_banned)) return res.status(403).json({ error: 'banned' })
     const token = await createSession(user.id)
     const secure = isSecureCookie(req)

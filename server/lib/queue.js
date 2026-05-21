@@ -1,20 +1,12 @@
-import Redis from 'ioredis'
 import { queueReleaseExpiredBoosterClaims } from '../db.js'
+import { redis } from './redis.js'
 
-const REDIS_URL = process.env.REDIS_URL ? String(process.env.REDIS_URL) : ''
 const QUEUE_SLA_SECONDS = process.env.QUEUE_SLA_SECONDS ? Number(process.env.QUEUE_SLA_SECONDS) : 300
 const QUEUE_TICK_MS = process.env.QUEUE_TICK_MS ? Number(process.env.QUEUE_TICK_MS) : 10_000
 const QUEUE_LOCK_TTL_MS = process.env.QUEUE_LOCK_TTL_MS ? Number(process.env.QUEUE_LOCK_TTL_MS) : 15_000
 
 export { QUEUE_SLA_SECONDS, QUEUE_TICK_MS }
-
-export const redis = REDIS_URL ? new Redis(REDIS_URL, { maxRetriesPerRequest: 1, enableReadyCheck: true }) : null
-
-if (redis) {
-  redis.on('error', () => {
-    // keep server stable even if redis is temporarily unavailable
-  })
-}
+export { redis }
 
 export async function withRedisLock({ key, ttlMs }, fn) {
   if (!redis) return { ok: false, skipped: true, reason: 'redis_not_configured' }

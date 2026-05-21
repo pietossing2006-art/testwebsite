@@ -18,12 +18,6 @@ const METHOD_META = {
     detail: 'กรอกโค้ดคูปองเพื่อรับพ้อยท์ทันที',
     icon: 'ticket',
   },
-  omise: {
-    label: 'บัตร / PromptPay',
-    short: 'Coming soon',
-    detail: 'ช่องทางชำระเงินอัตโนมัติผ่านผู้ให้บริการภายนอก',
-    icon: 'card',
-  },
 }
 
 METHOD_META.promptpay = {
@@ -136,7 +130,6 @@ function friendlyError(errorText) {
   if (errorText === 'invalid_reference') return 'ลิงก์ซองอั่งเปาไม่ถูกต้อง'
   if (errorText === 'invalid_voucher') return 'ลิงก์นี้ถูกใช้แล้ว หรือไม่สามารถตรวจสอบได้'
   if (errorText === 'duplicate_reference') return 'ลิงก์นี้ถูกใช้ไปแล้ว'
-  if (errorText === 'omise_disabled') return 'ช่องทางบัตร / PromptPay ยังไม่เปิดใช้งาน'
   if (errorText === 'invalid_code') return 'โค้ดคูปองไม่ถูกต้อง'
   if (errorText === 'coupon_used') return 'คูปองนี้ถูกใช้แล้ว'
   if (errorText === 'coupon_expired') return 'คูปองหมดอายุแล้ว'
@@ -184,9 +177,6 @@ export default function Topup() {
   const [points, setPoints] = useState(199)
   const [reference, setReference] = useState('')
   const [couponCode, setCouponCode] = useState('')
-  const [omiseChannel, setOmiseChannel] = useState('promptpay')
-  const [omiseBank, setOmiseBank] = useState('bbl')
-  const [omiseCardToken, setOmiseCardToken] = useState('')
   const [promptpayOrder, setPromptpayOrder] = useState(null)
   const [slipImage, setSlipImage] = useState('')
   const [slipPreview, setSlipPreview] = useState('')
@@ -198,7 +188,6 @@ export default function Topup() {
   const [errorMsg, setErrorMsg] = useState('')
   const [nowMs, setNowMs] = useState(Date.now())
 
-  const omiseEnabled = false
   const balance = Number(me?.wallet?.balance ?? me?.user?.balance ?? 0)
   const selectedMethod = METHOD_META[method]
   const promptpayExpiresAtMs = promptpayOrder?.expires_at ? Date.parse(promptpayOrder.expires_at) : Number.NaN
@@ -320,23 +309,6 @@ export default function Topup() {
         setSlipName('')
         setVerifyStatus('idle')
         setPopup({ kind: 'success', title: 'สร้าง QR แล้ว', message: 'สแกน QR แล้วอัปโหลดสลิปเพื่อยืนยันการเติมพ้อยท์' })
-      } else {
-        if (!omiseEnabled) {
-          setStatus('error')
-          setErrorMsg('omise_disabled')
-          return
-        }
-        await fetchJson('/api/topups/omise', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            points: Number(points),
-            channel: omiseChannel,
-            bank: omiseChannel === 'transfer' ? omiseBank : undefined,
-            card_token: omiseChannel === 'card' ? omiseCardToken : undefined,
-          }),
-        })
-        setPopup({ kind: 'success', title: 'สร้างคำขอสำเร็จ', message: 'ดำเนินการชำระเงินตามช่องทางที่เลือก' })
       }
       setStatus('success')
       triggerAppRefresh()
@@ -576,50 +548,6 @@ export default function Topup() {
                     {verifyStatus === 'submitting' ? 'กำลังตรวจสลิป...' : promptpayExpired ? 'QR หมดอายุแล้ว' : 'ตรวจสลิปและเติมพ้อยท์'}
                   </button>
                 </div>
-              </div>
-            ) : null}
-
-            {method === 'omise' ? (
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="md:col-span-2">
-                  <label className="text-xs font-bold text-white/65">จำนวนพ้อยท์</label>
-                  <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
-                    {QUICK_AMOUNTS.map((amount) => (
-                      <button
-                        type="button"
-                        key={amount}
-                        onClick={() => setPoints(amount)}
-                        className={`rounded-xl border px-3 py-2 text-xs font-extrabold transition ${Number(points) === amount ? 'border-cyan-300/35 bg-cyan-400/12 text-cyan-50' : 'border-white/10 bg-white/[0.025] text-white/60 hover:text-white'}`}
-                      >
-                        {amount}
-                      </button>
-                    ))}
-                  </div>
-                  <input value={points} onChange={(event) => setPoints(event.target.value)} className="mt-3 ui-field h-12 px-4 text-sm" placeholder="เช่น 199" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-white/65">ช่องทางชำระเงิน</label>
-                  <select value={omiseChannel} onChange={(event) => setOmiseChannel(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white outline-none">
-                    <option value="promptpay">PromptPay</option>
-                    <option value="transfer">โอนธนาคาร</option>
-                    <option value="card">บัตร</option>
-                  </select>
-                </div>
-                {omiseChannel === 'transfer' ? (
-                  <div>
-                    <label className="text-xs font-bold text-white/65">ธนาคาร</label>
-                    <select value={omiseBank} onChange={(event) => setOmiseBank(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white outline-none">
-                      <option value="bbl">Bangkok Bank (BBL)</option>
-                      <option value="bay">Krungsri (BAY)</option>
-                    </select>
-                  </div>
-                ) : null}
-                {omiseChannel === 'card' ? (
-                  <div className="md:col-span-2">
-                    <label className="text-xs font-bold text-white/65">Card Token</label>
-                    <input value={omiseCardToken} onChange={(event) => setOmiseCardToken(event.target.value)} className="mt-2 ui-field h-12 px-4 text-sm" placeholder="tokn_test_..." />
-                  </div>
-                ) : null}
               </div>
             ) : null}
 

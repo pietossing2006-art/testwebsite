@@ -1,0 +1,100 @@
+<h2>HOME redesign workflow</h2>
+<p class="subtitle">Companion restarted. Pick the direction for the HOME improvement before I write the spec and implementation plan.</p>
+
+<div class="section">
+  <h3>Workflow</h3>
+  <div class="options">
+    <div class="option">
+      <div class="letter">1</div>
+      <div class="content">
+        <h3>Design spec</h3>
+        <p>Define the exact changes: hero, featured products, showcase, category grid, bundles, trust, FAQ, empty states, and responsive behavior.</p>
+      </div>
+    </div>
+    <div class="option">
+      <div class="letter">2</div>
+      <div class="content">
+        <h3>Implementation plan</h3>
+        <p>Split work into safe steps: component cleanup, visual polish, mobile checks, build/lint, and browser verification.</p>
+      </div>
+    </div>
+    <div class="option">
+      <div class="letter">3</div>
+      <div class="content">
+        <h3>Code + verify</h3>
+        <p>Edit only HOME-related files and avoid unrelated worktree changes already present in the repo.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Choose a visual direction</h3>
+  <p class="subtitle">Click one option, or reply A/B/C in chat.</p>
+  <div class="cards">
+    <div class="card" data-choice="premium-storefront" onclick="toggleSelect(this)">
+      <div class="card-image">
+        <div style="padding:18px;background:linear-gradient(135deg,#07111a,#0d2d38);border-radius:14px;color:white;min-height:180px;">
+          <div style="height:10px;width:40%;background:#67e8f9;border-radius:99px;margin-bottom:22px;"></div>
+          <div style="font-size:30px;font-weight:900;line-height:1.05;">VxperS Store</div>
+          <div style="margin-top:12px;height:8px;width:76%;background:rgba(255,255,255,.25);border-radius:99px;"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px;">
+            <div style="height:70px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:12px;"></div>
+            <div style="height:70px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:12px;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>A. Premium Storefront</h3>
+        <p>More polished and purchase-focused: clearer hero, stronger CTA, cleaner product showcase, premium storefront feel.</p>
+      </div>
+    </div>
+
+    <div class="card" data-choice="gaming-arcade" onclick="toggleSelect(this)">
+      <div class="card-image">
+        <div style="padding:18px;background:linear-gradient(135deg,#09090b,#261016);border-radius:14px;color:white;min-height:180px;">
+          <div style="display:flex;gap:7px;margin-bottom:18px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:#ef4444;"></span>
+            <span style="width:8px;height:8px;border-radius:50%;background:#22d3ee;"></span>
+            <span style="width:8px;height:8px;border-radius:50%;background:#a78bfa;"></span>
+          </div>
+          <div style="font-size:25px;font-weight:900;line-height:1.1;color:#cffafe;text-shadow:0 0 18px rgba(34,211,238,.55);">Digital Gear</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:20px;">
+            <div style="height:58px;background:rgba(34,211,238,.14);border:1px solid rgba(34,211,238,.28);border-radius:10px;"></div>
+            <div style="height:58px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.22);border-radius:10px;"></div>
+            <div style="height:58px;background:rgba(167,139,250,.12);border:1px solid rgba(167,139,250,.22);border-radius:10px;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>B. Gaming Arcade</h3>
+        <p>More energetic cyber/gaming style: stronger neon, more motion, campaign and bundle areas feel more exciting.</p>
+      </div>
+    </div>
+
+    <div class="card" data-choice="clean-dashboard" onclick="toggleSelect(this)">
+      <div class="card-image">
+        <div style="padding:18px;background:linear-gradient(135deg,#0b1117,#111827);border-radius:14px;color:white;min-height:180px;">
+          <div style="display:grid;grid-template-columns:1.25fr .75fr;gap:12px;">
+            <div>
+              <div style="height:12px;width:46%;background:#e5e7eb;border-radius:99px;margin-bottom:12px;"></div>
+              <div style="height:8px;width:86%;background:rgba(255,255,255,.28);border-radius:99px;"></div>
+              <div style="height:8px;width:64%;background:rgba(255,255,255,.18);border-radius:99px;margin-top:8px;"></div>
+            </div>
+            <div style="height:86px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);border-radius:12px;"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:24px;">
+            <div style="height:44px;background:rgba(255,255,255,.08);border-radius:9px;"></div>
+            <div style="height:44px;background:rgba(255,255,255,.08);border-radius:9px;"></div>
+            <div style="height:44px;background:rgba(255,255,255,.08);border-radius:9px;"></div>
+            <div style="height:44px;background:rgba(255,255,255,.08);border-radius:9px;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        <h3>C. Clean Dashboard</h3>
+        <p>Less visual noise and more scan-friendly structure: calmer, more trustworthy, still dark and modern.</p>
+      </div>
+    </div>
+  </div>
+</div>

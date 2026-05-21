@@ -26,19 +26,19 @@ export default function StorageToolbar({
           </div>
           <h1 className="mt-3 text-2xl font-black tracking-tight text-white md:text-3xl">Storage Host</h1>
           <p className="mt-1 max-w-2xl text-sm text-white/55">
-            Media browser  ”À√—∫‰∂¥Ÿ√Ÿª·≈–«‘¥’‚Õ·∫∫≈◊Ëπ¢÷Èπ ‡ª‘¥¥ŸµËÕ‡π◊ËÕß‰¥È‡√Á« ·≈–µ—¥πÈ”Àπ—° Ë«π∑’Ë‰¡Ë®”‡ªÁπ°—∫ß“π¥Ÿ ◊ËÕÕÕ°
+            Media browser ‡∏™‡∏≥‡∏´‡∏£‡∏±‡∏ö‡πÑ‡∏ñ‡∏î‡∏π‡∏£‡∏π‡∏õ‡πÅ‡∏•‡∏∞‡∏ß‡∏¥‡∏î‡∏µ‡πÇ‡∏≠‡πÉ‡∏´‡πâ‡∏•‡∏∑‡πà‡∏ô‡∏Ç‡∏∂‡πâ‡∏ô ‡πÄ‡∏õ‡∏¥‡∏î‡∏î‡∏π‡∏ï‡πà‡∏≠‡πÄ‡∏ô‡∏∑‡πà‡∏≠‡∏á‡πÑ‡∏î‡πâ‡πÄ‡∏£‡πá‡∏ß ‡πÅ‡∏•‡∏∞‡∏•‡∏î‡∏ô‡πâ‡∏≥‡∏´‡∏ô‡∏±‡∏Å‡∏Ç‡∏≠‡∏á UI ‡∏ó‡∏µ‡πà‡πÑ‡∏°‡πà‡∏à‡∏≥‡πÄ‡∏õ‡πá‡∏ô‡∏Å‡∏±‡∏ö‡∏á‡∏≤‡∏ô‡∏î‡∏π‡∏™‡∏∑‡πà‡∏≠
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <StatPill label="Media" value={summary.media.toLocaleString('th-TH')} tone="emerald" />
-          <StatPill label="Images" value={summary.images.toLocaleString('th-TH')} />
-          <StatPill label="Videos" value={summary.videos.toLocaleString('th-TH')} tone="amber" />
-          <StatPill label="Folders" value={summary.folders.toLocaleString('th-TH')} />
+        <div className="-mx-1 flex w-full gap-2 overflow-x-auto px-1 pb-1 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0">
+          <div className="min-w-[120px] shrink-0 sm:min-w-0"><StatPill label="Media" value={summary.media.toLocaleString('th-TH')} tone="emerald" /></div>
+          <div className="min-w-[120px] shrink-0 sm:min-w-0"><StatPill label="Images" value={summary.images.toLocaleString('th-TH')} /></div>
+          <div className="min-w-[120px] shrink-0 sm:min-w-0"><StatPill label="Videos" value={summary.videos.toLocaleString('th-TH')} tone="amber" /></div>
+          <div className="min-w-[120px] shrink-0 sm:min-w-0"><StatPill label="Folders" value={summary.folders.toLocaleString('th-TH')} /></div>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="mt-4 grid gap-3">
         <label className="relative block min-w-0">
           <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/38">
             <Icon name="search" className="h-4 w-4" />
@@ -46,24 +46,24 @@ export default function StorageToolbar({
           <input
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="§ÈπÀ“™◊ËÕ‰ø≈ÏÀ√◊Õ path"
+            placeholder="‡∏Ñ‡πâ‡∏ô‡∏´‡∏≤‡∏ä‡∏∑‡πà‡∏≠‡πÑ‡∏ü‡∏•‡πå‡∏´‡∏£‡∏∑‡∏≠ path"
             className="h-11 w-full rounded-2xl border border-white/10 bg-black/25 pl-10 pr-3 text-sm text-white outline-none placeholder:text-white/30 focus:border-cyan-300/36"
           />
         </label>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          <div className="flex shrink-0 rounded-2xl border border-white/10 bg-black/20 p-1">
             {[
-              ['all', '∑—ÈßÀ¡¥'],
-              ['image', '√Ÿª'],
-              ['video', '«‘¥’‚Õ'],
+              ['all', '‡∏ó‡∏±‡πâ‡∏á‡∏´‡∏°‡∏î'],
+              ['image', '‡∏£‡∏π‡∏õ'],
+              ['video', '‡∏ß‡∏¥‡∏î‡∏µ‡πÇ‡∏≠'],
             ].map(([key, label]) => (
               <button
                 key={key}
                 type="button"
                 onClick={() => onMediaFilterChange(key)}
                 className={joinClasses(
-                  'h-8 rounded-xl px-3 text-[11px] font-bold transition',
+                  'h-9 shrink-0 rounded-xl px-3 text-[11px] font-bold transition',
                   mediaFilter === key ? 'bg-cyan-400/16 text-cyan-100' : 'text-white/55 hover:bg-white/[0.08] hover:text-white',
                 )}
               >
@@ -72,27 +72,12 @@ export default function StorageToolbar({
             ))}
           </div>
 
-          <select
-            value={sortBy}
-            onChange={(e) => onSortByChange(e.target.value)}
-            className="h-10 rounded-2xl border border-white/10 bg-black/25 px-3 text-xs font-bold text-white/78 outline-none"
-          >
-            <option value="name">‡√’¬ßµ“¡™◊ËÕ</option>
-            <option value="date">‡√’¬ßµ“¡«—π∑’Ë</option>
-            <option value="size">‡√’¬ßµ“¡¢π“¥</option>
-          </select>
-
-          <ToolbarButton onClick={onToggleSortOrder} title=" ≈—∫≈”¥—∫°“√‡√’¬ß">
-            <Icon name="sort" className="h-3.5 w-3.5" />
-            {sortOrder === 'asc' ? 'πÈÕ¬‰ª¡“°' : '¡“°‰ªπÈÕ¬'}
-          </ToolbarButton>
-
-          <div className="flex rounded-2xl border border-white/10 bg-black/20 p-1">
+          <div className="flex shrink-0 rounded-2xl border border-white/10 bg-black/20 p-1">
             <button
               type="button"
               onClick={() => onViewModeChange('grid')}
               className={joinClasses(
-                'grid h-8 w-9 place-items-center rounded-xl transition',
+                'grid h-9 w-10 place-items-center rounded-xl transition',
                 viewMode === 'grid' ? 'bg-cyan-400/16 text-cyan-100' : 'text-white/55 hover:bg-white/[0.08] hover:text-white',
               )}
               aria-label="Grid view"
@@ -103,7 +88,7 @@ export default function StorageToolbar({
               type="button"
               onClick={() => onViewModeChange('column')}
               className={joinClasses(
-                'grid h-8 w-9 place-items-center rounded-xl transition',
+                'grid h-9 w-10 place-items-center rounded-xl transition',
                 viewMode === 'column' ? 'bg-cyan-400/16 text-cyan-100' : 'text-white/55 hover:bg-white/[0.08] hover:text-white',
               )}
               aria-label="List view"
@@ -111,10 +96,27 @@ export default function StorageToolbar({
               <Icon name="list" className="h-4 w-4" />
             </button>
           </div>
+        </div>
 
-          <ToolbarButton onClick={onRefresh} disabled={status === 'loading'}>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:flex sm:flex-wrap sm:items-center">
+          <select
+            value={sortBy}
+            onChange={(e) => onSortByChange(e.target.value)}
+            className="h-10 min-w-0 rounded-2xl border border-white/10 bg-black/25 px-3 text-xs font-bold text-white/78 outline-none"
+          >
+            <option value="name">‡πÄ‡∏£‡∏µ‡∏¢‡∏á‡∏ï‡∏≤‡∏°‡∏ä‡∏∑‡πà‡∏≠</option>
+            <option value="date">‡πÄ‡∏£‡∏µ‡∏¢‡∏á‡∏ï‡∏≤‡∏°‡∏ß‡∏±‡∏ô‡∏ó‡∏µ‡πà</option>
+            <option value="size">‡πÄ‡∏£‡∏µ‡∏¢‡∏á‡∏ï‡∏≤‡∏°‡∏Ç‡∏ô‡∏≤‡∏î</option>
+          </select>
+
+          <ToolbarButton onClick={onToggleSortOrder} title="‡∏™‡∏•‡∏±‡∏ö‡∏•‡∏≥‡∏î‡∏±‡∏ö‡∏Å‡∏≤‡∏£‡πÄ‡∏£‡∏µ‡∏¢‡∏á" className="h-10 px-3">
+            <Icon name="sort" className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{sortOrder === 'asc' ? '‡∏ô‡πâ‡∏≠‡∏¢‡πÑ‡∏õ‡∏°‡∏≤‡∏Å' : '‡∏°‡∏≤‡∏Å‡πÑ‡∏õ‡∏ô‡πâ‡∏≠‡∏¢'}</span>
+          </ToolbarButton>
+
+          <ToolbarButton onClick={onRefresh} disabled={status === 'loading'} className="h-10 px-3">
             <Icon name="refresh" className="h-3.5 w-3.5" />
-            √’‡ø√™
+            <span className="hidden sm:inline">‡∏£‡∏µ‡πÄ‡∏ü‡∏£‡∏ä</span>
           </ToolbarButton>
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { getSession, getUserById, deleteSession } from '../db.js'
 import { COOKIE_NAME, isSecureCookie, clearAuthCookie } from './cookies.js'
+import { redis as defaultRedisClient } from './redis.js'
 
 export function getBearerToken(req) {
   const h = req.headers.authorization
@@ -67,20 +68,93 @@ export function requireAnyRole(roles) {
   }
 }
 
-const _rateLimitBuckets = new Map()
-export function rateLimitMiddleware({ windowMs = 60_000, max = 10, keyPrefix = '' } = {}) {
-  return function rateLimit(req, res, next) {
-    const ip = String(req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown')
-    const key = `${keyPrefix}:${ip}`
-    const now = Date.now()
-    let bucket = _rateLimitBuckets.get(key)
-    if (!bucket || now > bucket.resetAt) {
-      bucket = { count: 0, resetAt: now + windowMs }
-      _rateLimitBuckets.set(key, bucket)
+export function createMemoryRateLimitStore({ maxBuckets = 10_000, now = () => Date.now() } = {}) {
+  const buckets = new Map()
+  const limit = Number.isFinite(Number(maxBuckets)) && Number(maxBuckets) > 0 ? Number(maxBuckets) : 10_000
+
+  function pruneExpired(current = now()) {
+    for (const [key, bucket] of buckets) {
+      if (!bucket || current >= Number(bucket.resetAt || 0)) buckets.delete(key)
     }
-    bucket.count += 1
+  }
+
+  function enforceLimit() {
+    while (buckets.size > limit) {
+      const oldest = buckets.keys().next().value
+      if (oldest == null) break
+      buckets.delete(oldest)
+    }
+  }
+
+  return {
+    get size() {
+      return buckets.size
+    },
+    has(key) {
+      return buckets.has(key)
+    },
+    hit(key, windowMs) {
+      const current = now()
+      pruneExpired(current)
+      let bucket = buckets.get(key)
+      if (!bucket || current >= bucket.resetAt) {
+        bucket = { count: 0, resetAt: current + windowMs }
+        buckets.set(key, bucket)
+      }
+      bucket.count += 1
+      enforceLimit()
+      return { count: bucket.count, resetAt: bucket.resetAt }
+    },
+  }
+}
+
+const defaultMemoryRateLimitStore = createMemoryRateLimitStore()
+
+function getClientIp(req) {
+  const forwarded = req.headers?.['x-forwarded-for']
+  const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded
+  return String(forwardedValue?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown')
+}
+
+async function hitRedisRateLimit({ redisClient, key, windowMs }) {
+  const count = await redisClient.incr(key)
+  if (count === 1) await redisClient.pexpire(key, windowMs)
+  let ttlMs = await redisClient.pttl(key)
+  if (!Number.isFinite(ttlMs) || ttlMs < 0) {
+    await redisClient.pexpire(key, windowMs)
+    ttlMs = windowMs
+  }
+  return { count, resetAt: Date.now() + ttlMs }
+}
+
+export function rateLimitMiddleware({
+  windowMs = 60_000,
+  max = 10,
+  keyPrefix = '',
+  redisClient = defaultRedisClient,
+  memoryStore = defaultMemoryRateLimitStore,
+} = {}) {
+  return async function rateLimit(req, res, next) {
+    const ip = getClientIp(req)
+    const key = `${keyPrefix}:${ip}`
+    let bucket = null
+
+    if (redisClient) {
+      try {
+        bucket = await hitRedisRateLimit({
+          redisClient,
+          key: `rate_limit:${keyPrefix || 'default'}:${ip}`,
+          windowMs,
+        })
+      } catch {
+        bucket = null
+      }
+    }
+
+    if (!bucket) bucket = memoryStore.hit(key, windowMs)
+
     if (bucket.count > max) {
-      res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)))
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - Date.now()) / 1000))))
       return res.status(429).json({ error: 'too_many_requests' })
     }
     next()
