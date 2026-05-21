@@ -5,6 +5,10 @@ server/node_modules/
 dist/
 client/dist/
 server/dist/
+bin/
+obj/
+tools/**/bin/
+tools/**/obj/
 
 .agent/
 .script-state/
@@ -19,6 +23,7 @@ pnpm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+.vs/
 
 .env
 .env.*
