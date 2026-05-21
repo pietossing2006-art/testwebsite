@@ -604,21 +604,21 @@ export default function Home() {
         )}
       </section>
 
-      <section className="fade-in-up relative overflow-hidden rounded-3xl border border-white/[0.08] glass p-5 sm:p-6">
-        <div className="absolute inset-0 grid-pattern opacity-25" />
+      <section className="fade-in-up relative overflow-hidden rounded-3xl border border-white/[0.06] bg-slate-950/35 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] sm:p-6">
+        <div className="absolute inset-0 grid-pattern opacity-10" />
         <div className={`motion-stagger relative grid gap-4 ${trustData.length <= 3 ? 'sm:grid-cols-3' : trustData.length === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
           {trustData.map((item, idx) => (
-            <div key={`trust-${idx}`} className="motion-card motion-hover flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.04] p-4">
+            <div key={`trust-${idx}`} className="motion-card motion-hover flex items-start gap-3 rounded-2xl border border-white/[0.055] bg-slate-900/35 p-4 transition hover:border-white/[0.1] hover:bg-slate-800/35">
               {item.icon ? (
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-300/20 bg-cyan-500/10">
-                  <svg viewBox="0 0 24 24" className="h-5 w-5 text-cyan-300" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-200/15 bg-cyan-400/[0.07]">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5 text-cyan-200/85" fill="none" stroke="currentColor" strokeWidth="1.5">
                     <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
                   </svg>
                 </div>
               ) : null}
               <div>
-                <div className="text-sm font-black text-white">{item.title}</div>
-                {item.desc ? <div className="mt-1 text-xs leading-5 text-white/50">{item.desc}</div> : null}
+                <div className="text-sm font-black text-white/90">{item.title}</div>
+                {item.desc ? <div className="mt-1 text-xs leading-5 text-white/56">{item.desc}</div> : null}
               </div>
             </div>
           ))}
@@ -626,14 +626,14 @@ export default function Home() {
       </section>
 
       <section className="fade-in-up">
-        <div className="rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 sm:p-6">
+        <div className="rounded-3xl border border-white/[0.06] bg-slate-950/30 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] sm:p-6">
           <div className="mb-3">
-            <h2 className="font-display text-2xl font-black text-white">คำถามที่พบบ่อย</h2>
-            <div className="mt-1 text-xs font-semibold text-white/40">ข้อมูลสั้น ๆ ก่อนสั่งซื้อ</div>
+            <h2 className="font-display text-2xl font-black text-white/92">คำถามที่พบบ่อย</h2>
+            <div className="mt-1 text-xs font-semibold text-white/48">ข้อมูลสั้น ๆ ก่อนสั่งซื้อ</div>
           </div>
-          <Accordion type="single" collapsible>
+          <Accordion type="single" collapsible className="rounded-2xl border border-white/[0.045] bg-slate-950/25 px-3 sm:px-4">
             {faqData.map((item, idx) => (
-              <AccordionItem key={`faq-${idx}`} value={`faq-${idx}`} className={idx === faqData.length - 1 ? 'border-b-0' : ''}>
+              <AccordionItem key={`faq-${idx}`} value={`faq-${idx}`} className={`border-white/[0.055] ${idx === faqData.length - 1 ? 'border-b-0' : ''}`}>
                 <AccordionTrigger>{item.question}</AccordionTrigger>
                 <AccordionContent>{item.answer}</AccordionContent>
               </AccordionItem>
