@@ -82,14 +82,6 @@ export function getExtension(name) {
   return idx >= 0 ? txt.slice(idx + 1).toUpperCase() : ''
 }
 
-const BROWSER_SAFE_IMAGE_EXTENSIONS = new Set([
-  'JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'BMP', 'SVG', 'AVIF',
-])
-
-const BROWSER_SAFE_VIDEO_EXTENSIONS = new Set([
-  'MP4', 'WEBM', 'M4V',
-])
-
 export function buildStorageMediaUrl(endpoint, row, extraParams = {}) {
   const qs = new URLSearchParams()
   qs.set('path', String(row?.path || ''))
@@ -102,10 +94,7 @@ export function buildStorageMediaUrl(endpoint, row, extraParams = {}) {
 
 export function canPreviewInBrowser(row) {
   if (!row) return false
-  const ext = getExtension(row.name)
-  if (row.media_kind === 'image') return BROWSER_SAFE_IMAGE_EXTENSIONS.has(ext)
-  if (row.media_kind === 'video') return BROWSER_SAFE_VIDEO_EXTENSIONS.has(ext)
-  return false
+  return row.media_kind === 'image' || row.media_kind === 'video'
 }
 
 export function compareEntries(a, b, sortBy, sortOrder) {

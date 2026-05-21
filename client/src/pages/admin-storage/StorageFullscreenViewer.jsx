@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from './StoragePrimitives.jsx'
 import { clampMediaTime, getDoubleTapSeekDelta, getSwipeNavigationAction } from './storageInteractionUtils.js'
 import { canPreviewInBrowser, formatBytes, formatDate, getExtension } from './storageMediaUtils.js'
@@ -8,10 +8,15 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
   const touchStartRef = useRef(null)
   const lastVideoTapRef = useRef(null)
   const videoRef = useRef(null)
+  const [previewFailed, setPreviewFailed] = useState(false)
+
+  useEffect(() => {
+    setPreviewFailed(false)
+  }, [media?.path, mediaUrl, previewUrl])
 
   if (!media || typeof document === 'undefined') return null
 
-  const canInlinePreview = canPreviewInBrowser(media)
+  const canInlinePreview = canPreviewInBrowser(media) && !previewFailed
 
   const handleTouchStart = (e) => {
     const touch = e.changedTouches?.[0]
@@ -137,7 +142,13 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
               </div>
             </div>
           ) : media.media_kind === 'image' ? (
-            <img key={media.path} src={mediaUrl} alt={media.name} className="max-h-[84vh] w-full object-contain" />
+            <img
+              key={media.path}
+              src={previewUrl || mediaUrl}
+              alt={media.name}
+              className="max-h-[84vh] w-full object-contain"
+              onError={() => setPreviewFailed(true)}
+            />
           ) : (
             <video
               key={media.path}
@@ -148,6 +159,7 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
               preload="metadata"
               controls
               onDoubleClick={handleVideoDoubleClick}
+              onError={() => setPreviewFailed(true)}
               className="max-h-[84vh] w-full bg-black"
             />
           )}

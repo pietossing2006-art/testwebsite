@@ -202,7 +202,11 @@ export default function AdminStorage() {
   )
 
   const selectedMediaPreviewUrl = useMemo(
-    () => (selectedMedia ? getEntryThumbnailUrl(selectedMedia) : ''),
+    () => {
+      if (!selectedMedia) return ''
+      if (selectedMedia.media_kind === 'image') return buildStorageMediaUrl('thumb', selectedMedia, { w: 1280, q: 80 })
+      return getEntryThumbnailUrl(selectedMedia)
+    },
     [selectedMedia],
   )
 
