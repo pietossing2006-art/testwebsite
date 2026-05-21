@@ -24,6 +24,8 @@ pnpm-debug.log*
 .idea/
 .vscode/
 .vs/
+tools/StartVxpers.sln
+tools/StartVxpers/
 
 .env
 .env.*
