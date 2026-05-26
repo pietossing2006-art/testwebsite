@@ -12,6 +12,7 @@ tools/**/obj/
 
 .agent/
 .script-state/
+.worktrees/
 .windsurf/
 
 *.log
