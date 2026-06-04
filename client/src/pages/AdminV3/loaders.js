@@ -226,6 +226,24 @@ export async function loadPromotionsModule() {
   }
 }
 
+// ── Growth ──
+export async function loadGrowthModule() {
+  const [campaignsRes, reviewsRes, tiersRes, signalsRes, notificationsRes] = await Promise.all([
+    fetchJson('/api/admin/growth-campaigns'),
+    fetchJson('/api/admin/reviews?limit=100'),
+    fetchJson('/api/admin/vip-tiers'),
+    fetchJson('/api/admin/wishlist-signals?limit=50'),
+    fetchJson('/api/admin/growth-notifications?limit=100'),
+  ])
+  return {
+    campaigns: Array.isArray(campaignsRes?.campaigns) ? campaignsRes.campaigns : [],
+    reviews: Array.isArray(reviewsRes?.reviews) ? reviewsRes.reviews : [],
+    tiers: Array.isArray(tiersRes?.tiers) ? tiersRes.tiers : [],
+    signals: Array.isArray(signalsRes?.signals) ? signalsRes.signals : [],
+    notifications: Array.isArray(notificationsRes?.events) ? notificationsRes.events : [],
+  }
+}
+
 // ── Stock ──
 export async function loadStockModule() {
   const [productsRes, poolsRes] = await Promise.all([
