@@ -114,3 +114,52 @@ export function normalizeReviewSummary(summary) {
   const averageRating = reviewCount > 0 ? Math.round(Math.max(0, rawAverage) * 10) / 10 : 0
   return { averageRating, reviewCount }
 }
+
+function campaignTargetLink(targets) {
+  const first = Array.isArray(targets) ? targets[0] : null
+  const targetId = Number(first?.target_id)
+  if (first?.target_type === 'product' && Number.isFinite(targetId) && targetId > 0) return `/product/${Math.trunc(targetId)}`
+  if (first?.target_type === 'bundle' && Number.isFinite(targetId) && targetId > 0) return `/bundle/${Math.trunc(targetId)}`
+  return '/categories'
+}
+
+export function normalizeGrowthCampaigns(payload) {
+  const campaigns = Array.isArray(payload?.campaigns) ? payload.campaigns : []
+  return campaigns
+    .filter((campaign) => Number.isFinite(Number(campaign?.id)) && Number(campaign?.id) > 0 && String(campaign?.title || '').trim())
+    .map((campaign) => ({
+      ...campaign,
+      id: Number(campaign.id),
+      title: String(campaign.title || '').trim(),
+      description: String(campaign.description || '').trim(),
+      badgeText: String(campaign.badge_text || campaign.kind || 'Flash Deal').trim(),
+      primaryLink: String(campaign.primary_link || '').trim() || campaignTargetLink(campaign.targets),
+    }))
+}
+
+export function formatWishlistStockStatus(status) {
+  const code = String(status || '').trim()
+  if (code === 'available') return 'พร้อมขาย'
+  if (code === 'out_of_stock') return 'หมดสต็อก'
+  if (code === 'hidden') return 'ไม่แสดงสินค้าแล้ว'
+  return 'ติดตามอยู่'
+}
+
+export function normalizeNotificationPreferences(preferences) {
+  const data = preferences && typeof preferences === 'object' ? preferences : {}
+  return {
+    wishlist_stock: data.wishlist_stock !== false,
+    wishlist_promo: data.wishlist_promo !== false,
+    campaigns: data.campaigns !== false,
+    vip: data.vip !== false,
+    reviews: data.reviews !== false,
+    push_enabled: data.push_enabled === true,
+  }
+}
+
+export function getVipProgressPercent(vip) {
+  const nextThreshold = Number(vip?.next_threshold_points)
+  if (!Number.isFinite(nextThreshold) || nextThreshold <= 0) return 100
+  const pointsSpent = Math.max(0, toFiniteNumber(vip?.points_spent))
+  return Math.max(0, Math.min(100, Math.round((pointsSpent / nextThreshold) * 100)))
+}

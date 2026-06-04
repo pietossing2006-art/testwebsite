@@ -4,7 +4,11 @@ import assert from 'node:assert/strict'
 import {
   formatGrowthErrorMessage,
   formatThaiPoints,
+  formatWishlistStockStatus,
+  getVipProgressPercent,
+  normalizeGrowthCampaigns,
   normalizeDiscountBreakdown,
+  normalizeNotificationPreferences,
   normalizeReviewSummary,
 } from './growthDisplayUtils.js'
 
@@ -61,4 +65,43 @@ test('normalizeReviewSummary keeps compact rating metrics stable', () => {
     reviewCount: 12,
   })
   assert.deepEqual(normalizeReviewSummary(null), { averageRating: 0, reviewCount: 0 })
+})
+
+test('normalizeGrowthCampaigns keeps active campaign cards linkable', () => {
+  const campaigns = normalizeGrowthCampaigns({
+    campaigns: [
+      { id: 1, title: 'Flash', primary_link: '', targets: [{ target_type: 'product', target_id: 42 }] },
+      { id: 2, title: 'Bundle', primary_link: '/bundle/8', targets: [] },
+      { id: null, title: 'bad' },
+    ],
+  })
+
+  assert.deepEqual(campaigns.map((campaign) => [campaign.id, campaign.title, campaign.primaryLink]), [
+    [1, 'Flash', '/product/42'],
+    [2, 'Bundle', '/bundle/8'],
+  ])
+})
+
+test('formatWishlistStockStatus maps wishlist stock codes to customer labels', () => {
+  assert.equal(formatWishlistStockStatus('available'), 'พร้อมขาย')
+  assert.equal(formatWishlistStockStatus('out_of_stock'), 'หมดสต็อก')
+  assert.equal(formatWishlistStockStatus('hidden'), 'ไม่แสดงสินค้าแล้ว')
+  assert.equal(formatWishlistStockStatus(''), 'ติดตามอยู่')
+})
+
+test('normalizeNotificationPreferences defaults growth notifications without enabling push silently', () => {
+  assert.deepEqual(normalizeNotificationPreferences(null), {
+    wishlist_stock: true,
+    wishlist_promo: true,
+    campaigns: true,
+    vip: true,
+    reviews: true,
+    push_enabled: false,
+  })
+})
+
+test('getVipProgressPercent computes progress toward the next tier', () => {
+  assert.equal(getVipProgressPercent({ points_spent: 500, next_threshold_points: 1000 }), 50)
+  assert.equal(getVipProgressPercent({ points_spent: 1000, next_threshold_points: 1000 }), 100)
+  assert.equal(getVipProgressPercent({ points_spent: 100, next_threshold_points: null }), 100)
 })
