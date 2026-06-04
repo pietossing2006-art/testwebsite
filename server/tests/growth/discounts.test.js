@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   DISCOUNT_PRIORITY,
   computeDiscountStep,
+  normalizeDiscountCandidate,
   resolveDiscountQuote,
 } from '../../lib/growthDiscounts.js'
 
@@ -60,4 +61,46 @@ test('resolveDiscountQuote reports rejected discounts without applying them', ()
   assert.equal(quote.final_total_points, 500)
   assert.equal(quote.discounts_applied.length, 0)
   assert.deepEqual(quote.discounts_rejected.map((d) => d.reason), ['campaign_expired', 'invalid_coupon'])
+})
+
+test('normalizeDiscountCandidate normalizes public discount fields', () => {
+  assert.deepEqual(normalizeDiscountCandidate({
+    source_type: 'unknown',
+    source_id: 'bad',
+    source_code: '  FALLBACK  ',
+    discount_percent: 'not-a-number',
+    amount_points: '10.9',
+  }), {
+    source_type: 'coupon',
+    source_id: null,
+    source_code: 'FALLBACK',
+    label: 'FALLBACK',
+    discount_percent: null,
+    discount_amount_points: 10,
+    rejected_reason: null,
+    metadata: {},
+    priority: 3,
+  })
+
+  assert.equal(normalizeDiscountCandidate({ discount_amount_points: -1 }).discount_amount_points, null)
+  assert.equal(normalizeDiscountCandidate({ discount_amount_points: 'bad' }).discount_amount_points, null)
+  assert.equal(normalizeDiscountCandidate({ discount_percent: 0 }).discount_percent, 0)
+})
+
+test('resolveDiscountQuote returns considered discounts in evaluation order', () => {
+  const quote = resolveDiscountQuote({
+    targetType: 'product',
+    targetId: 'bad',
+    originalUnitPricePoints: 1000,
+    candidates: [
+      { source_type: 'coupon', amount_points: 100 },
+      { source_type: 'product_promotion', discount_percent: 10 },
+      { source_type: 'vip', discount_percent: 5 },
+    ],
+    now: 'not-a-date',
+  })
+
+  assert.equal(quote.target_id, null)
+  assert.match(quote.resolved_at, /^\d{4}-\d{2}-\d{2}T/)
+  assert.deepEqual(quote.discounts_considered.map((d) => d.source_type), ['product_promotion', 'vip', 'coupon'])
 })

@@ -8,9 +8,31 @@ function toPositiveInt(value, fallback = 0) {
   return Math.max(0, Math.trunc(n))
 }
 
+function toFiniteNumberOrNull(value) {
+  if (value == null) return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function toNonNegativeIntOrNull(value) {
+  const n = toFiniteNumberOrNull(value)
+  if (n == null || n < 0) return null
+  return Math.trunc(n)
+}
+
+function toFiniteIdOrNull(value) {
+  const n = toFiniteNumberOrNull(value)
+  return n == null ? null : n
+}
+
 function normalizeSourceType(value) {
   const source = String(value || '').trim()
   return PRIORITY_INDEX.has(source) ? source : 'coupon'
+}
+
+function toIsoTimestamp(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString()
 }
 
 export function computeDiscountStep({ unitPrice, percent, amount } = {}) {
@@ -29,17 +51,16 @@ export function computeDiscountStep({ unitPrice, percent, amount } = {}) {
 
 export function normalizeDiscountCandidate(candidate = {}) {
   const sourceType = normalizeSourceType(candidate.source_type)
-  const sourceId = candidate.source_id == null ? null : Number(candidate.source_id)
   const sourceCode = String(candidate.source_code || '').trim() || null
   const label = String(candidate.label || sourceCode || sourceType).trim()
   const rejectedReason = String(candidate.rejected_reason || '').trim()
   return {
     source_type: sourceType,
-    source_id: Number.isFinite(sourceId) ? sourceId : null,
+    source_id: toFiniteIdOrNull(candidate.source_id),
     source_code: sourceCode,
     label,
-    discount_percent: candidate.discount_percent == null ? null : Number(candidate.discount_percent),
-    discount_amount_points: candidate.discount_amount_points ?? candidate.amount_points ?? null,
+    discount_percent: toFiniteNumberOrNull(candidate.discount_percent),
+    discount_amount_points: toNonNegativeIntOrNull(candidate.discount_amount_points ?? candidate.amount_points),
     rejected_reason: rejectedReason || null,
     metadata: candidate.metadata && typeof candidate.metadata === 'object' ? candidate.metadata : {},
     priority: PRIORITY_INDEX.get(sourceType) ?? 999,
@@ -105,14 +126,14 @@ export function resolveDiscountQuote({
 
   return {
     target_type: String(targetType || '').trim() || null,
-    target_id: targetId == null ? null : Number(targetId),
+    target_id: toFiniteIdOrNull(targetId),
     original_unit_price_points: original,
     quantity: qty,
-    discounts_considered: considered.map(({ priority, ...candidate }) => candidate),
+    discounts_considered: ordered.map(({ priority, ...candidate }) => candidate),
     discounts_applied: discountsApplied,
     discounts_rejected: discountsRejected,
     final_unit_price_points: running,
     final_total_points: running * qty,
-    resolved_at: now instanceof Date ? now.toISOString() : new Date(now).toISOString(),
+    resolved_at: toIsoTimestamp(now),
   }
 }
