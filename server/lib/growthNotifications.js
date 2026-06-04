@@ -53,9 +53,11 @@ function campaignLink(payload) {
 }
 
 export function buildGrowthEventKey({ eventType, targetType, targetId, version } = {}) {
-  const parts = [eventType, targetType, targetId, version].map(cleanPart).filter(Boolean)
-  if (parts.length < 3) throw new Error('invalid_event_key')
-  return parts.join(':')
+  const requiredParts = [eventType, targetType, targetId].map(cleanPart)
+  if (requiredParts.some((part) => !part)) throw new Error('invalid_event_key')
+
+  const versionPart = cleanPart(version)
+  return [...requiredParts, ...(versionPart ? [versionPart] : [])].join(':')
 }
 
 export function filterGrowthNotificationChannels({

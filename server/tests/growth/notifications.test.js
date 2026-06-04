@@ -27,11 +27,17 @@ test('buildGrowthEventKey cleans whitespace and colon characters in every part',
   )
 })
 
-test('buildGrowthEventKey rejects incomplete keys', () => {
-  assert.throws(
-    () => buildGrowthEventKey({ eventType: 'campaign_started', targetType: 'campaign' }),
-    /invalid_event_key/,
-  )
+test('buildGrowthEventKey rejects incomplete required identity parts', () => {
+  const incompleteKeys = [
+    { eventType: 'campaign_started', targetType: 'campaign' },
+    { targetType: 'product', targetId: 42, version: 'stock' },
+    { eventType: 'campaign_started', targetId: 42, version: 'stock' },
+    { eventType: 'campaign_started', targetType: 'product', version: 'stock' },
+  ]
+
+  for (const input of incompleteKeys) {
+    assert.throws(() => buildGrowthEventKey(input), /invalid_event_key/)
+  }
 })
 
 test('normalizeNotificationPreferences enables safe defaults', () => {
@@ -64,7 +70,7 @@ test('filterGrowthNotificationChannels respects opt-outs for each mapped event c
   }
 })
 
-test('filterGrowthNotificationChannels gates push on preference and subscription', () => {
+test('filterGrowthNotificationChannels keeps inbox baseline and respects push preference', () => {
   assert.deepEqual(
     filterGrowthNotificationChannels({
       eventType: 'campaign_started',
@@ -76,16 +82,27 @@ test('filterGrowthNotificationChannels gates push on preference and subscription
   assert.deepEqual(
     filterGrowthNotificationChannels({
       eventType: 'campaign_started',
-      preferences: { campaigns: true, push_enabled: true },
-      hasPushSubscription: false,
+      preferences: { campaigns: false, push_enabled: true },
+      hasPushSubscription: true,
     }),
-    ['inbox'],
+    [],
   )
   assert.deepEqual(
     filterGrowthNotificationChannels({
-      eventType: 'campaign_started',
-      preferences: { campaigns: true, push_enabled: false },
+      eventType: 'vip_tier_changed',
+      preferences: { vip: true, push_enabled: false },
       hasPushSubscription: true,
+    }),
+    ['inbox'],
+  )
+})
+
+test('filterGrowthNotificationChannels gates push on subscription', () => {
+  assert.deepEqual(
+    filterGrowthNotificationChannels({
+      eventType: 'campaign_started',
+      preferences: { campaigns: true, push_enabled: true },
+      hasPushSubscription: false,
     }),
     ['inbox'],
   )
@@ -176,5 +193,9 @@ test('renderGrowthNotification falls back for invalid IDs', () => {
 })
 
 test('renderGrowthNotification returns inbox fallback for unknown events', () => {
-  assert.equal(renderGrowthNotification({ eventType: 'new_growth_event' }).link, '/inbox')
+  const rendered = renderGrowthNotification({ eventType: 'new_growth_event' })
+  assert.equal(rendered.link, '/inbox')
+  assert.ok(rendered.title.length > 0)
+  assert.ok(rendered.body.length > 0)
+  assert.ok(rendered.push_body.length > 0)
 })
