@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchJson, reloadPageSoon, triggerAppRefresh } from '../api.js'
+import DiscountBreakdown from '../components/growth/DiscountBreakdown.jsx'
+import { formatGrowthErrorMessage } from '../components/growth/growthDisplayUtils.js'
 
 function fmt(value) {
   return Math.round(Number(value) || 0).toLocaleString('th-TH')
@@ -44,6 +46,9 @@ function getApiErrorMessage(error) {
   if (code === 'invalid_coupon') return 'โค้ดส่วนลดไม่ถูกต้อง'
   if (code === 'coupon_expired') return 'โค้ดส่วนลดหมดอายุแล้ว'
   if (code === 'coupon_exhausted') return 'โค้ดส่วนลดถูกใช้ครบจำนวนแล้ว'
+  if (code === 'campaign_expired') return formatGrowthErrorMessage(code)
+  if (code === 'campaign_sold_out') return formatGrowthErrorMessage(code)
+  if (code === 'quote_stale') return formatGrowthErrorMessage(code)
   if (code === 'invalid_product_option') return 'ตัวเลือกสินค้าใน Bundle ไม่ถูกต้อง กรุณาแจ้งแอดมิน'
   if (code === 'duplicate_purchase') return 'ระบบป้องกันรายการซ้ำ กรุณาลองใหม่อีกครั้ง'
   return 'ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
@@ -331,6 +336,7 @@ export default function BundleDetail() {
               </div>
             ) : null}
             {couponError ? <div className="mt-2 text-xs font-bold text-rose-200">{couponError}</div> : null}
+            <DiscountBreakdown quote={quote} />
           </div>
 
           {quote?.available === false ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-100">มีสินค้าบางรายการไม่พอสำหรับ Bundle นี้</div> : null}

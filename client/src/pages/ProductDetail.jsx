@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchJson, reloadPageSoon, triggerAppRefresh } from '../api.js'
+import DiscountBreakdown from '../components/growth/DiscountBreakdown.jsx'
+import ReviewSummary from '../components/growth/ReviewSummary.jsx'
+import WishlistButton from '../components/growth/WishlistButton.jsx'
 import { DEFAULT_UI_IMAGE_SETTINGS, normalizeUiImageSettings } from '../uiImageSettings.js'
 
 function fmt(value) {
@@ -15,6 +18,11 @@ function discountUnitPrice(unitPrice, promoPercent, promoAmount) {
   if (Number.isFinite(promoPercent) && promoPercent > 0) discount = Math.floor((price * promoPercent) / 100)
   else if (Number.isFinite(promoAmount) && promoAmount > 0) discount = Math.floor(promoAmount)
   return Math.max(0, price - Math.min(price, discount))
+}
+
+function ratingStars(value) {
+  const rating = Math.max(0, Math.min(5, Math.round(Number(value) || 0)))
+  return `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}`
 }
 
 function useCountdown(endsAt) {
@@ -84,6 +92,17 @@ function getApiErrorMessage(error) {
   return 'ทำรายการไม่สำเร็จ'
 }
 
+function getReviewErrorMessage(error) {
+  const code = error?.data?.error
+  if (code === 'invalid_order_item_id') return 'กรุณาใส่เลขรายการสั่งซื้อให้ถูกต้อง'
+  if (code === 'review_not_allowed') return 'รีวิวได้เฉพาะสินค้าที่คุณซื้อสำเร็จแล้ว'
+  if (code === 'review_exists') return 'รายการนี้เคยส่งรีวิวแล้ว'
+  if (code === 'invalid_rating') return 'กรุณาให้คะแนน 1-5 ดาว'
+  if (code === 'invalid_comment') return 'กรุณาเขียนรีวิวอย่างน้อย 2 ตัวอักษร'
+  if (code === 'invalid_comment_too_long') return 'รีวิวยาวเกินไป'
+  return 'ส่งรีวิวไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
+}
+
 export default function ProductDetail() {
   const { id } = useParams()
   const nav = useNavigate()
@@ -112,6 +131,11 @@ export default function ProductDetail() {
   const [qtyRequiredOpen, setQtyRequiredOpen] = useState(false)
   const [mysteryPrizes, setMysteryPrizes] = useState([])
   const [mysteryRecentWins, setMysteryRecentWins] = useState([])
+  const [wishlist, setWishlist] = useState({ followed: false, loaded: false })
+  const [reviews, setReviews] = useState({ summary: null, reviews: [] })
+  const [reviewForm, setReviewForm] = useState({ order_item_id: '', rating: 5, comment: '' })
+  const [reviewStatus, setReviewStatus] = useState('idle')
+  const [reviewMessage, setReviewMessage] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -155,6 +179,67 @@ export default function ProductDetail() {
       cancelled = true
     }
   }, [])
+
+  const loadReviews = useCallback(async () => {
+    if (!id) return
+    try {
+      const data = await fetchJson(`/api/products/${id}/reviews`)
+      setReviews({
+        summary: data?.summary ?? null,
+        reviews: Array.isArray(data?.reviews) ? data.reviews : [],
+      })
+    } catch {
+      setReviews({ summary: null, reviews: [] })
+    }
+  }, [id])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      if (!id) return
+      try {
+        const data = await fetchJson(`/api/products/${id}/reviews`)
+        if (!cancelled) {
+          setReviews({
+            summary: data?.summary ?? null,
+            reviews: Array.isArray(data?.reviews) ? data.reviews : [],
+          })
+        }
+      } catch {
+        if (!cancelled) setReviews({ summary: null, reviews: [] })
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [id])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadWishlist() {
+      if (isAuthed === false) {
+        setWishlist({ followed: false, loaded: true })
+        return
+      }
+      if (isAuthed !== true || !product?.id) return
+      try {
+        const data = await fetchJson('/api/me/wishlist')
+        if (cancelled) return
+        const items = Array.isArray(data?.wishlist?.items) ? data.wishlist.items : []
+        setWishlist({
+          followed: items.some((item) => Number(item?.product_id) === Number(product.id)),
+          loaded: true,
+        })
+      } catch {
+        if (!cancelled) setWishlist({ followed: false, loaded: true })
+      }
+    }
+    loadWishlist()
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthed, product?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -382,6 +467,42 @@ export default function ProductDetail() {
     }
   }
 
+  async function submitReview(event) {
+    event.preventDefault()
+    if (!(await ensureAuthed())) {
+      nav('/login')
+      return
+    }
+
+    const orderItemId = Number(reviewForm.order_item_id)
+    if (!Number.isFinite(orderItemId) || orderItemId <= 0) {
+      setReviewStatus('error')
+      setReviewMessage('กรุณาใส่เลขรายการสั่งซื้อให้ถูกต้อง')
+      return
+    }
+
+    setReviewStatus('submitting')
+    setReviewMessage('')
+    try {
+      await fetchJson(`/api/products/${product.id}/reviews`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_item_id: Math.trunc(orderItemId),
+          rating: Number(reviewForm.rating),
+          comment: reviewForm.comment,
+        }),
+      })
+      setReviewForm({ order_item_id: '', rating: 5, comment: '' })
+      setReviewStatus('success')
+      setReviewMessage('ส่งรีวิวแล้ว รอแอดมินอนุมัติก่อนแสดงผล')
+      await loadReviews()
+    } catch (error) {
+      setReviewStatus('error')
+      setReviewMessage(getReviewErrorMessage(error))
+    }
+  }
+
   async function buy() {
     if (!(await ensureAuthed())) {
       nav('/login')
@@ -484,6 +605,7 @@ export default function ProductDetail() {
               : 'ซื้อสินค้า'
   const successPicks = Array.isArray(successData?.picks) ? successData.picks : []
   const successItems = successPicks.length > 0 ? successPicks : []
+  const reviewItems = Array.isArray(reviews.reviews) ? reviews.reviews : []
 
   return (
     <div className="space-y-7 fade-in-up">
@@ -554,8 +676,15 @@ export default function ProductDetail() {
                   {outOfStock ? 'ไม่พร้อมขาย' : 'พร้อมสั่งซื้อ'}
                 </span>
                 <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-bold text-white/55">{product.category_name}</span>
+                <ReviewSummary summary={reviews.summary} compact />
               </div>
             </div>
+            <WishlistButton
+              productId={product.id}
+              initialFollowed={wishlist.followed}
+              isAuthed={isAuthed}
+              onChange={(followed) => setWishlist({ followed, loaded: true })}
+            />
           </div>
 
           <div className="mt-5">
@@ -723,6 +852,7 @@ export default function ProductDetail() {
                   <div className="border-t border-white/10 pt-1">สุทธิ: <span className="font-black text-emerald-300">{fmt(quote.total_points)}</span> พ้อยท์</div>
                 </div>
               ) : null}
+              <DiscountBreakdown quote={quote} />
             </div>
           </div>
 
@@ -751,6 +881,87 @@ export default function ProductDetail() {
       <section className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 sm:p-6">
         <div className="text-base font-black text-white">รายละเอียดสินค้า</div>
         <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-white/62">{product.description || 'ยังไม่มีรายละเอียดสินค้า'}</div>
+      </section>
+
+      <section id="reviews" className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-base font-black text-white">รีวิวจากผู้ซื้อจริง</div>
+            <div className="mt-1 text-sm text-white/45">แสดงเฉพาะรีวิวที่ผ่านการอนุมัติ เพื่อให้ข้อมูลน่าเชื่อถือและไม่รกสายตา</div>
+          </div>
+          <ReviewSummary summary={reviews.summary} />
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-[0.82fr_1.18fr]">
+          <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
+            {isAuthed === true ? (
+              <form onSubmit={submitReview} className="grid gap-3">
+                <div>
+                  <label className="text-[11px] font-black text-white/55">เลขรายการสั่งซื้อ</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={reviewForm.order_item_id}
+                    onChange={(event) => setReviewForm((prev) => ({ ...prev, order_item_id: event.target.value }))}
+                    placeholder="เช่น 1234"
+                    className="ui-field mt-1 h-11"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-black text-white/55">คะแนน</label>
+                  <select
+                    value={reviewForm.rating}
+                    onChange={(event) => setReviewForm((prev) => ({ ...prev, rating: Number(event.target.value) }))}
+                    className="ui-field mt-1 h-11"
+                  >
+                    {[5, 4, 3, 2, 1].map((rating) => (
+                      <option key={rating} value={rating}>{ratingStars(rating)} {rating}/5</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[11px] font-black text-white/55">รีวิว</label>
+                  <textarea
+                    value={reviewForm.comment}
+                    onChange={(event) => setReviewForm((prev) => ({ ...prev, comment: event.target.value }))}
+                    rows={4}
+                    maxLength={1200}
+                    placeholder="เล่าประสบการณ์หลังซื้อสินค้า"
+                    className="ui-field mt-1 min-h-28 py-3"
+                  />
+                </div>
+                <button type="submit" disabled={reviewStatus === 'submitting'} className="ui-btn-primary h-11 text-xs font-black disabled:cursor-wait disabled:opacity-60">
+                  {reviewStatus === 'submitting' ? 'กำลังส่งรีวิว...' : 'ส่งรีวิว'}
+                </button>
+                {reviewMessage ? (
+                  <div className={`text-xs font-bold ${reviewStatus === 'success' ? 'text-emerald-200' : 'text-rose-200'}`}>{reviewMessage}</div>
+                ) : null}
+              </form>
+            ) : (
+              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4 text-sm leading-6 text-white/55">
+                เข้าสู่ระบบและซื้อสินค้าสำเร็จก่อน จึงจะเขียนรีวิวได้
+                <div className="mt-3">
+                  <Link to="/login" className="ui-btn inline-flex h-10 items-center px-4 text-xs font-black">เข้าสู่ระบบ</Link>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            {reviewItems.length > 0 ? reviewItems.map((review) => (
+              <div key={review.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-black text-white">{review.reviewer_name || 'ผู้ซื้อ'}</div>
+                  <div className="text-xs font-black text-amber-100">{ratingStars(review.rating)}</div>
+                </div>
+                <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/62">{review.comment}</div>
+                {review.created_at ? <div className="mt-3 text-[11px] text-white/35">{new Date(review.created_at).toLocaleDateString('th-TH')}</div> : null}
+              </div>
+            )) : (
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm font-bold text-white/42">ยังไม่มีรีวิวที่ผ่านการอนุมัติ</div>
+            )}
+          </div>
+        </div>
       </section>
 
       {qtyRequiredOpen ? (
