@@ -21,18 +21,14 @@ export function normalizeNotificationPreferences(input) {
 
 function cleanPart(value) {
   if (value == null) return ''
-  return String(value).trim().replace(/\s+/g, '_').replace(/:+/g, '_')
+  return String(value).trim().replace(/[\s:]+/g, '_')
 }
 
-function cleanVersionParts(value) {
-  if (value == null) return []
-  return String(value).split(/:+/).map(cleanPart).filter(Boolean)
-}
-
-function finiteIdOrNull(value) {
-  if (value == null || value === '') return null
+function positiveIntegerId(value) {
+  if (value == null || String(value).trim() === '') return null
   const n = Number(value)
-  return Number.isFinite(n) ? n : null
+  if (!Number.isInteger(n) || n <= 0) return null
+  return n
 }
 
 function textOr(value, fallback) {
@@ -41,23 +37,17 @@ function textOr(value, fallback) {
 }
 
 function productLink(payload) {
-  const productId = finiteIdOrNull(payload.product_id)
+  const productId = positiveIntegerId(payload.product_id)
   return productId == null ? '/profile#wishlist' : `/product/${productId}`
 }
 
 function campaignLink(payload) {
-  const campaignId = finiteIdOrNull(payload.campaign_id)
+  const campaignId = positiveIntegerId(payload.campaign_id)
   return campaignId == null ? '/' : `/?campaign=${campaignId}`
 }
 
 export function buildGrowthEventKey({ eventType, targetType, targetId, version } = {}) {
-  const parts = [
-    cleanPart(eventType),
-    cleanPart(targetType),
-    cleanPart(targetId),
-    ...cleanVersionParts(version),
-  ].filter(Boolean)
-
+  const parts = [eventType, targetType, targetId, version].map(cleanPart).filter(Boolean)
   if (parts.length < 3) throw new Error('invalid_event_key')
   return parts.join(':')
 }
@@ -79,14 +69,14 @@ export function filterGrowthNotificationChannels({
 export function renderGrowthNotification({ eventType, payload } = {}) {
   const data = payload && typeof payload === 'object' ? payload : {}
   const productName = textOr(data.product_name, 'สินค้าใน Wishlist')
-  const campaignName = textOr(data.campaign_name, 'Flash Deal')
+  const campaignName = textOr(data.campaign_name, 'แคมเปญใหม่')
   const vipTier = textOr(data.vip_tier, 'VIP')
 
   if (eventType === 'wishlist_stock_back') {
     return {
-      title: 'เธชเธดเธเธเนเธฒเนเธ Wishlist เธเธฅเธฑเธเธกเธฒเนเธฅเนเธง',
-      body: `${productName} กลับมาเติมสต็อกแล้ว เปิด Wishlist เพื่อสั่งซื้อก่อนสินค้าหมดอีกครั้ง`,
-      push_body: `${productName} กลับมาเติมสต็อกแล้ว`,
+      title: 'สินค้าใน Wishlist กลับมาแล้ว',
+      body: `${productName} กลับมาเติมสินค้าแล้ว เปิดดูใน Wishlist ก่อนสินค้าหมดอีกครั้ง`,
+      push_body: `${productName} กลับมาแล้ว`,
       link: productLink(data),
     }
   }
@@ -128,7 +118,7 @@ export function renderGrowthNotification({ eventType, payload } = {}) {
   }
 
   if (eventType === 'review_moderated') {
-    const reviewId = finiteIdOrNull(data.review_id)
+    const reviewId = positiveIntegerId(data.review_id)
     return {
       title: 'รีวิวของคุณได้รับการตรวจสอบแล้ว',
       body: 'รีวิวของคุณได้รับการตรวจสอบแล้ว เปิดดูสถานะและรายละเอียดได้ในโปรไฟล์',
