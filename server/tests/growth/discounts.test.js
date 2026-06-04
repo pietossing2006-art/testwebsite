@@ -104,3 +104,22 @@ test('resolveDiscountQuote returns considered discounts in evaluation order', ()
   assert.match(quote.resolved_at, /^\d{4}-\d{2}-\d{2}T/)
   assert.deepEqual(quote.discounts_considered.map((d) => d.source_type), ['product_promotion', 'vip', 'coupon'])
 })
+
+test('resolveDiscountQuote keeps legacy promo and coupon fields derivable', () => {
+  const quote = resolveDiscountQuote({
+    targetType: 'product',
+    targetId: 88,
+    originalUnitPricePoints: 1000,
+    quantity: 3,
+    candidates: [
+      { source_type: 'product_promotion', source_id: 1, label: 'Promo', discount_percent: 20 },
+      { source_type: 'coupon', source_id: 2, source_code: 'SAVE50', label: 'Coupon', discount_amount_points: 50 },
+    ],
+  })
+  const promo = quote.discounts_applied.find((item) => item.source_type === 'product_promotion')
+  const coupon = quote.discounts_applied.find((item) => item.source_type === 'coupon')
+  assert.equal(promo.amount_points, 200)
+  assert.equal(coupon.amount_points, 50)
+  assert.equal(quote.final_unit_price_points, 750)
+  assert.equal(quote.final_total_points, 2250)
+})

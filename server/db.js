@@ -3025,7 +3025,7 @@ export async function quoteProductPurchase({ productId, qty = 1, couponCode } = 
   if (!Number.isFinite(pid) || pid <= 0) throw new Error('invalid_product_id')
   if (!Number.isFinite(q) || q <= 0 || q > 999) throw new Error('invalid_qty')
 
-  const { productOptionId } = arguments?.[0] ?? {}
+  const { productOptionId, userId } = arguments?.[0] ?? {}
   const product = await getProductById(pid)
   if (!product) throw new Error('product_not_found')
 
@@ -3037,38 +3037,45 @@ export async function quoteProductPurchase({ productId, qty = 1, couponCode } = 
   try {
     await client.query('BEGIN')
     const promo = await getActivePromotionForProduct(client, pid)
-    const promoPrice = computeDiscountedUnitPrice({
-      unitPrice: originalUnitPrice,
-      percent: promo?.discount_percent,
-      amount: promo?.discount_amount_points,
-    })
     const coupon = await readAndValidateDiscountCoupon(client, couponCode)
-    const couponPrice = computeDiscountedUnitPrice({
-      unitPrice: promoPrice.finalUnitPrice,
-      percent: coupon?.discount_percent,
-      amount: coupon?.discount_amount_points,
+    const campaigns = await listActiveGrowthCampaigns({ targetType: 'product', targetId: pid })
+    const vip = userId ? await getMyVip(userId).catch(() => null) : null
+    const candidates = [
+      promotionToDiscountCandidate(promo),
+      ...(campaigns.campaigns || []).map(campaignToDiscountCandidate),
+      vipToDiscountCandidate(vip),
+      couponToDiscountCandidate(coupon),
+    ].filter(Boolean)
+    const resolved = resolveDiscountQuote({
+      targetType: 'product',
+      targetId: pid,
+      originalUnitPricePoints: originalUnitPrice,
+      quantity: q,
+      candidates,
     })
     await client.query('COMMIT')
 
-    const unitPrice = couponPrice.finalUnitPrice
+    const promoDiscount = resolved.discounts_applied.find((d) => d.source_type === 'product_promotion')?.amount_points || 0
+    const couponDiscount = resolved.discounts_applied.find((d) => d.source_type === 'coupon')?.amount_points || 0
     const subtotal = originalUnitPrice * q
-    const promoDiscountTotal = promoPrice.discountPoints * q
-    const couponDiscountTotal = couponPrice.discountPoints * q
-    const total = unitPrice * q
 
     return {
       product_id: pid,
       qty: q,
       unit_price_original_points: originalUnitPrice,
-      unit_price_points: unitPrice,
-      promo_discount_points: promoPrice.discountPoints,
-      coupon_discount_points: couponPrice.discountPoints,
+      unit_price_points: resolved.final_unit_price_points,
+      promo_discount_points: promoDiscount,
+      coupon_discount_points: couponDiscount,
       subtotal_points: subtotal,
-      promo_discount_total_points: promoDiscountTotal,
-      coupon_discount_total_points: couponDiscountTotal,
-      total_points: total,
+      promo_discount_total_points: promoDiscount * q,
+      coupon_discount_total_points: couponDiscount * q,
+      total_points: resolved.final_total_points,
       coupon_code: coupon?.code ?? null,
       coupon_valid: coupon != null,
+      discounts_considered: resolved.discounts_considered,
+      discounts_applied: resolved.discounts_applied,
+      discounts_rejected: resolved.discounts_rejected,
+      final_unit_price_points: resolved.final_unit_price_points,
       promotion: promo
         ? {
             id: promo.id,
@@ -3121,6 +3128,78 @@ async function getActivePromotionForProduct(client, productId) {
     [pid],
   )
   return res.rows?.[0] ?? null
+}
+
+function promotionToDiscountCandidate(promo) {
+  if (!promo) return null
+  return {
+    source_type: 'product_promotion',
+    source_id: promo.id,
+    source_code: 'product_promotion',
+    label: promo.title || 'Product promotion',
+    discount_percent: promo.discount_percent,
+    discount_amount_points: promo.discount_amount_points,
+  }
+}
+
+function couponToDiscountCandidate(coupon) {
+  if (!coupon) return null
+  return {
+    source_type: 'coupon',
+    source_id: coupon.id,
+    source_code: coupon.code,
+    label: coupon.title || coupon.code || 'Coupon',
+    discount_percent: coupon.discount_percent,
+    discount_amount_points: coupon.discount_amount_points,
+  }
+}
+
+function vipToDiscountCandidate(vip) {
+  if (!vip?.tier || Number(vip.tier.discount_percent || 0) <= 0) return null
+  return {
+    source_type: 'vip',
+    source_id: vip.tier.id,
+    source_code: vip.tier.code,
+    label: vip.tier.name || vip.tier.code || 'VIP',
+    discount_percent: vip.tier.discount_percent,
+  }
+}
+
+function campaignToDiscountCandidate(campaign) {
+  if (!campaign || campaign.discount_type === 'none') return null
+  return {
+    source_type: 'growth_campaign',
+    source_id: campaign.id,
+    source_code: campaign.kind,
+    label: campaign.title || 'Growth campaign',
+    discount_percent: campaign.discount_type === 'percent' ? campaign.discount_value : null,
+    discount_amount_points: campaign.discount_type === 'amount_points' ? campaign.discount_value : null,
+  }
+}
+
+async function insertOrderDiscountApplications(client, { orderId, orderItemId = null, quote }) {
+  const applied = Array.isArray(quote?.discounts_applied) ? quote.discounts_applied : []
+  for (let index = 0; index < applied.length; index += 1) {
+    const item = applied[index]
+    await client.query(
+      `INSERT INTO order_discount_applications (
+         order_id, order_item_id, source_type, source_id, source_code, label,
+         amount_points, sort_order, metadata_json
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+      [
+        orderId,
+        orderItemId,
+        item.source_type,
+        item.source_id,
+        item.source_code,
+        item.label,
+        item.amount_points,
+        index,
+        JSON.stringify(item.metadata || {}),
+      ],
+    )
+  }
 }
 
 function _validateCouponRow(c) {
@@ -5943,23 +6022,30 @@ export async function purchaseDigitalProduct({ userId, productId, qty, couponCod
     await client.query('BEGIN')
 
     const promo = await getActivePromotionForProduct(client, pid)
-    const promoPrice = computeDiscountedUnitPrice({
-      unitPrice: originalUnitPrice,
-      percent: promo?.discount_percent,
-      amount: promo?.discount_amount_points,
-    })
     const coupon = await lockAndValidateDiscountCoupon(client, couponCode)
-    const couponPrice = computeDiscountedUnitPrice({
-      unitPrice: promoPrice.finalUnitPrice,
-      percent: coupon?.discount_percent,
-      amount: coupon?.discount_amount_points,
+    const campaigns = await listActiveGrowthCampaigns({ targetType: 'product', targetId: pid })
+    const vip = await getMyVip(uid).catch(() => null)
+    const candidates = [
+      promotionToDiscountCandidate(promo),
+      ...(campaigns.campaigns || []).map(campaignToDiscountCandidate),
+      vipToDiscountCandidate(vip),
+      couponToDiscountCandidate(coupon),
+    ].filter(Boolean)
+    const resolved = resolveDiscountQuote({
+      targetType: 'product',
+      targetId: pid,
+      originalUnitPricePoints: originalUnitPrice,
+      quantity: q,
+      candidates,
     })
 
-    const unitPrice = couponPrice.finalUnitPrice
-    const total = unitPrice * q
+    const unitPrice = resolved.final_unit_price_points
+    const total = resolved.final_total_points
     const subtotal = originalUnitPrice * q
-    const promoDiscountTotal = promoPrice.discountPoints * q
-    const couponDiscountTotal = couponPrice.discountPoints * q
+    const promoDiscount = resolved.discounts_applied.find((d) => d.source_type === 'product_promotion')?.amount_points || 0
+    const couponDiscount = resolved.discounts_applied.find((d) => d.source_type === 'coupon')?.amount_points || 0
+    const promoDiscountTotal = promoDiscount * q
+    const couponDiscountTotal = couponDiscount * q
 
     const walletRes = await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [uid])
     const balance = Number(walletRes.rows?.[0]?.balance ?? 0)
@@ -6049,12 +6135,13 @@ export async function purchaseDigitalProduct({ userId, productId, qty, couponCod
         q,
         unitPrice,
         originalUnitPrice,
-        promoPrice.discountPoints,
-        couponPrice.discountPoints,
+        promoDiscount,
+        couponDiscount,
         selectedOption ? JSON.stringify(selectedOption) : null,
       ],
     )
     const orderItemId = orderItemRes.rows[0].id
+    await insertOrderDiscountApplications(client, { orderId, orderItemId, quote: resolved })
 
     if (coupon?.id) {
       await client.query('UPDATE discount_coupons SET used_count = COALESCE(used_count, 0) + 1, updated_at = now() WHERE id = $1', [coupon.id])
@@ -9454,13 +9541,22 @@ async function getBundleItemStockStatus(client, item) {
   }
 }
 
-async function buildBundleQuote(client, bundle, coupon) {
+async function buildBundleQuote(client, bundle, coupon, { userId } = {}) {
   const bundlePrice = Math.max(0, Math.trunc(Number(bundle.bundle_price) || 0))
   const originalTotal = Math.max(0, Math.trunc(Number(bundle.original_total) || 0))
-  const couponPrice = computeDiscountedUnitPrice({
-    unitPrice: bundlePrice,
-    percent: coupon?.discount_percent,
-    amount: coupon?.discount_amount_points,
+  const campaigns = await listActiveGrowthCampaigns({ targetType: 'bundle', targetId: bundle.id })
+  const vip = userId ? await getMyVip(userId).catch(() => null) : null
+  const candidates = [
+    ...(campaigns.campaigns || []).map(campaignToDiscountCandidate),
+    vipToDiscountCandidate(vip),
+    couponToDiscountCandidate(coupon),
+  ].filter(Boolean)
+  const resolved = resolveDiscountQuote({
+    targetType: 'bundle',
+    targetId: bundle.id,
+    originalUnitPricePoints: bundlePrice,
+    quantity: 1,
+    candidates,
   })
 
   const items = []
@@ -9487,10 +9583,14 @@ async function buildBundleQuote(client, bundle, coupon) {
     bundle_price_points: bundlePrice,
     original_total_points: originalTotal,
     bundle_discount_points: Math.max(0, originalTotal - bundlePrice),
-    coupon_discount_points: couponPrice.discountPoints,
-    total_points: couponPrice.finalUnitPrice,
+    coupon_discount_points: resolved.discounts_applied.find((d) => d.source_type === 'coupon')?.amount_points || 0,
+    total_points: resolved.final_total_points,
     coupon_code: coupon?.code ?? null,
     coupon_valid: coupon != null,
+    discounts_considered: resolved.discounts_considered,
+    discounts_applied: resolved.discounts_applied,
+    discounts_rejected: resolved.discounts_rejected,
+    final_unit_price_points: resolved.final_unit_price_points,
     available: unavailableItems.length === 0,
     unavailable_items: unavailableItems,
     items,
@@ -9500,6 +9600,7 @@ async function buildBundleQuote(client, bundle, coupon) {
 export async function quoteBundlePurchase({ bundleId, couponCode } = {}) {
   const bid = Number(bundleId)
   if (!Number.isFinite(bid) || bid <= 0) throw new Error('invalid_bundle_id')
+  const { userId } = arguments?.[0] ?? {}
 
   const bundle = await getBundleWithItems(bid)
   assertBundlePurchasable(bundle)
@@ -9508,7 +9609,7 @@ export async function quoteBundlePurchase({ bundleId, couponCode } = {}) {
   try {
     await client.query('BEGIN')
     const coupon = await readAndValidateDiscountCoupon(client, couponCode)
-    const quote = await buildBundleQuote(client, bundle, coupon)
+    const quote = await buildBundleQuote(client, bundle, coupon, { userId })
     await client.query('COMMIT')
     return quote
   } catch (e) {
@@ -9698,13 +9799,9 @@ export async function purchaseBundle({ userId, bundleId, couponCode }) {
     await client.query('BEGIN')
 
     const coupon = await lockAndValidateDiscountCoupon(client, couponCode)
-    const couponPrice = computeDiscountedUnitPrice({
-      unitPrice: bundlePrice,
-      percent: coupon?.discount_percent,
-      amount: coupon?.discount_amount_points,
-    })
-    const couponDiscountPoints = couponPrice.discountPoints
-    const total = couponPrice.finalUnitPrice
+    const quote = await buildBundleQuote(client, bundle, coupon, { userId: uid })
+    const couponDiscountPoints = quote.coupon_discount_points
+    const total = quote.total_points
 
     await client.query(
       `INSERT INTO wallets (user_id, balance)
@@ -9725,6 +9822,7 @@ export async function purchaseBundle({ userId, bundleId, couponCode }) {
       [uid, subtotal, bundleDiscountTotal, couponDiscountPoints, coupon?.code ?? null, total, orderRef],
     )
     const orderId = orderRes.rows[0].id
+    await insertOrderDiscountApplications(client, { orderId, quote })
 
     // create order_items + deliveries per bundle item
     const deliveries = []
@@ -9882,6 +9980,9 @@ export async function purchaseBundle({ userId, bundleId, couponCode }) {
         promo_discount_points: bundleDiscountTotal,
         coupon_discount_points: couponDiscountPoints,
         coupon_code: coupon?.code ?? null,
+        discounts_applied: quote.discounts_applied,
+        discounts_rejected: quote.discounts_rejected,
+        discounts_considered: quote.discounts_considered,
         created_at: orderRes.rows[0].created_at,
       },
       bundle_name: bundle.name,
