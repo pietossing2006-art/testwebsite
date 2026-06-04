@@ -10,6 +10,8 @@ The app already has product catalog, bundles, topups, discount coupons, purchase
 - Verified product reviews.
 - Flash deal and limited drop campaigns.
 - Rank and VIP benefits.
+- A more consistent discount resolution path for promotions, campaigns, VIP, and coupons.
+- A more consistent notification delivery path for wishlist, campaign, VIP, and review events.
 
 The approved approach is **Growth Foundation**, implemented as a phased shared layer instead of four isolated feature implementations.
 
@@ -18,6 +20,8 @@ The approved approach is **Growth Foundation**, implemented as a phased shared l
 - Add a reusable growth layer that increases purchase conversion, repeat usage, and storefront trust.
 - Reuse existing site messages, inbox, push subscription, product, order, bundle, coupon, and admin RBAC patterns.
 - Keep price-impacting logic server-side in quote and purchase flows.
+- Give discounts a single auditable resolver instead of scattered price logic.
+- Give growth notifications a shared event and delivery model instead of one-off sends.
 - Make each feature usable independently while allowing later integration between wishlist, reviews, campaigns, and VIP.
 - Keep the first implementation plan focused and buildable in phases.
 
@@ -26,6 +30,8 @@ The approved approach is **Growth Foundation**, implemented as a phased shared l
 - Do not replace the current product, order, topup, support, stock, or coupon systems.
 - Do not create a separate notification platform when inbox/site messages and push subscription records already exist.
 - Do not allow frontend-only discount calculation.
+- Do not remove existing product promotion, discount coupon, or topup coupon behavior.
+- Do not require every notification channel to ship at once; inbox can be the baseline channel.
 - Do not redesign the full customer or admin UI beyond the surfaces required for these growth features.
 - Do not introduce a new external marketing, email, or CRM service in the foundation phase.
 
@@ -42,6 +48,7 @@ Core behavior:
 - Profile gets a Wishlist surface with followed products and availability status.
 - Admin gets a Wishlist Signals view for products with high follower count, out-of-stock demand, and campaign opportunities.
 - Notifications use existing inbox/site message and push subscription infrastructure.
+- Notification events are queued through a shared growth notification helper with event keys, delivery records, and user preferences.
 
 ### Phase 2: Verified Reviews
 
@@ -66,6 +73,7 @@ Core behavior:
 - Product and bundle detail pages show active deal context when the current item is targeted.
 - Quote and purchase flows validate campaign state server-side.
 - If a campaign expires or limit is exhausted between quote and purchase, purchase is rejected with a clear error.
+- Campaign discounts use the shared discount resolver and are written to discount audit records on successful purchase.
 
 ### Phase 4: Rank And VIP
 
@@ -78,6 +86,7 @@ Core behavior:
 - Profile gets a VIP surface showing current tier, progress to next tier, benefits, and recent qualification context.
 - Admin can manage tier thresholds and benefits.
 - VIP benefits are represented in quote output and enforced during purchase.
+- VIP discounts use the same resolver as campaigns and coupons so customers see one consistent price explanation.
 
 ## Data Model
 
@@ -218,6 +227,101 @@ Rules:
 - Recalculate after successful purchases.
 - Allow scheduled or admin-triggered recalculation later if needed.
 
+### `order_discount_applications`
+
+Stores the discount audit trail for successful orders.
+
+Important fields:
+
+- `id`
+- `order_id`
+- `order_item_id`
+- `source_type`
+- `source_id`
+- `source_code`
+- `label`
+- `amount_points`
+- `sort_order`
+- `metadata_json`
+- `created_at`
+
+Rules:
+
+- `source_type` supports `product_promotion`, `growth_campaign`, `vip`, and `coupon`.
+- `source_id` links to the relevant promotion, campaign, VIP tier, or coupon when available.
+- `source_code` stores human-readable identifiers such as coupon codes or tier codes.
+- `amount_points` is the actual discount applied after clamping.
+- Existing order and order item discount columns can remain for compatibility, but this table becomes the canonical audit trail for new growth discounts.
+
+### `growth_notification_events`
+
+Stores growth notification events before delivery to user-facing channels.
+
+Important fields:
+
+- `id`
+- `event_key`
+- `event_type`
+- `target_type`
+- `target_id`
+- `audience_type`
+- `payload_json`
+- `status`
+- `created_at`
+- `processed_at`
+
+Rules:
+
+- `event_key` is unique and prevents duplicate notification runs.
+- `event_type` initially supports `wishlist_stock_back`, `wishlist_promo_started`, `campaign_started`, `campaign_ending`, `vip_tier_changed`, and `review_moderated`.
+- `audience_type` supports direct user IDs, wishlist followers, VIP tier users, or all signed-in users if needed later.
+- `payload_json` contains render data only, not sensitive order payloads.
+
+### `growth_notification_deliveries`
+
+Tracks delivery attempts per user and channel.
+
+Important fields:
+
+- `id`
+- `event_id`
+- `user_id`
+- `channel`
+- `status`
+- `site_message_id`
+- `error_text`
+- `delivered_at`
+- `read_at`
+- `created_at`
+
+Rules:
+
+- `channel` initially supports `inbox` and `push`; `discord` can be added later.
+- Unique `(event_id, user_id, channel)` prevents duplicate channel delivery.
+- Failed push delivery does not block inbox delivery.
+- Delivery records allow admin to inspect what was sent without duplicating the actual inbox message model.
+
+### `user_notification_preferences`
+
+Stores coarse user preferences for growth notifications.
+
+Important fields:
+
+- `user_id`
+- `wishlist_stock`
+- `wishlist_promo`
+- `campaigns`
+- `vip`
+- `reviews`
+- `push_enabled`
+- `updated_at`
+
+Rules:
+
+- Inbox is the default baseline channel for account-related notifications.
+- Push delivery requires both an active push subscription and `push_enabled`.
+- Transactional order messages remain outside these opt-out preferences unless an implementation explicitly moves them into this model.
+
 ## Backend Design
 
 New route areas should follow current Express route structure and validation patterns.
@@ -231,6 +335,8 @@ Customer APIs:
 - `POST /api/products/:id/reviews`
 - `GET /api/growth-campaigns/active`
 - `GET /api/me/vip`
+- `GET /api/me/notification-preferences`
+- `PUT /api/me/notification-preferences`
 
 Admin APIs:
 
@@ -245,6 +351,8 @@ Admin APIs:
 - `PUT /api/admin/vip-tiers/:id`
 - `DELETE /api/admin/vip-tiers/:id`
 - `GET /api/admin/wishlist-signals`
+- `GET /api/admin/growth-notifications`
+- `POST /api/admin/growth-notifications/test`
 
 Access control:
 
@@ -257,20 +365,91 @@ Notification integration:
 
 - Use existing `site_messages` and inbox behavior for customer-visible messages.
 - Use existing push subscription support where configured.
-- Store or derive idempotency keys for notification events, such as `stock_back:product_id:user_id`, to prevent duplicate sends.
+- Route sends through `enqueueGrowthNotification` and `deliverGrowthNotification` helpers so wishlist, campaign, VIP, and review events share idempotency and channel behavior.
+- Store idempotency keys for notification events, such as `wishlist_stock_back:product_id:stock_version`, to prevent duplicate event creation.
+- Store delivery rows per event, user, and channel to prevent duplicate user sends.
+- Respect user notification preferences before push or campaign-style inbox sends.
+- Keep required account/order messages outside marketing opt-outs unless explicitly migrated later.
 - Discord notifications can be added later behind the same event interface.
 
 Quote and purchase integration:
 
-- Flash deal, limited drop, and VIP discounts must be resolved server-side.
-- Quote responses should expose line item pricing, applied campaign discount, applied VIP discount, and final total.
-- Purchase must revalidate all applied campaign and VIP state inside the transaction.
+- Flash deal, limited drop, VIP, product promotion, and coupon discounts must be resolved server-side.
+- Use one discount resolver for product quotes, product purchases, bundle quotes, and bundle purchases.
+- Resolver input includes user ID, target type, target ID, quantity, selected product option, coupon code, and current time.
+- Resolver output includes original price, each candidate discount, each applied discount, each rejected discount reason, final unit price, final total, and campaign/VIP eligibility metadata.
+- Quote responses should expose enough detail for the UI to show why a discount did or did not apply.
+- Purchase must re-run the resolver inside the transaction and reject if the customer-submitted quote assumptions are no longer valid.
+- Successful purchases write `order_discount_applications` rows for every applied discount.
 - Discount priority must be deterministic:
   1. Product promotion.
   2. Campaign discount.
   3. VIP discount.
   4. Coupon discount.
 - Each discount step clamps final unit price at zero.
+- Coupon usage increments and campaign quantity usage happen only after the final transaction validation succeeds.
+
+## Discount Resolution Foundation
+
+The growth work should improve discount handling as a shared server capability. The resolver is not a new promotion type by itself; it coordinates existing and new discount sources.
+
+Responsibilities:
+
+- Normalize product promotions, growth campaigns, VIP benefits, and coupons into one ordered list of candidate discounts.
+- Validate applicability for product targets, bundle targets, selected product options, user state, active windows, quantity limits, coupon validity, and VIP tier state.
+- Return rejected candidate discounts with machine-readable reasons so the UI can explain conflicts without guessing.
+- Re-run inside purchase transactions and never trust a previously returned quote as final authority.
+- Persist applied discounts to `order_discount_applications` for successful orders.
+- Keep existing order total fields populated for compatibility with current history and admin screens.
+
+Price explanation model:
+
+- `original_unit_price_points`
+- `quantity`
+- `discounts_considered`
+- `discounts_applied`
+- `discounts_rejected`
+- `final_unit_price_points`
+- `final_total_points`
+- `quote_expires_at` if the implementation needs short-lived quote freshness.
+
+Stacking rules:
+
+- Product promotion runs first because it is product-owned baseline pricing.
+- Growth campaign runs second because it represents storefront urgency.
+- VIP runs third because it is user entitlement.
+- Coupon runs last because it is an explicit user-entered code.
+- If a future admin setting needs a non-stackable rule, the resolver should make that rule explicit and return the rejected discount reason.
+
+## Notification Delivery Foundation
+
+The growth work should improve notification handling as a shared event pipeline. The app already has inbox/site messages and push subscriptions, so the foundation should add orchestration and audit rather than a parallel messaging system.
+
+Responsibilities:
+
+- Create one growth event per meaningful business event using a deterministic `event_key`.
+- Resolve the audience from wishlist followers, VIP tiers, specific users, or campaign targets.
+- Filter each recipient by notification preferences and channel availability.
+- Deliver inbox messages as the baseline channel.
+- Deliver push notifications only when push is configured, the user is subscribed, and the preference allows it.
+- Record delivery status per recipient and channel.
+- Allow failed channels to be retried without recreating the original event.
+
+Initial event types:
+
+- `wishlist_stock_back`: a followed product becomes available.
+- `wishlist_promo_started`: a followed product gets an active promotion.
+- `campaign_started`: a followed or targeted product enters an active campaign.
+- `campaign_ending`: an active campaign is near its end time.
+- `vip_tier_changed`: a user moves to a new VIP tier after purchase recalculation.
+- `review_moderated`: a user's review is approved, hidden, or rejected.
+
+Message rendering:
+
+- Event payloads should store product, campaign, review, or tier references plus short display labels.
+- Rendering should happen through a small server helper so inbox and push copy stay consistent.
+- Push content should be shorter than inbox content and should link back to the same route.
+- No sensitive purchased stock payloads should be stored in notification event payloads.
 
 ## Customer UX
 
@@ -281,6 +460,8 @@ Product cards and product detail:
 - Show approved review average and count when available.
 - Product detail includes a verified reviews section with empty, loading, and error states.
 - If the current user has eligible purchases, show review submission entry points.
+- Purchase panels show a compact discount breakdown when promotions, campaigns, VIP, or coupons affect the quote.
+- Discount copy uses the resolver output instead of recomputing labels from frontend-only assumptions.
 
 Profile:
 
@@ -288,6 +469,7 @@ Profile:
 - Wishlist shows followed products, stock status, active deal status, and quick links back to product detail.
 - Reviews shows submitted reviews and moderation state.
 - VIP shows current rank, progress to next rank, benefits, and concise recent qualification context.
+- Add notification preferences for wishlist stock alerts, promotion alerts, campaign alerts, VIP updates, review updates, and push delivery.
 
 Home and category pages:
 
@@ -297,12 +479,14 @@ Home and category pages:
 
 ## Admin UX
 
-Add a Growth module to AdminV3 with four tabs:
+Add a Growth module to AdminV3 with six tabs:
 
 - `Campaigns`: create, edit, enable, disable, and inspect flash deal or limited drop campaigns.
 - `Reviews`: approve, hide, or reject reviews and inspect the order reference.
 - `VIP`: manage tiers, thresholds, benefit copy, discount, priority support, and early access settings.
 - `Wishlist Signals`: view most-followed products, out-of-stock demand, and products worth restocking or campaigning.
+- `Discounts`: preview the server-side discount resolver for a product or bundle, inspect order discount applications, and surface discount stacking conflicts.
+- `Notifications`: inspect growth notification events, delivery status, failed sends, and send a test notification to the current admin.
 
 Admin module requirements:
 
@@ -311,11 +495,14 @@ Admin module requirements:
 - Make destructive actions explicit.
 - Avoid nested card layouts.
 - Do not expose VIP or campaign controls to roles that lack access.
+- Do not duplicate existing coupon CRUD unless implementation later consolidates it intentionally; the Growth Discounts tab is for resolver preview, audit, and conflict visibility.
 
 ## Error And Edge Cases
 
 - If a wishlisted product is hidden or deleted, customer wishlist views omit it while retaining the record for audit.
 - Notification sends are idempotent per user, product, and event key.
+- Notification event creation and channel delivery are separate, so a failed push send does not create duplicate inbox messages.
+- Users who opt out of campaign or wishlist notifications do not receive those growth messages, except required account/order messages that remain outside this preference model.
 - A user cannot review an order item that does not belong to them.
 - A user cannot review an order item before the related order is completed.
 - One order item can produce only one review.
@@ -325,6 +512,8 @@ Admin module requirements:
 - VIP calculation uses successful purchases only.
 - VIP recalculation after purchase must not block order completion if only the cache update fails; a later recalculation can repair the snapshot.
 - Price calculations must clamp at zero and return enough quote detail for the UI to explain applied discounts.
+- Purchase rejects if quote assumptions are stale and the resolver output changes in a way that increases the total or invalidates campaign availability.
+- Applied discount audit rows must match the final order totals.
 
 ## Testing And Verification
 
@@ -335,6 +524,9 @@ Backend tests:
 - Campaign active window filtering, target selection, quantity limit handling, and expired purchase rejection.
 - VIP tier calculation from successful orders only.
 - Quote and purchase discount priority for product promotion, campaign, VIP, and coupon.
+- Discount resolver rejected-reason output for expired campaigns, exhausted campaigns, invalid coupons, ineligible VIP, and non-stackable future rules.
+- Order discount audit rows for product, campaign, VIP, and coupon combinations.
+- Growth notification event idempotency, delivery uniqueness, preference filtering, failed push handling, and inbox baseline delivery.
 - Authorization checks for customer-owned resources and admin-only endpoints.
 
 Frontend verification:
@@ -342,8 +534,9 @@ Frontend verification:
 - `npm run build` in `client`.
 - Product detail with wishlist state, review summary, review list, and eligible review submission.
 - Profile Wishlist, Reviews, and VIP surfaces.
+- Profile notification preference controls.
 - Home or category Flash Deal shelf.
-- AdminV3 Growth module tabs.
+- AdminV3 Growth module tabs, including Discounts and Notifications.
 - Mobile and desktop layouts for product detail, profile, and admin growth views.
 
 Security checks:
@@ -352,18 +545,26 @@ Security checks:
 - Users cannot mutate another user's wishlist.
 - Public review APIs do not leak hidden, rejected, or pending reviews.
 - Admin growth endpoints enforce the intended roles.
+- Notification logs do not expose sensitive order payloads or delivered digital stock.
+- Discount preview endpoints do not allow users to inspect admin-only product or hidden campaign data.
 
 ## Implementation Notes
 
 - Keep database helper logic in `server/db.js` only if it remains consistent with existing patterns. If growth helpers become too large, split them into a focused server lib after confirming local conventions.
 - Keep route handlers small and validate request bodies with the existing zod validation approach.
 - Reuse existing product card, product detail, profile, support, admin module, and fetch helper patterns.
+- Build the discount resolver behind current quote and purchase helpers before adding campaign and VIP discounts broadly.
+- Preserve current discount coupon and topup coupon semantics while routing product and bundle purchase discounts through the resolver.
+- Build notification events as an outbox-style helper that writes events and deliveries before calling inbox or push helpers.
+- Use stable event keys and delivery uniqueness constraints rather than relying only on application-level duplicate checks.
 - Avoid broad customer redesign work during this feature pass.
 - Avoid touching unrelated dirty worktree files.
 
 ## Risks
 
 - Price discount stacking can create subtle regressions if not tested at quote and purchase levels.
+- Migrating quote and purchase flows to a shared resolver can expose existing inconsistencies between product and bundle pricing.
+- Notification event logs can grow quickly, so implementation may need retention or pagination from the start.
 - Admin campaign controls can become too broad if early access, discounting, stock limits, and targeting are all implemented at once.
 - VIP cache updates need clear recovery behavior so rank displays remain correct after failed recalculation.
 - Existing Thai text encoding varies in some server files, so implementation should avoid broad rewrites around legacy strings.
