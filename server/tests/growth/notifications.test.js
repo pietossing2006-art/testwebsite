@@ -108,6 +108,17 @@ test('filterGrowthNotificationChannels gates push on subscription', () => {
   )
 })
 
+test('filterGrowthNotificationChannels omits push without subscription', () => {
+  assert.deepEqual(
+    filterGrowthNotificationChannels({
+      eventType: 'wishlist_stock_back',
+      preferences: { wishlist_stock: true, push_enabled: true },
+      hasPushSubscription: false,
+    }),
+    ['inbox'],
+  )
+})
+
 test('filterGrowthNotificationChannels keeps inbox baseline for unknown events', () => {
   assert.deepEqual(
     filterGrowthNotificationChannels({

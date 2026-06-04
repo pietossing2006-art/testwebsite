@@ -2967,6 +2967,26 @@ export async function adminPreviewDiscounts({ target_type, target_id, targetType
   })
 }
 
+export async function enqueueGrowthNotification({ eventKey, eventType, targetType, targetId, audienceType = 'direct', payload }) {
+  return get(
+    `INSERT INTO growth_notification_events (event_key, event_type, target_type, target_id, audience_type, payload_json)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+     ON CONFLICT (event_key) DO UPDATE SET event_key = EXCLUDED.event_key
+     RETURNING id, event_key, event_type, payload_json`,
+    [eventKey, eventType, targetType || null, targetId || null, audienceType, JSON.stringify(payload || {})],
+  )
+}
+
+export async function createGrowthNotificationDelivery({ eventId, userId, channel, siteMessageId = null, status = 'pending', errorText = null }) {
+  return get(
+    `INSERT INTO growth_notification_deliveries (event_id, user_id, channel, site_message_id, status, error_text, delivered_at)
+     VALUES ($1,$2,$3,$4,$5,$6,CASE WHEN $5 = 'delivered' THEN now() ELSE NULL END)
+     ON CONFLICT (event_id, user_id, channel) DO UPDATE SET status = growth_notification_deliveries.status
+     RETURNING id, status`,
+    [eventId, userId, channel, siteMessageId, status, errorText],
+  )
+}
+
 export async function adminSendGrowthNotificationTest({ userId, event_type, eventType, product_id, campaign_id } = {}) {
   const uid = growthPositiveInt(userId, 'invalid_user_id')
   const type = String(event_type ?? eventType ?? 'campaign_started').trim()
