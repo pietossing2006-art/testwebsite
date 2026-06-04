@@ -138,7 +138,7 @@ test('renderGrowthNotification builds links for all known events', () => {
 })
 
 test('renderGrowthNotification falls back for invalid IDs', () => {
-  const invalidIds = ['', '   ', 0, -2, 1.5, Number.NaN, null, undefined]
+  const invalidIds = ['', '   ', 0, -2, 1.5, Number.NaN, true, false, {}, [], null, undefined]
 
   for (const product_id of invalidIds) {
     assert.equal(

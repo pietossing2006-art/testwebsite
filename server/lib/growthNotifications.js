@@ -25,10 +25,16 @@ function cleanPart(value) {
 }
 
 function positiveIntegerId(value) {
-  if (value == null || String(value).trim() === '') return null
-  const n = Number(value)
-  if (!Number.isInteger(n) || n <= 0) return null
-  return n
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return /^[1-9]\d*$/.test(trimmed) ? trimmed : null
+  }
+
+  return null
 }
 
 function textOr(value, fallback) {
