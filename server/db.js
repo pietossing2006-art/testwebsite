@@ -1,6 +1,8 @@
 import crypto from 'node:crypto'
 import pg from 'pg'
 import argon2 from 'argon2'
+import { resolveDiscountQuote } from './lib/growthDiscounts.js'
+import { buildGrowthEventKey, normalizeNotificationPreferences, renderGrowthNotification } from './lib/growthNotifications.js'
 
 const { Pool } = pg
 
@@ -2304,6 +2306,719 @@ export async function adminDeleteDiscountCoupon(id) {
   return { ok: true, deleted: res.rowCount ?? 0 }
 }
 
+function growthPositiveInt(value, errorCode = 'invalid_id') {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) throw new Error(errorCode)
+  return Math.trunc(n)
+}
+
+function growthLimit(value, fallback = 50, max = 200) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(max, Math.trunc(n))
+}
+
+function growthOffset(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.trunc(n)
+}
+
+function campaignPrimaryLink(targets = []) {
+  const first = Array.isArray(targets) ? targets[0] : null
+  if (first?.target_type === 'product') return `/product/${first.target_id}`
+  if (first?.target_type === 'bundle') return `/bundle/${first.target_id}`
+  return '/categories'
+}
+
+async function loadCampaignTargets(campaignIds, client = null) {
+  const ids = [...new Set((campaignIds || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))]
+  if (ids.length === 0) return new Map()
+  const runner = client ? (sql, params) => client.query(sql, params).then((res) => res.rows) : all
+  const targets = await runner(
+    `SELECT campaign_id, target_type, target_id, sort_order
+     FROM growth_campaign_targets
+     WHERE campaign_id = ANY($1::bigint[])
+     ORDER BY campaign_id ASC, sort_order ASC, id ASC`,
+    [ids],
+  )
+  const byCampaign = new Map(ids.map((id) => [Number(id), []]))
+  for (const target of targets) {
+    const campaignId = Number(target.campaign_id)
+    if (!byCampaign.has(campaignId)) byCampaign.set(campaignId, [])
+    byCampaign.get(campaignId).push(target)
+  }
+  return byCampaign
+}
+
+async function attachCampaignTargets(campaigns, client = null) {
+  const rows = Array.isArray(campaigns) ? campaigns : []
+  const targetsByCampaign = await loadCampaignTargets(rows.map((campaign) => campaign.id), client)
+  return rows.map((campaign) => {
+    const targets = targetsByCampaign.get(Number(campaign.id)) || []
+    return { ...campaign, targets, primary_link: campaignPrimaryLink(targets) }
+  })
+}
+
+async function replaceCampaignTargetsTx(client, campaignId, targets = []) {
+  await client.query('DELETE FROM growth_campaign_targets WHERE campaign_id = $1', [campaignId])
+  for (const target of Array.isArray(targets) ? targets : []) {
+    await client.query(
+      `INSERT INTO growth_campaign_targets (campaign_id, target_type, target_id, sort_order)
+       VALUES ($1,$2,$3,$4)`,
+      [campaignId, target.target_type, target.target_id, target.sort_order ?? 0],
+    )
+  }
+}
+
+function normalizeCampaignInput(input = {}) {
+  return {
+    kind: String(input.kind || 'flash_deal').trim(),
+    title: String(input.title || '').trim(),
+    description: String(input.description || '').trim(),
+    badge_text: String(input.badge_text || '').trim(),
+    is_active: input.is_active == null ? true : Boolean(input.is_active),
+    starts_at: input.starts_at || null,
+    ends_at: input.ends_at || null,
+    discount_type: String(input.discount_type || 'none').trim(),
+    discount_value: input.discount_value == null || input.discount_value === '' ? null : Math.trunc(Number(input.discount_value)),
+    quantity_limit: input.quantity_limit == null || input.quantity_limit === '' ? null : Math.trunc(Number(input.quantity_limit)),
+    vip_early_access_tier: input.vip_early_access_tier || null,
+    targets: Array.isArray(input.targets) ? input.targets : [],
+  }
+}
+
+function normalizeTierInput(input = {}) {
+  return {
+    code: String(input.code || '').trim().toLowerCase(),
+    name: String(input.name || '').trim(),
+    sort_order: Math.trunc(Number(input.sort_order) || 0),
+    threshold_points_spent: Math.max(0, Math.trunc(Number(input.threshold_points_spent) || 0)),
+    discount_percent: Math.max(0, Math.min(95, Math.trunc(Number(input.discount_percent) || 0))),
+    priority_support: Boolean(input.priority_support),
+    early_access_minutes: Math.max(0, Math.trunc(Number(input.early_access_minutes) || 0)),
+    badge_label: String(input.badge_label || '').trim(),
+    is_active: input.is_active == null ? true : Boolean(input.is_active),
+  }
+}
+
+export async function listMyWishlist(userId) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const items = await all(
+    `SELECT wi.product_id, wi.notify_stock, wi.notify_promo, wi.notify_campaign, wi.created_at,
+            p.name, p.slug, p.image_url, p.stock, p.is_unlimited_stock, p.is_hidden,
+            CASE
+              WHEN p.is_hidden THEN 'hidden'
+              WHEN p.is_unlimited_stock THEN 'available'
+              WHEN COALESCE(p.stock, 0) > 0 THEN 'available'
+              ELSE 'out_of_stock'
+            END AS stock_status
+     FROM wishlist_items wi
+     JOIN products p ON p.id = wi.product_id
+     WHERE wi.user_id = $1
+       AND p.is_hidden = false
+     ORDER BY wi.created_at DESC`,
+    [uid],
+  )
+  return { items }
+}
+
+export async function upsertWishlistItem({ userId, product_id, productId, notify_stock = true, notify_promo = true, notify_campaign = true }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const pid = growthPositiveInt(product_id ?? productId, 'invalid_product_id')
+  const product = await get('SELECT id FROM products WHERE id = $1 AND is_hidden = false', [pid])
+  if (!product) throw new Error('not_found')
+  return get(
+    `INSERT INTO wishlist_items (user_id, product_id, notify_stock, notify_promo, notify_campaign, updated_at)
+     VALUES ($1,$2,$3,$4,$5,now())
+     ON CONFLICT (user_id, product_id)
+     DO UPDATE SET notify_stock = EXCLUDED.notify_stock,
+                   notify_promo = EXCLUDED.notify_promo,
+                   notify_campaign = EXCLUDED.notify_campaign,
+                   updated_at = now()
+     RETURNING user_id, product_id, notify_stock, notify_promo, notify_campaign, created_at, updated_at`,
+    [uid, pid, Boolean(notify_stock), Boolean(notify_promo), Boolean(notify_campaign)],
+  )
+}
+
+export async function deleteWishlistItem({ userId, productId }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const pid = growthPositiveInt(productId, 'invalid_product_id')
+  await query('DELETE FROM wishlist_items WHERE user_id = $1 AND product_id = $2', [uid, pid])
+  return { ok: true }
+}
+
+export async function getNotificationPreferences(userId) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const row = await get('SELECT wishlist_stock, wishlist_promo, campaigns, vip, reviews, push_enabled FROM user_notification_preferences WHERE user_id = $1', [uid])
+  return normalizeNotificationPreferences(row)
+}
+
+export async function updateNotificationPreferences({ userId, preferences }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const next = normalizeNotificationPreferences(preferences)
+  return get(
+    `INSERT INTO user_notification_preferences (user_id, wishlist_stock, wishlist_promo, campaigns, vip, reviews, push_enabled, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+     ON CONFLICT (user_id)
+     DO UPDATE SET wishlist_stock = EXCLUDED.wishlist_stock,
+                   wishlist_promo = EXCLUDED.wishlist_promo,
+                   campaigns = EXCLUDED.campaigns,
+                   vip = EXCLUDED.vip,
+                   reviews = EXCLUDED.reviews,
+                   push_enabled = EXCLUDED.push_enabled,
+                   updated_at = now()
+     RETURNING wishlist_stock, wishlist_promo, campaigns, vip, reviews, push_enabled`,
+    [uid, next.wishlist_stock, next.wishlist_promo, next.campaigns, next.vip, next.reviews, next.push_enabled],
+  )
+}
+
+export async function listProductReviewsPublic({ productId, limit = 20, offset = 0 }) {
+  const pid = growthPositiveInt(productId, 'invalid_product_id')
+  const lim = growthLimit(limit, 20, 100)
+  const off = growthOffset(offset)
+  const reviews = await all(
+    `SELECT pr.id, pr.rating, pr.comment, pr.created_at,
+            COALESCE(u.display_name, u.username, 'user') AS reviewer_name
+     FROM product_reviews pr
+     JOIN users u ON u.id = pr.user_id
+     WHERE pr.product_id = $1 AND pr.status = 'approved'
+     ORDER BY pr.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [pid, lim, off],
+  )
+  const summary = await get(
+    `SELECT COALESCE(ROUND(AVG(rating)::numeric, 2), 0)::float AS average_rating,
+            COUNT(*)::int AS review_count
+     FROM product_reviews
+     WHERE product_id = $1 AND status = 'approved'`,
+    [pid],
+  )
+  return { summary, reviews }
+}
+
+export async function createProductReview({ userId, productId, order_item_id, rating, comment }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const pid = growthPositiveInt(productId, 'invalid_product_id')
+  const orderItemId = growthPositiveInt(order_item_id, 'invalid_order_item_id')
+  const rate = Number(rating)
+  const text = String(comment || '').trim()
+  if (!Number.isFinite(rate) || rate < 1 || rate > 5) throw new Error('invalid_rating')
+  const eligible = await get(
+    `SELECT oi.id, oi.order_id
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id
+     WHERE oi.id = $1
+       AND oi.product_id = $2
+       AND o.user_id = $3
+       AND o.status IN ('paid', 'completed')`,
+    [orderItemId, pid, uid],
+  )
+  if (!eligible) throw new Error('review_not_allowed')
+  try {
+    return await get(
+      `INSERT INTO product_reviews (user_id, product_id, order_id, order_item_id, rating, comment)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING id, status, created_at`,
+      [uid, pid, eligible.order_id, orderItemId, Math.trunc(rate), text],
+    )
+  } catch (error) {
+    if (error?.code === '23505') throw new Error('review_exists')
+    throw error
+  }
+}
+
+export async function listActiveGrowthCampaigns({ targetType, targetId } = {}) {
+  const type = String(targetType || '').trim()
+  const tid = targetId == null || targetId === '' ? null : Number(targetId)
+  const params = []
+  let targetClause = ''
+  if (type && Number.isFinite(tid) && tid > 0) {
+    params.push(type, Math.trunc(tid))
+    targetClause = `AND EXISTS (
+      SELECT 1 FROM growth_campaign_targets t
+      WHERE t.campaign_id = gc.id AND t.target_type = $1 AND t.target_id = $2
+    )`
+  }
+  const campaigns = await all(
+    `SELECT gc.*
+     FROM growth_campaigns gc
+     WHERE gc.is_active = true
+       AND (gc.starts_at IS NULL OR gc.starts_at <= now())
+       AND (gc.ends_at IS NULL OR gc.ends_at >= now())
+       AND (gc.quantity_limit IS NULL OR gc.quantity_used < gc.quantity_limit)
+       ${targetClause}
+     ORDER BY gc.created_at DESC
+     LIMIT 50`,
+    params,
+  )
+  return { campaigns: await attachCampaignTargets(campaigns) }
+}
+
+export async function recalculateVipForUser(userId) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const spending = await get(
+    `SELECT COALESCE(SUM(total_points), 0)::int AS points_spent
+     FROM orders
+     WHERE user_id = $1 AND status IN ('paid', 'completed')`,
+    [uid],
+  )
+  const pointsSpent = Number(spending?.points_spent || 0)
+  const tier = await get(
+    `SELECT *
+     FROM vip_tiers
+     WHERE is_active = true AND threshold_points_spent <= $1
+     ORDER BY threshold_points_spent DESC, sort_order DESC, id DESC
+     LIMIT 1`,
+    [pointsSpent],
+  )
+  const nextTier = await get(
+    `SELECT *
+     FROM vip_tiers
+     WHERE is_active = true AND threshold_points_spent > $1
+     ORDER BY threshold_points_spent ASC, sort_order ASC, id ASC
+     LIMIT 1`,
+    [pointsSpent],
+  )
+  await query(
+    `INSERT INTO vip_user_snapshots (user_id, tier_id, points_spent, next_tier_id, next_threshold_points, calculated_at)
+     VALUES ($1,$2,$3,$4,$5,now())
+     ON CONFLICT (user_id)
+     DO UPDATE SET tier_id = EXCLUDED.tier_id,
+                   points_spent = EXCLUDED.points_spent,
+                   next_tier_id = EXCLUDED.next_tier_id,
+                   next_threshold_points = EXCLUDED.next_threshold_points,
+                   calculated_at = now()`,
+    [uid, tier?.id ?? null, pointsSpent, nextTier?.id ?? null, nextTier?.threshold_points_spent ?? null],
+  )
+  return { tier, points_spent: pointsSpent, next_tier: nextTier, next_threshold_points: nextTier?.threshold_points_spent ?? null }
+}
+
+export async function getMyVip(userId) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const snapshot = await get('SELECT user_id, tier_id, points_spent, next_tier_id, next_threshold_points FROM vip_user_snapshots WHERE user_id = $1', [uid])
+  if (!snapshot) return recalculateVipForUser(uid)
+  const [tier, nextTier] = await Promise.all([
+    snapshot.tier_id ? get('SELECT * FROM vip_tiers WHERE id = $1', [snapshot.tier_id]) : null,
+    snapshot.next_tier_id ? get('SELECT * FROM vip_tiers WHERE id = $1', [snapshot.next_tier_id]) : null,
+  ])
+  return { tier, points_spent: Number(snapshot.points_spent || 0), next_tier: nextTier, next_threshold_points: snapshot.next_threshold_points ?? null }
+}
+
+export async function adminListGrowthCampaigns({ limit = 100, offset = 0 } = {}) {
+  const campaigns = await all(
+    `SELECT *
+     FROM growth_campaigns
+     ORDER BY created_at DESC, id DESC
+     LIMIT $1 OFFSET $2`,
+    [growthLimit(limit, 100, 500), growthOffset(offset)],
+  )
+  return { campaigns: await attachCampaignTargets(campaigns) }
+}
+
+export async function adminCreateGrowthCampaign(input = {}) {
+  const data = normalizeCampaignInput(input)
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const inserted = await client.query(
+      `INSERT INTO growth_campaigns (
+         kind, title, description, badge_text, is_active, starts_at, ends_at,
+         discount_type, discount_value, quantity_limit, vip_early_access_tier, updated_at
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+       RETURNING *`,
+      [
+        data.kind,
+        data.title,
+        data.description,
+        data.badge_text,
+        data.is_active,
+        data.starts_at,
+        data.ends_at,
+        data.discount_type,
+        data.discount_value,
+        data.quantity_limit,
+        data.vip_early_access_tier,
+      ],
+    )
+    const campaign = inserted.rows[0]
+    await replaceCampaignTargetsTx(client, campaign.id, data.targets)
+    await client.query('COMMIT')
+    const [withTargets] = await attachCampaignTargets([campaign])
+    return withTargets
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function adminUpdateGrowthCampaign(input = {}) {
+  const id = growthPositiveInt(input.id, 'invalid_id')
+  const data = normalizeCampaignInput(input)
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const updated = await client.query(
+      `UPDATE growth_campaigns
+       SET kind = $2,
+           title = $3,
+           description = $4,
+           badge_text = $5,
+           is_active = $6,
+           starts_at = $7,
+           ends_at = $8,
+           discount_type = $9,
+           discount_value = $10,
+           quantity_limit = $11,
+           vip_early_access_tier = $12,
+           updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        data.kind,
+        data.title,
+        data.description,
+        data.badge_text,
+        data.is_active,
+        data.starts_at,
+        data.ends_at,
+        data.discount_type,
+        data.discount_value,
+        data.quantity_limit,
+        data.vip_early_access_tier,
+      ],
+    )
+    if ((updated.rowCount ?? 0) < 1) throw new Error('not_found')
+    await replaceCampaignTargetsTx(client, id, data.targets)
+    await client.query('COMMIT')
+    const [withTargets] = await attachCampaignTargets([updated.rows[0]])
+    return withTargets
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function adminDeleteGrowthCampaign(id) {
+  const cid = growthPositiveInt(id, 'invalid_id')
+  const res = await query('DELETE FROM growth_campaigns WHERE id = $1', [cid])
+  if ((res.rowCount ?? 0) < 1) throw new Error('not_found')
+  return { ok: true }
+}
+
+export async function adminListReviews({ status, limit = 100, offset = 0 } = {}) {
+  const st = typeof status === 'string' && status.trim() ? status.trim() : null
+  const params = st ? [st, growthLimit(limit, 100, 500), growthOffset(offset)] : [growthLimit(limit, 100, 500), growthOffset(offset)]
+  const where = st ? 'WHERE pr.status = $1' : ''
+  const limitParam = st ? '$2' : '$1'
+  const offsetParam = st ? '$3' : '$2'
+  const reviews = await all(
+    `SELECT pr.id, pr.user_id, pr.product_id, pr.order_id, pr.order_item_id, pr.rating,
+            pr.comment, pr.status, pr.admin_note, pr.created_at, pr.updated_at,
+            u.email AS user_email, COALESCE(u.display_name, u.username, u.email) AS reviewer_name,
+            p.name AS product_name, o.ref AS order_ref
+     FROM product_reviews pr
+     JOIN users u ON u.id = pr.user_id
+     JOIN products p ON p.id = pr.product_id
+     JOIN orders o ON o.id = pr.order_id
+     ${where}
+     ORDER BY pr.created_at DESC, pr.id DESC
+     LIMIT ${limitParam} OFFSET ${offsetParam}`,
+    params,
+  )
+  return { reviews }
+}
+
+export async function adminModerateReview({ id, status, adminNote, moderatorId }) {
+  const reviewId = growthPositiveInt(id, 'invalid_id')
+  const nextStatus = String(status || '').trim()
+  if (!['pending', 'approved', 'hidden', 'rejected'].includes(nextStatus)) throw new Error('invalid_status')
+  const res = await query(
+    `UPDATE product_reviews
+     SET status = $2,
+         admin_note = $3,
+         moderated_by = $4,
+         moderated_at = now(),
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [reviewId, nextStatus, adminNote == null ? null : String(adminNote), moderatorId ? Number(moderatorId) : null],
+  )
+  if ((res.rowCount ?? 0) < 1) throw new Error('not_found')
+  return res.rows[0]
+}
+
+export async function adminListVipTiers() {
+  const tiers = await all(
+    `SELECT *
+     FROM vip_tiers
+     ORDER BY threshold_points_spent ASC, sort_order ASC, id ASC`,
+  )
+  return { tiers }
+}
+
+export async function adminCreateVipTier(input = {}) {
+  const tier = normalizeTierInput(input)
+  return get(
+    `INSERT INTO vip_tiers (
+       code, name, sort_order, threshold_points_spent, discount_percent,
+       priority_support, early_access_minutes, badge_label, is_active, updated_at
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+     RETURNING *`,
+    [
+      tier.code,
+      tier.name,
+      tier.sort_order,
+      tier.threshold_points_spent,
+      tier.discount_percent,
+      tier.priority_support,
+      tier.early_access_minutes,
+      tier.badge_label,
+      tier.is_active,
+    ],
+  )
+}
+
+export async function adminUpdateVipTier(input = {}) {
+  const id = growthPositiveInt(input.id, 'invalid_id')
+  const tier = normalizeTierInput(input)
+  const row = await get(
+    `UPDATE vip_tiers
+     SET code = $2,
+         name = $3,
+         sort_order = $4,
+         threshold_points_spent = $5,
+         discount_percent = $6,
+         priority_support = $7,
+         early_access_minutes = $8,
+         badge_label = $9,
+         is_active = $10,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [
+      id,
+      tier.code,
+      tier.name,
+      tier.sort_order,
+      tier.threshold_points_spent,
+      tier.discount_percent,
+      tier.priority_support,
+      tier.early_access_minutes,
+      tier.badge_label,
+      tier.is_active,
+    ],
+  )
+  if (!row) throw new Error('not_found')
+  return row
+}
+
+export async function adminDeleteVipTier(id) {
+  const tierId = growthPositiveInt(id, 'invalid_id')
+  const res = await query('DELETE FROM vip_tiers WHERE id = $1', [tierId])
+  if ((res.rowCount ?? 0) < 1) throw new Error('not_found')
+  return { ok: true }
+}
+
+export async function adminListWishlistSignals({ limit = 50 } = {}) {
+  const signals = await all(
+    `SELECT wi.product_id,
+            p.name AS product_name,
+            p.slug,
+            p.stock AS available_stock,
+            p.is_unlimited_stock,
+            COUNT(*)::int AS followers,
+            COUNT(*) FILTER (WHERE wi.notify_stock)::int AS stock_followers,
+            COUNT(*) FILTER (WHERE wi.notify_promo)::int AS promo_followers,
+            COUNT(*) FILTER (WHERE wi.notify_campaign)::int AS campaign_followers
+     FROM wishlist_items wi
+     JOIN products p ON p.id = wi.product_id
+     WHERE p.is_hidden = false
+     GROUP BY wi.product_id, p.name, p.slug, p.stock, p.is_unlimited_stock
+     ORDER BY followers DESC, wi.product_id ASC
+     LIMIT $1`,
+    [growthLimit(limit, 50, 500)],
+  )
+  return { signals }
+}
+
+export async function adminListGrowthNotifications({ limit = 100, offset = 0 } = {}) {
+  const events = await all(
+    `SELECT e.*,
+            COALESCE(d.delivery_count, 0)::int AS delivery_count,
+            COALESCE(d.delivered_count, 0)::int AS delivered_count,
+            COALESCE(d.failed_count, 0)::int AS failed_count
+     FROM growth_notification_events e
+     LEFT JOIN (
+       SELECT event_id,
+              COUNT(*)::int AS delivery_count,
+              COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered_count,
+              COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count
+       FROM growth_notification_deliveries
+       GROUP BY event_id
+     ) d ON d.event_id = e.id
+     ORDER BY e.created_at DESC, e.id DESC
+     LIMIT $1 OFFSET $2`,
+    [growthLimit(limit, 100, 500), growthOffset(offset)],
+  )
+  return { events }
+}
+
+export async function adminPreviewDiscounts({ target_type, target_id, targetType, targetId, qty = 1, product_option_id, productOptionId, coupon_code, couponCode, user_id, userId } = {}) {
+  const type = String(target_type ?? targetType ?? '').trim()
+  if (!['product', 'bundle'].includes(type)) throw new Error('invalid_target_type')
+  const id = growthPositiveInt(target_id ?? targetId, 'invalid_target_id')
+  const quantity = Math.max(1, Math.min(999, Math.trunc(Number(qty) || 1)))
+  const uid = user_id ?? userId
+  const candidates = []
+
+  let originalUnitPrice = 0
+  if (type === 'product') {
+    const product = await getProductById(id)
+    if (!product) throw new Error('not_found')
+    const selectedOption = resolveProductOption({ product, productOptionId: product_option_id ?? productOptionId })
+    originalUnitPrice = selectedOption?.price_points != null ? Number(selectedOption.price_points) : Number(product.price)
+    const client = await pool.connect()
+    try {
+      const promo = await getActivePromotionForProduct(client, id)
+      if (promo) {
+        candidates.push({
+          source_type: 'product_promotion',
+          source_id: promo.id,
+          label: promo.title || 'Product promotion',
+          discount_percent: promo.discount_percent,
+          discount_amount_points: promo.discount_amount_points,
+        })
+      }
+    } finally {
+      client.release()
+    }
+  } else {
+    const bundle = await getBundleById(id)
+    if (!bundle) throw new Error('not_found')
+    originalUnitPrice = Number(bundle.bundle_price)
+  }
+
+  const activeCampaigns = await listActiveGrowthCampaigns({ targetType: type, targetId: id })
+  for (const campaign of activeCampaigns.campaigns) {
+    if (campaign.discount_type === 'percent') {
+      candidates.push({ source_type: 'growth_campaign', source_id: campaign.id, source_code: campaign.kind, label: campaign.title, discount_percent: campaign.discount_value })
+    } else if (campaign.discount_type === 'amount_points') {
+      candidates.push({ source_type: 'growth_campaign', source_id: campaign.id, source_code: campaign.kind, label: campaign.title, discount_amount_points: campaign.discount_value })
+    }
+  }
+
+  if (uid != null && uid !== '') {
+    const vip = await getMyVip(uid).catch(() => null)
+    if (vip?.tier?.discount_percent) {
+      candidates.push({
+        source_type: 'vip',
+        source_id: vip.tier.id,
+        source_code: vip.tier.code,
+        label: vip.tier.name || vip.tier.code,
+        discount_percent: vip.tier.discount_percent,
+      })
+    }
+  }
+
+  const code = String(coupon_code ?? couponCode ?? '').trim().toUpperCase()
+  if (code) {
+    const client = await pool.connect()
+    try {
+      const coupon = await readAndValidateDiscountCoupon(client, code)
+      if (coupon) {
+        candidates.push({
+          source_type: 'coupon',
+          source_id: coupon.id,
+          source_code: coupon.code,
+          label: coupon.title || `Coupon ${coupon.code}`,
+          discount_percent: coupon.discount_percent,
+          discount_amount_points: coupon.discount_amount_points,
+        })
+      }
+    } catch (error) {
+      candidates.push({ source_type: 'coupon', source_code: code, label: `Coupon ${code}`, rejected_reason: String(error?.message || 'invalid_coupon') })
+    } finally {
+      client.release()
+    }
+  }
+
+  return resolveDiscountQuote({
+    targetType: type,
+    targetId: id,
+    originalUnitPricePoints: originalUnitPrice,
+    quantity,
+    candidates,
+  })
+}
+
+export async function adminSendGrowthNotificationTest({ userId, event_type, eventType, product_id, campaign_id } = {}) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const type = String(event_type ?? eventType ?? 'campaign_started').trim()
+  const payload = {
+    product_id: product_id ?? null,
+    campaign_id: campaign_id ?? null,
+    product_name: 'Test product',
+    campaign_title: 'Test campaign',
+    tier_name: 'VIP',
+  }
+  const rendered = renderGrowthNotification({ eventType: type, payload })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const eventKey = buildGrowthEventKey({ eventType: type, targetType: 'user', targetId: uid, version: `test:${Date.now()}` })
+    const eventRes = await client.query(
+      `INSERT INTO growth_notification_events (event_key, event_type, target_type, target_id, audience_type, payload_json, status, processed_at)
+       VALUES ($1,$2,'user',$3,'direct',$4,'processed',now())
+       ON CONFLICT (event_key) DO UPDATE SET processed_at = now()
+       RETURNING id`,
+      [eventKey, type, uid, payload],
+    )
+    const eventId = eventRes.rows[0].id
+    const siteMessageRes = await client.query(
+      `INSERT INTO site_messages (sender_id, target_type, target_user_id, title, body)
+       VALUES ($1,'individual',$2,$3,$4)
+       RETURNING id`,
+      [uid, uid, rendered.title, rendered.body],
+    )
+    await client.query(
+      `INSERT INTO growth_notification_deliveries (event_id, user_id, channel, status, site_message_id, delivered_at)
+       VALUES ($1,$2,'inbox','delivered',$3,now())
+       ON CONFLICT (event_id, user_id, channel)
+       DO UPDATE SET status = 'delivered',
+                     site_message_id = EXCLUDED.site_message_id,
+                     delivered_at = now()`,
+      [eventId, uid, siteMessageRes.rows[0].id],
+    )
+    await client.query('COMMIT')
+    return { ok: true, event_id: eventId, site_message_id: siteMessageRes.rows[0].id }
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 export async function quoteProductPurchase({ productId, qty = 1, couponCode } = {}) {
   const pid = Number(productId)
   const q = qty == null ? 1 : Number(qty)
@@ -3763,6 +4478,166 @@ export async function initDbPg() {
     )`,
   )
   await query(`CREATE INDEX IF NOT EXISTS bundle_items_bundle_idx ON bundle_items (bundle_id, sort_order)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS wishlist_items (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      notify_stock BOOLEAN NOT NULL DEFAULT true,
+      notify_promo BOOLEAN NOT NULL DEFAULT true,
+      notify_campaign BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (user_id, product_id)
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS wishlist_items_product_idx ON wishlist_items (product_id, created_at DESC)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS product_reviews (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      order_item_id BIGINT NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+      rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      comment TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      admin_note TEXT,
+      moderated_by BIGINT REFERENCES users(id),
+      moderated_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (order_item_id)
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS product_reviews_product_status_idx ON product_reviews (product_id, status, created_at DESC)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS growth_campaigns (
+      id BIGSERIAL PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      badge_text TEXT NOT NULL DEFAULT '',
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      starts_at TIMESTAMPTZ,
+      ends_at TIMESTAMPTZ,
+      discount_type TEXT NOT NULL DEFAULT 'none',
+      discount_value INTEGER,
+      quantity_limit INTEGER,
+      quantity_used INTEGER NOT NULL DEFAULT 0,
+      vip_early_access_tier TEXT,
+      metadata_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS growth_campaigns_active_idx ON growth_campaigns (is_active, starts_at, ends_at)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS growth_campaign_targets (
+      id BIGSERIAL PRIMARY KEY,
+      campaign_id BIGINT NOT NULL REFERENCES growth_campaigns(id) ON DELETE CASCADE,
+      target_type TEXT NOT NULL,
+      target_id BIGINT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS growth_campaign_targets_lookup_idx ON growth_campaign_targets (target_type, target_id, campaign_id)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS vip_tiers (
+      id BIGSERIAL PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      threshold_points_spent INTEGER NOT NULL DEFAULT 0,
+      discount_percent INTEGER NOT NULL DEFAULT 0,
+      priority_support BOOLEAN NOT NULL DEFAULT false,
+      early_access_minutes INTEGER NOT NULL DEFAULT 0,
+      badge_label TEXT NOT NULL DEFAULT '',
+      is_active BOOLEAN NOT NULL DEFAULT true,
+      benefits_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS vip_user_snapshots (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      tier_id BIGINT REFERENCES vip_tiers(id),
+      points_spent INTEGER NOT NULL DEFAULT 0,
+      next_tier_id BIGINT REFERENCES vip_tiers(id),
+      next_threshold_points INTEGER,
+      calculated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS order_discount_applications (
+      id BIGSERIAL PRIMARY KEY,
+      order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      order_item_id BIGINT REFERENCES order_items(id) ON DELETE CASCADE,
+      source_type TEXT NOT NULL,
+      source_id BIGINT,
+      source_code TEXT,
+      label TEXT NOT NULL,
+      amount_points INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      metadata_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS order_discount_applications_order_idx ON order_discount_applications (order_id, sort_order, id)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS growth_notification_events (
+      id BIGSERIAL PRIMARY KEY,
+      event_key TEXT NOT NULL UNIQUE,
+      event_type TEXT NOT NULL,
+      target_type TEXT,
+      target_id BIGINT,
+      audience_type TEXT NOT NULL DEFAULT 'direct',
+      payload_json JSONB,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      processed_at TIMESTAMPTZ
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS growth_notification_events_created_idx ON growth_notification_events (created_at DESC, id DESC)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS growth_notification_deliveries (
+      id BIGSERIAL PRIMARY KEY,
+      event_id BIGINT NOT NULL REFERENCES growth_notification_events(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      site_message_id BIGINT REFERENCES site_messages(id) ON DELETE SET NULL,
+      error_text TEXT,
+      delivered_at TIMESTAMPTZ,
+      read_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (event_id, user_id, channel)
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS growth_notification_deliveries_user_idx ON growth_notification_deliveries (user_id, created_at DESC)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_notification_preferences (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      wishlist_stock BOOLEAN NOT NULL DEFAULT true,
+      wishlist_promo BOOLEAN NOT NULL DEFAULT true,
+      campaigns BOOLEAN NOT NULL DEFAULT true,
+      vip BOOLEAN NOT NULL DEFAULT true,
+      reviews BOOLEAN NOT NULL DEFAULT true,
+      push_enabled BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
 
   try {
     await migrateDigitalStockToPools()
