@@ -11,6 +11,7 @@ const adminRouteFiles = [
   'server/routes/admin-core.js',
   'server/routes/admin-catalog.js',
   'server/routes/admin-ops.js',
+  'server/routes/growth.js',
 ]
 
 const adminRoutePattern = /router\.(?:get|post|put|patch|delete)\(\s*['"`]\/api\/admin[^'"\n]*['"`][^\n]*/g
