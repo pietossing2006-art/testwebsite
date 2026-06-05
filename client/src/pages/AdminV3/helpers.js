@@ -13,6 +13,7 @@ export const MODULES = [
   { id: 'automation', label: 'อัตโนมัติ', icon: 'bi-gear-wide-connected', section: 'operations' },
   { id: 'bundles', label: 'Bundle', icon: 'bi-gift-fill', section: 'business' },
   { id: 'promotions', label: 'โปรโมชัน', icon: 'bi-tag-fill', section: 'business' },
+  { id: 'growth', label: 'Growth', icon: 'bi-graph-up-arrow', section: 'business' },
   { id: 'announcements', label: 'ประกาศ', icon: 'bi-megaphone-fill', section: 'business' },
   { id: 'messages', label: 'ข้อความ', icon: 'bi-envelope-fill', section: 'business' },
   { id: 'logs', label: 'บันทึกการใช้งาน', icon: 'bi-journal-text', section: 'system' },
@@ -29,8 +30,8 @@ export const MODULE_SECTIONS = [
 ]
 
 export const LOCAL_ROLE_MODULE_ACCESS = {
-  owner: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'announcements', 'messages', 'logs', 'settings', 'owner'],
-  admin: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'announcements', 'messages', 'settings'],
+  owner: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'logs', 'settings', 'owner'],
+  admin: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'settings'],
   finance: ['dashboard', 'users', 'bundles', 'promotions', 'orders'],
   support: ['dashboard', 'support', 'timesheet', 'orders'],
   booster: ['dashboard', 'fulfillment', 'timesheet'],
@@ -47,6 +48,7 @@ export const LOCAL_ROLE_ACTION_ACCESS = {
   'stock.manage': ['admin', 'owner'],
   'automation.manage': ['admin', 'owner'],
   'promotions.manage': ['admin', 'owner'],
+  'growth.manage': ['admin', 'owner'],
   'logs.view': ['owner'],
   'settings.manage': ['admin', 'owner'],
   'owner.panel': ['owner'],

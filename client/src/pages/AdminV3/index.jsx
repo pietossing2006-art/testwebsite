@@ -28,7 +28,7 @@ import {
   loadFulfillmentModule, loadFulfillmentRequestDetail, loadLogsModule, loadSettingsModule,
   loadCatalogModule, loadPromotionsModule, loadStockModule, loadAutomationModule,
   loadAnnouncementsModule, loadMessagesModule, loadTimesheetModule, loadOwnerModule,
-  loadOrdersModule, loadBundlesModule,
+  loadOrdersModule, loadBundlesModule, loadGrowthModule,
 } from './loaders.js'
 import DashboardModule from './modules/DashboardModule.jsx'
 import UsersModule from './modules/UsersModule.jsx'
@@ -38,6 +38,7 @@ import CatalogModule from './modules/CatalogModule.jsx'
 import StockModule from './modules/StockModule.jsx'
 import PromotionsModule from './modules/PromotionsModule.jsx'
 import BundlesModule from './modules/BundlesModule.jsx'
+import GrowthModule from './modules/GrowthModule.jsx'
 import LogsModule from './modules/LogsModule.jsx'
 import SettingsModule from './modules/SettingsModule.jsx'
 import AutomationModule from './modules/AutomationModule.jsx'
@@ -68,6 +69,7 @@ const MODULE_LABELS = {
   automation: 'อัตโนมัติ',
   bundles: 'Bundle',
   promotions: 'โปรโมชั่น',
+  growth: 'Growth',
   announcements: 'ประกาศ',
   messages: 'ข้อความ',
   logs: 'บันทึกระบบ',
@@ -87,6 +89,7 @@ const MODULE_DESCRIPTIONS = {
   automation: 'ตั้งกฎ workflow และดูเหตุการณ์ที่ระบบจัดการอัตโนมัติ',
   bundles: 'สร้างชุดสินค้าและแคมเปญแบบ bundle',
   promotions: 'จัดการคูปอง โปรโมชัน และส่วนลด',
+  growth: 'Wishlist, reviews, campaigns, VIP, discounts, and notifications',
   announcements: 'ตั้งประกาศหน้าเว็บและข้อความสำคัญสำหรับลูกค้า',
   messages: 'ส่งข้อความเข้า inbox ให้ผู้ใช้เฉพาะกลุ่มหรือรายคน',
   logs: 'ตรวจ audit log และประวัติการทำงานของระบบ',
@@ -532,6 +535,7 @@ export default function AdminV3() {
       else if (current === 'catalog') data = await loadCatalogModule()
       else if (current === 'bundles') data = await loadBundlesModule()
       else if (current === 'promotions') data = await loadPromotionsModule()
+      else if (current === 'growth') data = await loadGrowthModule()
       else if (current === 'stock') data = await loadStockModule()
       else if (current === 'automation') data = await loadAutomationModule()
       else if (current === 'announcements') data = await loadAnnouncementsModule()
@@ -649,6 +653,7 @@ export default function AdminV3() {
       case 'stock': return <StockModule data={data} ctx={ctx} />
       case 'bundles': return <BundlesModule data={data} ctx={ctx} />
       case 'promotions': return <PromotionsModule data={data} ctx={ctx} />
+      case 'growth': return <GrowthModule data={data} ctx={ctx} />
       case 'logs': return <LogsModule data={data} ctx={ctx} />
       case 'settings': return <SettingsModule data={data} ctx={ctx} />
       case 'automation': return <AutomationModule data={data} ctx={ctx} />

@@ -128,6 +128,85 @@ export const CouponRedeemBodySchema = z
   })
   .passthrough()
 
+export const WishlistBodySchema = z.object({
+  product_id: z.coerce.number({ message: 'invalid_product_id' }).int({ message: 'invalid_product_id' }).positive({ message: 'invalid_product_id' }),
+  notify_stock: z.boolean().optional().default(true),
+  notify_promo: z.boolean().optional().default(true),
+  notify_campaign: z.boolean().optional().default(true),
+})
+
+export const ReviewBodySchema = z.object({
+  order_item_id: z.coerce.number({ message: 'invalid_order_item_id' }).int({ message: 'invalid_order_item_id' }).positive({ message: 'invalid_order_item_id' }),
+  rating: z.coerce.number({ message: 'invalid_rating' }).int({ message: 'invalid_rating' }).min(1, { message: 'invalid_rating' }).max(5, { message: 'invalid_rating' }),
+  comment: requiredString('invalid_comment')
+    .transform((value) => value.trim())
+    .refine((value) => value.length >= 2, 'invalid_comment')
+    .refine((value) => value.length <= 1200, 'invalid_comment_too_long'),
+})
+
+export const NotificationPreferencesBodySchema = z.object({
+  wishlist_stock: z.boolean().optional(),
+  wishlist_promo: z.boolean().optional(),
+  campaigns: z.boolean().optional(),
+  vip: z.boolean().optional(),
+  reviews: z.boolean().optional(),
+  push_enabled: z.boolean().optional(),
+})
+
+export const GrowthCampaignBodySchema = z.object({
+  kind: z.enum(['flash_deal', 'limited_drop'], { message: 'invalid_kind' }),
+  title: requiredString('invalid_title')
+    .transform((value) => value.trim())
+    .refine((value) => value.length >= 2, 'invalid_title')
+    .refine((value) => value.length <= 120, 'invalid_title_too_long'),
+  description: z.string().optional().default('').transform((value) => value.trim()),
+  badge_text: z.string().optional().default('').transform((value) => value.trim()),
+  is_active: z.boolean().optional().default(true),
+  starts_at: z.string().optional().nullable(),
+  ends_at: z.string().optional().nullable(),
+  discount_type: z.enum(['none', 'percent', 'amount_points'], { message: 'invalid_discount_type' }).optional().default('none'),
+  discount_value: z.coerce.number().optional().nullable(),
+  quantity_limit: z.coerce.number().int({ message: 'invalid_quantity_limit' }).positive({ message: 'invalid_quantity_limit' }).optional().nullable(),
+  vip_early_access_tier: z.string().optional().nullable(),
+  targets: z.array(z.object({
+    target_type: z.enum(['product', 'bundle'], { message: 'invalid_target_type' }),
+    target_id: z.coerce.number({ message: 'invalid_target_id' }).int({ message: 'invalid_target_id' }).positive({ message: 'invalid_target_id' }),
+    sort_order: z.coerce.number().int().optional().default(0),
+  })).min(1, 'invalid_targets'),
+})
+
+export const VipTierBodySchema = z.object({
+  code: requiredString('invalid_code')
+    .transform((value) => value.trim().toLowerCase())
+    .refine((value) => /^[a-z0-9_-]{2,40}$/.test(value), 'invalid_code'),
+  name: requiredString('invalid_name')
+    .transform((value) => value.trim())
+    .refine((value) => value.length >= 2, 'invalid_name')
+    .refine((value) => value.length <= 80, 'invalid_name_too_long'),
+  sort_order: z.coerce.number().int().optional().default(0),
+  threshold_points_spent: z.coerce.number({ message: 'invalid_threshold' }).int({ message: 'invalid_threshold' }).min(0, { message: 'invalid_threshold' }),
+  discount_percent: z.coerce.number().min(0, { message: 'invalid_discount' }).max(95, { message: 'invalid_discount' }).optional().default(0),
+  priority_support: z.boolean().optional().default(false),
+  early_access_minutes: z.coerce.number().int({ message: 'invalid_early_access' }).min(0, { message: 'invalid_early_access' }).optional().default(0),
+  badge_label: z.string().optional().default('').transform((value) => value.trim()),
+  is_active: z.boolean().optional().default(true),
+})
+
+export const DiscountPreviewBodySchema = z.object({
+  target_type: z.enum(['product', 'bundle'], { message: 'invalid_target_type' }),
+  target_id: z.coerce.number({ message: 'invalid_target_id' }).int({ message: 'invalid_target_id' }).positive({ message: 'invalid_target_id' }),
+  qty: z.coerce.number().int({ message: 'invalid_qty' }).positive({ message: 'invalid_qty' }).max(999, { message: 'invalid_qty' }).optional().default(1),
+  product_option_id: z.union([z.string(), z.number()]).optional(),
+  coupon_code: z.string().optional().default('').transform((value) => value.trim().toUpperCase()),
+  user_id: z.coerce.number().int({ message: 'invalid_user_id' }).positive({ message: 'invalid_user_id' }).optional(),
+})
+
+export const GrowthNotificationTestBodySchema = z.object({
+  event_type: z.enum(['wishlist_stock_back', 'wishlist_promo_started', 'campaign_started', 'campaign_ending', 'vip_tier_changed', 'review_moderated'], { message: 'invalid_event_type' }),
+  product_id: z.coerce.number().int({ message: 'invalid_product_id' }).positive({ message: 'invalid_product_id' }).optional(),
+  campaign_id: z.coerce.number().int({ message: 'invalid_campaign_id' }).positive({ message: 'invalid_campaign_id' }).optional(),
+})
+
 export const ProductBodySchema = z
   .object({
     category_id: finiteNumberWithCode('invalid_category_id'),

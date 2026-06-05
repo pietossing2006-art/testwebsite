@@ -14,6 +14,7 @@ import meRoutes from './routes/me.js'
 import publicRoutes from './routes/public.js'
 import topupsRoutes from './routes/topups.js'
 import discordRoutes from './routes/discord.js'
+import growthRoutes from './routes/growth.js'
 import adminCoreRoutes from './routes/admin-core.js'
 import adminCatalogRoutes from './routes/admin-catalog.js'
 import adminOpsRoutes from './routes/admin-ops.js'
@@ -90,6 +91,7 @@ app.use(meRoutes)
 app.use(publicRoutes)
 app.use(topupsRoutes)
 app.use(discordRoutes)
+app.use(growthRoutes)
 app.use(adminCoreRoutes)
 app.use(adminCatalogRoutes)
 app.use(adminOpsRoutes)

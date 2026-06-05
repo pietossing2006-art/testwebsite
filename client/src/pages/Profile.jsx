@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { copyToClipboard, fetchJson, setAuthToken } from '../api.js'
+import { formatWishlistStockStatus, getVipProgressPercent, normalizeNotificationPreferences } from '../components/growth/growthDisplayUtils.js'
 import UserAvatar from '../components/UserAvatar.jsx'
 
 function isEnglishOnlyPassword(value) {
@@ -62,6 +63,15 @@ function txLabel(tx) {
   return type || 'รายการ'
 }
 
+const NOTIFICATION_PREFERENCE_ROWS = [
+  ['wishlist_stock', 'สินค้าใน Wishlist กลับมาขาย'],
+  ['wishlist_promo', 'สินค้าใน Wishlist มีโปร'],
+  ['campaigns', 'Flash Deal และ Campaign'],
+  ['vip', 'อัปเดต VIP'],
+  ['reviews', 'อัปเดตรีวิว'],
+  ['push_enabled', 'Push notification'],
+]
+
 export default function Profile() {
   const nav = useNavigate()
   const loc = useLocation()
@@ -86,6 +96,10 @@ export default function Profile() {
   const [discordCode, setDiscordCode] = useState(null)
   const [discordStatus, setDiscordStatus] = useState('idle')
   const [discordCopyStatus, setDiscordCopyStatus] = useState('idle')
+  const [wishlist, setWishlist] = useState([])
+  const [vip, setVip] = useState(null)
+  const [notificationPreferences, setNotificationPreferences] = useState(normalizeNotificationPreferences(null))
+  const [preferencesStatus, setPreferencesStatus] = useState('idle')
 
   useEffect(() => {
     let cancelled = false
@@ -93,11 +107,14 @@ export default function Profile() {
       setLoading(true)
       setError('')
       try {
-        const [meRes, txRes, ordersRes, discordRes] = await Promise.all([
+        const [meRes, txRes, ordersRes, discordRes, wishlistRes, vipRes, prefRes] = await Promise.all([
           fetchJson('/api/me'),
           fetchJson('/api/me/transactions'),
           fetchJson('/api/me/orders'),
           fetchJson('/api/me/discord-link'),
+          fetchJson('/api/me/wishlist').catch(() => ({})),
+          fetchJson('/api/me/vip').catch(() => ({})),
+          fetchJson('/api/me/notification-preferences').catch(() => ({})),
         ])
         if (!cancelled) {
           setMe(meRes)
@@ -105,6 +122,9 @@ export default function Profile() {
           setTx(Array.isArray(txRes?.transactions) ? txRes.transactions : [])
           setOrders(Array.isArray(ordersRes?.orders) ? ordersRes.orders : [])
           setDiscordLink(discordRes)
+          setWishlist(Array.isArray(wishlistRes?.wishlist?.items) ? wishlistRes.wishlist.items : [])
+          setVip(vipRes?.vip || null)
+          setNotificationPreferences(normalizeNotificationPreferences(prefRes?.preferences))
         }
       } catch (err) {
         if (!cancelled && err?.status === 401) {
@@ -341,6 +361,26 @@ export default function Profile() {
     if (ok) setTimeout(() => setDiscordCopyStatus('idle'), 1300)
   }
 
+  async function saveNotificationPreferences(nextPreferences) {
+    setPreferencesStatus('submitting')
+    try {
+      const res = await fetchJson('/api/me/notification-preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextPreferences),
+      })
+      setNotificationPreferences(normalizeNotificationPreferences(res?.preferences))
+      setPreferencesStatus('success')
+      setTimeout(() => setPreferencesStatus('idle'), 1200)
+    } catch {
+      setPreferencesStatus('error')
+    }
+  }
+
+  const vipProgress = getVipProgressPercent(vip)
+  const vipNextThreshold = Number(vip?.next_threshold_points)
+  const vipPointsSpent = Number(vip?.points_spent || 0)
+
   if (loading) {
     return (
       <div className="grid min-h-[460px] place-items-center rounded-3xl border border-white/[0.08] bg-white/[0.025]">
@@ -438,6 +478,76 @@ export default function Profile() {
           <div className="text-sm font-black text-white">ออกจากระบบ</div>
           <div className="mt-1 text-xs text-white/42">กลับไปหน้าแรก</div>
         </button>
+      </section>
+
+      <section id="wishlist" className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5">
+        <SectionTitle title="Wishlist" subtitle="สินค้าที่ติดตาม พร้อมสถานะล่าสุดและทางลัดกลับไปหน้าสินค้า" />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {wishlist.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-white/[0.08] p-5 text-center text-sm text-white/45 sm:col-span-2 xl:col-span-3">ยังไม่ได้ติดตามสินค้า</div>
+          ) : null}
+          {wishlist.map((item) => (
+            <Link key={item.product_id} to={`/product/${item.product_id}`} className="motion-card motion-hover flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-3 transition hover:border-cyan-300/20 hover:bg-white/[0.055]">
+              {item.image_url ? (
+                <img src={item.image_url} alt={item.name} className="h-14 w-14 shrink-0 rounded-xl border border-white/10 object-cover" />
+              ) : (
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-[10px] font-black text-white/30">ITEM</div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-black text-white">{item.name}</div>
+                <div className="mt-1 text-xs font-bold text-cyan-100/65">{formatWishlistStockStatus(item.stock_status)}</div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section id="vip" className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5">
+        <SectionTitle title="VIP" subtitle="ระดับสมาชิกและสิทธิประโยชน์จากยอดซื้อสะสม" />
+        <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+          <div className="rounded-2xl border border-cyan-300/15 bg-cyan-500/10 p-4">
+            <div className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100/70">Current tier</div>
+            <div className="mt-2 text-2xl font-black text-white">{vip?.tier?.name || 'ยังไม่มีระดับ'}</div>
+            <div className="mt-1 text-xs font-semibold text-white/50">ยอดซื้อสะสม {fmt(vipPointsSpent)} พ้อยท์</div>
+          </div>
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4">
+            <div className="flex items-center justify-between gap-3 text-xs font-bold text-white/55">
+              <span>{vip?.next_tier?.name ? `ไปสู่ ${vip.next_tier.name}` : 'ระดับสูงสุดหรือยังไม่มี Tier ถัดไป'}</span>
+              <span>{vipProgress}%</span>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full border border-white/10 bg-black/30">
+              <div className="h-full bg-cyan-300 transition-all" style={{ width: `${vipProgress}%` }} />
+            </div>
+            <div className="mt-3 text-xs leading-6 text-white/45">
+              {Number.isFinite(vipNextThreshold) && vipNextThreshold > 0
+                ? `ต้องมียอดซื้อสะสม ${fmt(vipNextThreshold)} พ้อยท์เพื่อไป Tier ถัดไป`
+                : 'ระบบจะอัปเดต Tier อัตโนมัติเมื่อมีเงื่อนไขใหม่'}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="notifications" className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5">
+        <SectionTitle title="การแจ้งเตือน" subtitle="เลือกการแจ้งเตือนจาก Wishlist, โปรโมชัน, VIP และรีวิว" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {NOTIFICATION_PREFERENCE_ROWS.map(([key, label]) => (
+            <label key={key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-3 text-sm font-bold text-white/75">
+              <span>{label}</span>
+              <input
+                type="checkbox"
+                checked={notificationPreferences?.[key] === true}
+                disabled={preferencesStatus === 'submitting'}
+                onChange={(event) => {
+                  const next = normalizeNotificationPreferences({ ...(notificationPreferences || {}), [key]: event.target.checked })
+                  setNotificationPreferences(next)
+                  saveNotificationPreferences(next)
+                }}
+              />
+            </label>
+          ))}
+        </div>
+        {preferencesStatus === 'success' ? <div className="mt-3 text-xs font-bold text-emerald-300">บันทึกการแจ้งเตือนแล้ว</div> : null}
+        {preferencesStatus === 'error' ? <div className="mt-3 text-xs font-bold text-cyan-200">บันทึกการแจ้งเตือนไม่สำเร็จ</div> : null}
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">

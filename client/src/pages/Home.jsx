@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchJson, getAuthToken } from '../api.js'
+import { normalizeGrowthCampaigns } from '../components/growth/growthDisplayUtils.js'
 import { DEFAULT_UI_IMAGE_SETTINGS, normalizeUiImageSettings } from '../uiImageSettings.js'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion.jsx'
 
@@ -281,6 +282,7 @@ export default function Home() {
   const [featuredProducts, setFeaturedProducts] = useState([])
   const [showcaseProducts, setShowcaseProducts] = useState([])
   const [bundles, setBundles] = useState([])
+  const [growthCampaigns, setGrowthCampaigns] = useState([])
   const [optionStockByProduct, setOptionStockByProduct] = useState({})
   const [uiImageSettings, setUiImageSettings] = useState(DEFAULT_UI_IMAGE_SETTINGS)
   const [homepageSettings, setHomepageSettings] = useState(DEFAULT_HOMEPAGE_SETTINGS)
@@ -313,10 +315,11 @@ export default function Home() {
 
   const loadAll = useCallback(async (signal) => {
     try {
-      const [cat, settings, bundlesRes] = await Promise.all([
+      const [cat, settings, bundlesRes, campaignRes] = await Promise.all([
         fetchJson('/api/categories'),
         fetchJson('/api/ui-settings'),
         fetchJson('/api/bundles').catch(() => ({})),
+        fetchJson('/api/growth-campaigns/active').catch(() => null),
       ])
       if (signal?.aborted) return
 
@@ -340,6 +343,7 @@ export default function Home() {
       const byIdMap = new Map(byIdProducts.map((product) => [Number(product.id), product]))
       setCategories(Array.isArray(cat?.categories) ? cat.categories : [])
       setBundles(Array.isArray(bundlesRes?.bundles) ? bundlesRes.bundles : [])
+      setGrowthCampaigns(normalizeGrowthCampaigns(campaignRes))
       setUiImageSettings(normalizeUiImageSettings(settings?.image_settings))
       setHomepageSettings(merged)
       setFeaturedProducts(featIds.map((id) => byIdMap.get(id)).filter(Boolean))
@@ -497,6 +501,27 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {growthCampaigns.length > 0 ? (
+        <section className="rounded-3xl border border-cyan-300/15 bg-cyan-500/10 p-5">
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-black text-white">Flash Deal</h2>
+              <div className="mt-1 text-xs font-semibold text-cyan-100/55">ดีลเวลาจำกัดและสินค้าจำนวนจำกัด</div>
+            </div>
+            <Link to="/categories" className="shrink-0 text-xs font-black text-cyan-100/75 hover:text-cyan-50">ดูสินค้า →</Link>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {growthCampaigns.slice(0, 6).map((campaign) => (
+              <Link key={campaign.id} to={campaign.primaryLink || '/categories'} className="motion-card motion-hover rounded-2xl border border-white/10 bg-black/20 p-4 transition hover:border-cyan-300/25 hover:bg-black/30">
+                <div className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100/60">{campaign.badgeText}</div>
+                <div className="mt-2 text-base font-black text-white">{campaign.title}</div>
+                {campaign.description ? <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/50">{campaign.description}</div> : null}
+              </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {showcaseEnabled && showcaseProducts.length > 0 ? (
         <section className="fade-in-up">
