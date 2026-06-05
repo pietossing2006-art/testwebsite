@@ -1,4 +1,4 @@
-import dotenv from 'dotenv'
+﻿import dotenv from 'dotenv'
 import http from 'node:http'
 import express from 'express'
 import cors from 'cors'
@@ -18,6 +18,8 @@ import growthRoutes from './routes/growth.js'
 import adminCoreRoutes from './routes/admin-core.js'
 import adminCatalogRoutes from './routes/admin-catalog.js'
 import adminOpsRoutes from './routes/admin-ops.js'
+import trackerRoutes from './routes/tracker.js'
+import { initTrackerStore } from './lib/trackerStore.js'
 import { startDiscordBot } from './lib/discordBot.js'
 import { csrfOriginGuard, globalErrorHandler, securityHeaders } from './lib/security.js'
 
@@ -86,6 +88,14 @@ app.use((req, res, next) => {
 if (!fs.existsSync(AVATAR_UPLOADS_ROOT)) fs.mkdirSync(AVATAR_UPLOADS_ROOT, { recursive: true })
 app.use('/uploads', express.static(UPLOADS_ROOT, { index: false, maxAge: '7d' }))
 
+app.use((req, res, next) => {
+  const host = String(req.hostname || req.headers.host || '').split(':')[0].toLowerCase()
+  if (host === 'key.vxpers.com' && (req.path === '/' || req.path === '')) {
+    return res.redirect(302, '/tracker')
+  }
+  next()
+})
+
 app.use(authRoutes)
 app.use(meRoutes)
 app.use(publicRoutes)
@@ -95,11 +105,13 @@ app.use(growthRoutes)
 app.use(adminCoreRoutes)
 app.use(adminCatalogRoutes)
 app.use(adminOpsRoutes)
+app.use('/api/tracker', trackerRoutes)
 
 ;(async () => {
   try {
     await initDbPg()
     await seedDb()
+    await initTrackerStore()
     await startDiscordBot()
   } catch (e) {
     // eslint-disable-next-line no-console

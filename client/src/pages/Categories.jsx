@@ -14,12 +14,12 @@ function CategoryFallback() {
 
 function SkeletonCard() {
   return (
-    <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035]">
-      <div className="aspect-[16/10] animate-pulse bg-white/[0.06]" />
-      <div className="space-y-3 p-4">
-        <div className="h-4 w-2/3 animate-pulse rounded-full bg-white/[0.08]" />
-        <div className="h-3 w-full animate-pulse rounded-full bg-white/[0.06]" />
+    <div className="rounded-3xl border border-[#152b62] bg-[#050d22] px-6 py-10 text-center">
+      <div className="mx-auto h-1 w-44 overflow-hidden rounded-full bg-[#091637]">
+        <div className="h-full w-1/2 animate-pulse bg-cyan-300/70" />
       </div>
+      <div className="mt-4 text-sm font-black text-white/85">กำลังโหลดหมวดหมู่</div>
+      <div className="mt-2 text-xs text-white/45">ระบบกำลังดึงข้อมูลสินค้าและหมวดหมู่ล่าสุด</div>
     </div>
   )
 }
@@ -178,11 +178,11 @@ export default function Categories() {
 
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 sm:p-5">
-              <div className="text-3xl font-black text-white">{categories.length.toLocaleString()}</div>
+              <div className="text-3xl font-black text-white">{loading ? '...' : categories.length.toLocaleString()}</div>
               <div className="mt-1 text-xs font-bold text-white/45">หมวดหมู่</div>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 sm:p-5">
-              <div className="text-3xl font-black text-cyan-100">{totalProducts.toLocaleString()}</div>
+              <div className="text-3xl font-black text-cyan-100">{loading ? '...' : totalProducts.toLocaleString()}</div>
               <div className="mt-1 text-xs font-bold text-white/45">สินค้าทั้งหมด</div>
             </div>
           </div>
@@ -217,9 +217,7 @@ export default function Categories() {
       ) : null}
 
       {loading ? (
-        <div className="motion-stagger grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => <SkeletonCard key={index} />)}
-        </div>
+        <SkeletonCard />
       ) : visibleCategories.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-white/12 bg-white/[0.025] px-6 py-14 text-center">
           <div className="text-lg font-extrabold text-white">ไม่พบหมวดหมู่</div>

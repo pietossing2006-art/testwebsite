@@ -12,6 +12,7 @@ import {
   PromptpaySlipBodySchema,
   ProductBodySchema,
   RegisterBodySchema,
+  ReviewBodySchema,
   StockItemsBodySchema,
   TopupAngpaoBodySchema,
   TopupPromptpayBodySchema,
@@ -161,6 +162,20 @@ test('ProductBodySchema normalizes product management fields', () => {
     ok: false,
     error: 'invalid_stock',
   })
+})
+
+test('ReviewBodySchema accepts reviewer display name without exposing order item IDs', () => {
+  const parsed = validateBody(ReviewBodySchema, {
+    reviewer_name: '  ชื่อ  ',
+    rating: '5',
+    comment: ' รีวิวดีมาก ',
+  })
+
+  assert.equal(parsed.ok, true)
+  assert.equal(parsed.data.reviewer_name, 'ชื่อ')
+  assert.equal(parsed.data.rating, 5)
+  assert.equal(parsed.data.comment, 'รีวิวดีมาก')
+  assert.equal('order_item_id' in parsed.data, false)
 })
 
 test('StockItemsBodySchema normalizes multiline stock input', () => {

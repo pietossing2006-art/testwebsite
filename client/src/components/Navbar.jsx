@@ -31,7 +31,7 @@ function isExternalUrl(url) {
 export default function Navbar() {
   const nav = useNavigate()
   const loc = useLocation()
-  const [hasToken, setHasToken] = useState(Boolean(getAuthToken()))
+  const [sessionChecked, setSessionChecked] = useState(false)
   const [me, setMe] = useState(null)
   const [branding, setBranding] = useState(DEFAULT_UI_BRANDING_SETTINGS)
   const [open, setOpen] = useState(false)
@@ -40,14 +40,19 @@ export default function Navbar() {
   const menuRef = useRef(null)
   const mobileRef = useRef(null)
   const toggleRef = useRef(null)
+  const user = me?.user
+  const wallet = me?.wallet
+  const isAuthed = Boolean(user)
 
   useEffect(() => {
     const onChange = () => {
       const nextHasToken = Boolean(getAuthToken())
-      setHasToken(nextHasToken)
-      if (!nextHasToken) {
+      if (nextHasToken) {
+        setSessionChecked(false)
+      } else {
         setMe(null)
         setUnreadMsgCount(0)
+        setSessionChecked(true)
       }
     }
     window.addEventListener('auth_token_changed', onChange)
@@ -55,7 +60,7 @@ export default function Navbar() {
   }, [])
 
   useEffect(() => {
-    if (!hasToken) return undefined
+    if (!isAuthed) return undefined
     let cancelled = false
     async function loadUnread() {
       try {
@@ -72,7 +77,7 @@ export default function Navbar() {
       clearInterval(timer)
       window.removeEventListener('app_refresh', onRefreshUnread)
     }
-  }, [hasToken])
+  }, [isAuthed])
 
   useEffect(() => {
     let cancelled = false
@@ -103,13 +108,15 @@ export default function Navbar() {
         const data = await fetchJson('/api/me')
         if (!cancelled) {
           setMe(data)
-          setHasToken(true)
+          setSessionChecked(true)
         }
       } catch (e) {
-        if (!cancelled && e?.status === 401) {
-          setHasToken(false)
-          setAuthToken(null)
-          setMe(null)
+        if (!cancelled) {
+          if (e?.status === 401) {
+            setAuthToken(null)
+            setMe(null)
+          }
+          setSessionChecked(true)
         }
       }
     }
@@ -190,9 +197,6 @@ export default function Navbar() {
     return () => clearTimeout(id)
   }, [loc.pathname])
 
-  const user = me?.user
-  const wallet = me?.wallet
-  const isAuthed = Boolean(user)
   const displayName = user?.display_name || user?.email?.split('@')?.[0] || 'user'
   const brandTitle = String(branding?.navbar_title || branding?.site_name || DEFAULT_UI_BRANDING_SETTINGS.navbar_title)
   const _brandInitials = String(brandTitle || DEFAULT_UI_BRANDING_SETTINGS.site_name)
@@ -227,7 +231,7 @@ export default function Navbar() {
   const [logoHover, setLogoHover] = useState(false)
 
   return (
-    <header className="glass sticky top-0 z-50 border-b border-white/5 px-3 py-3 sm:px-4 md:px-12 md:py-4">
+    <header className="glass sticky top-0 z-50 border-b border-[#152b62] px-3 py-3 sm:px-4 md:px-12 md:py-4">
       <div className="mx-auto flex w-full max-w-[80rem] items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-4 lg:gap-12">
           <Link to="/" className="flex min-w-0 items-center gap-2 lg:min-w-max" onMouseEnter={() => setLogoHover(true)} onMouseLeave={() => setLogoHover(false)}>
@@ -262,7 +266,7 @@ export default function Navbar() {
         <button
           type="button"
           aria-expanded={mobileOpen}
-          className="ml-1 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/85 md:hidden"
+          className="ml-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#1b3470] bg-[#091637] text-white/85 lg:hidden"
           onClick={() => setMobileOpen((v) => !v)}
           ref={toggleRef}
         >
@@ -272,13 +276,13 @@ export default function Navbar() {
           </svg>
         </button>
 
-        <div className="ml-auto hidden items-center gap-6 md:flex" ref={menuRef}>
+        <div className="ml-auto hidden items-center gap-6 lg:flex" ref={menuRef}>
           {isAuthed ? (
             <div className="relative">
               <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}
-                className="relative inline-flex h-10 items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 text-sm font-medium text-white/90 hover:border-white/15 hover:bg-white/10"
+                className="relative inline-flex h-10 items-center justify-center gap-3 rounded-xl border border-[#1b3470] bg-[#091637] px-3 text-sm font-medium text-white/90 hover:border-[#284a92] hover:bg-[#112455]"
               >
                 {unreadMsgCount > 0 ? (
                   <span className="absolute -top-1.5 -right-1.5 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow-lg">{unreadMsgCount > 99 ? '99+' : unreadMsgCount}</span>
@@ -291,7 +295,7 @@ export default function Navbar() {
               </button>
 
               {open ? (
-                <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-2xl border border-white/10 bg-[#080809]/95 shadow-[0_26px_90px_rgba(0,0,0,0.78)] backdrop-blur-xl">
+                <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-2xl border border-[#1b3470] bg-[#050d22] shadow-[0_26px_90px_rgba(0,0,0,0.78)]">
                   <div className="border-b border-white/10 p-3">
                     <div className="text-xs font-extrabold text-white">ยอดคงเหลือ</div>
                     <div className="mt-1 text-sm font-black tracking-wide text-cyan-300">{wallet?.balance ?? 0} พ้อย</div>
@@ -382,7 +386,7 @@ export default function Navbar() {
                 </div>
               ) : null}
             </div>
-          ) : (
+          ) : sessionChecked ? (
             <>
               <Link
                 to="/login"
@@ -397,14 +401,14 @@ export default function Navbar() {
                 สมัครสมาชิก
               </Link>
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
       <div
         ref={mobileRef}
         onClick={() => setMobileOpen(false)}
-        className={`fixed inset-0 top-[64px] z-40 transition-all duration-250 ease-out md:hidden ${
+        className={`fixed inset-0 top-[64px] z-40 transition-all duration-250 ease-out lg:hidden ${
           mobileOpen
             ? 'pointer-events-auto opacity-100'
             : 'pointer-events-none opacity-0'
@@ -413,14 +417,14 @@ export default function Navbar() {
         <div className="absolute inset-0 z-10" aria-hidden />
         <div
           onClick={(e) => e.stopPropagation()}
-          className="relative z-20 mx-3 mt-1 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-2xl border border-white/10 bg-[#080809]/92 shadow-[0_24px_80px_rgba(0,0,0,0.74)] backdrop-blur-xl sm:mx-5"
+          className="relative z-20 mx-3 mt-1 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-2xl border border-[#1b3470] bg-[#050d22] shadow-[0_24px_80px_rgba(0,0,0,0.74)] sm:mx-5"
         >
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
             <span className="text-xs font-semibold text-white/50">เมนู</span>
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-[#1b3470] bg-[#091637] text-white/70 hover:bg-[#112455]"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18 6 6 18m0-12 12 12" />
@@ -428,9 +432,9 @@ export default function Navbar() {
             </button>
           </div>
           <div className="flex flex-col divide-y divide-white/10">
-            {hasToken ? (
+            {isAuthed ? (
               <div className="px-4 py-3">
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex items-center gap-3 rounded-2xl border border-[#1b3470] bg-[#091637] p-3">
                   <UserAvatar user={user} size={40} rounded="md" />
                   <div className="min-w-0">
                     <div className="truncate text-sm font-black text-white">{displayName}</div>
@@ -466,7 +470,7 @@ export default function Navbar() {
                 </NavLink>
               )
             ))}
-            {hasToken ? (
+            {isAuthed ? (
               <div className="grid gap-2 px-4 py-3">
                 <Link to="/profile" onClick={() => setMobileOpen(false)} className="ui-btn h-11 w-full justify-center">โปรไฟล์</Link>
                 <div className="grid grid-cols-2 gap-2">
@@ -517,7 +521,7 @@ export default function Navbar() {
                 </div>
               </div>
             ) : null}
-            {!hasToken ? (
+            {sessionChecked && !isAuthed ? (
               <div className="flex items-center gap-2 px-4 py-3">
                 <Link
                   to="/login"

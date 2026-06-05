@@ -111,3 +111,30 @@ test('public review route exposes approved review payload', async () => {
     assert.equal(body.reviews.length, 1)
   })
 })
+
+test('review submission accepts reviewer name instead of order item number', async () => {
+  const app = express()
+  app.use(express.json())
+  let submitted = null
+  const store = {
+    ...createFakeStore(),
+    createProductReview: async (payload) => {
+      submitted = payload
+      return { id: 12, status: 'pending' }
+    },
+  }
+  app.use(createGrowthRouter({ store, auth: createFakeAuth('user') }))
+
+  await withServer(app, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/products/42/reviews`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewer_name: 'ชื่อ', rating: 5, comment: 'ดีมาก' }),
+    })
+    const body = await res.json()
+    assert.equal(res.status, 201)
+    assert.equal(body.review.id, 12)
+    assert.equal(submitted.reviewer_name, 'ชื่อ')
+    assert.equal('order_item_id' in submitted, false)
+  })
+})

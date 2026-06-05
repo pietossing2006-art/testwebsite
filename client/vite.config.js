@@ -16,6 +16,6 @@ export default defineConfig({
     },
   },
   preview: {
-    allowedHosts: ['www.vxpers.com'],
+    allowedHosts: ['www.vxpers.com', 'key.vxpers.com'],
   },
 })

@@ -136,7 +136,10 @@ export const WishlistBodySchema = z.object({
 })
 
 export const ReviewBodySchema = z.object({
-  order_item_id: z.coerce.number({ message: 'invalid_order_item_id' }).int({ message: 'invalid_order_item_id' }).positive({ message: 'invalid_order_item_id' }),
+  reviewer_name: requiredString('invalid_reviewer_name')
+    .transform((value) => value.trim())
+    .refine((value) => value.length >= 1, 'invalid_reviewer_name')
+    .refine((value) => value.length <= 80, 'invalid_reviewer_name_too_long'),
   rating: z.coerce.number({ message: 'invalid_rating' }).int({ message: 'invalid_rating' }).min(1, { message: 'invalid_rating' }).max(5, { message: 'invalid_rating' }),
   comment: requiredString('invalid_comment')
     .transform((value) => value.trim())

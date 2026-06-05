@@ -2479,7 +2479,7 @@ export async function listProductReviewsPublic({ productId, limit = 20, offset =
   const off = growthOffset(offset)
   const reviews = await all(
     `SELECT pr.id, pr.rating, pr.comment, pr.created_at,
-            COALESCE(u.display_name, u.username, 'user') AS reviewer_name
+            COALESCE(NULLIF(pr.reviewer_name, ''), u.display_name, u.username, 'user') AS reviewer_name
      FROM product_reviews pr
      JOIN users u ON u.id = pr.user_id
      WHERE pr.product_id = $1 AND pr.status = 'approved'
@@ -2497,30 +2497,48 @@ export async function listProductReviewsPublic({ productId, limit = 20, offset =
   return { summary, reviews }
 }
 
-export async function createProductReview({ userId, productId, order_item_id, rating, comment }) {
+export async function createProductReview({ userId, productId, reviewer_name, rating, comment }) {
   const uid = growthPositiveInt(userId, 'invalid_user_id')
   const pid = growthPositiveInt(productId, 'invalid_product_id')
-  const orderItemId = growthPositiveInt(order_item_id, 'invalid_order_item_id')
+  const reviewerName = String(reviewer_name || '').trim()
   const rate = Number(rating)
   const text = String(comment || '').trim()
+  if (!reviewerName || reviewerName.length > 80) throw new Error('invalid_reviewer_name')
   if (!Number.isFinite(rate) || rate < 1 || rate > 5) throw new Error('invalid_rating')
   const eligible = await get(
     `SELECT oi.id, oi.order_id
      FROM order_items oi
      JOIN orders o ON o.id = oi.order_id
-     WHERE oi.id = $1
-       AND oi.product_id = $2
-       AND o.user_id = $3
-       AND o.status IN ('paid', 'completed')`,
-    [orderItemId, pid, uid],
+     LEFT JOIN product_reviews pr ON pr.order_item_id = oi.id
+     WHERE oi.product_id = $1
+       AND o.user_id = $2
+       AND o.status IN ('paid', 'completed')
+       AND pr.id IS NULL
+     ORDER BY oi.id DESC
+     LIMIT 1`,
+    [pid, uid],
   )
-  if (!eligible) throw new Error('review_not_allowed')
+  if (!eligible) {
+    const reviewed = await get(
+      `SELECT pr.id
+       FROM product_reviews pr
+       JOIN order_items oi ON oi.id = pr.order_item_id
+       JOIN orders o ON o.id = oi.order_id
+       WHERE oi.product_id = $1
+         AND o.user_id = $2
+         AND o.status IN ('paid', 'completed')
+       LIMIT 1`,
+      [pid, uid],
+    )
+    if (reviewed) throw new Error('review_exists')
+    throw new Error('review_not_allowed')
+  }
   try {
     return await get(
-      `INSERT INTO product_reviews (user_id, product_id, order_id, order_item_id, rating, comment)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO product_reviews (user_id, product_id, order_id, order_item_id, reviewer_name, rating, comment)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        RETURNING id, status, created_at`,
-      [uid, pid, eligible.order_id, orderItemId, Math.trunc(rate), text],
+      [uid, pid, eligible.order_id, eligible.id, reviewerName, Math.trunc(rate), text],
     )
   } catch (error) {
     if (error?.code === '23505') throw new Error('review_exists')
@@ -2729,7 +2747,7 @@ export async function adminListReviews({ status, limit = 100, offset = 0 } = {})
   const reviews = await all(
     `SELECT pr.id, pr.user_id, pr.product_id, pr.order_id, pr.order_item_id, pr.rating,
             pr.comment, pr.status, pr.admin_note, pr.created_at, pr.updated_at,
-            u.email AS user_email, COALESCE(u.display_name, u.username, u.email) AS reviewer_name,
+            u.email AS user_email, COALESCE(NULLIF(pr.reviewer_name, ''), u.display_name, u.username, u.email) AS reviewer_name,
             p.name AS product_name, o.ref AS order_ref
      FROM product_reviews pr
      JOIN users u ON u.id = pr.user_id
@@ -4600,6 +4618,7 @@ export async function initDbPg() {
       product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
       order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
       order_item_id BIGINT NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+      reviewer_name TEXT,
       rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
       comment TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
@@ -4611,6 +4630,7 @@ export async function initDbPg() {
       UNIQUE (order_item_id)
     )
   `)
+  await query(`ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS reviewer_name TEXT`)
   await query(`CREATE INDEX IF NOT EXISTS product_reviews_product_status_idx ON product_reviews (product_id, status, created_at DESC)`)
 
   await query(`

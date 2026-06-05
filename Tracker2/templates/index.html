@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔑 Unit Key Tracker - ระบบบันทึกคีย์ห้องชุด</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=1.09">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo-icon">🔑</div>
+                <div class="brand-text">
+                    <h1>Unit Key Tracker</h1>
+                    <span class="subtext">ระบบบันทึกคีย์ห้องชุด</span>
+                </div>
+            </div>
+
+            <div class="session-bar hidden" id="session-bar">
+                <select id="session-select" aria-label="เลือกโปรเจกต์"></select>
+                <button type="button" class="session-new-btn" id="session-new-btn" title="สร้างโปรเจกต์ใหม่">+</button>
+            </div>
+
+            <div class="stats-card">
+                <div class="progress-info">
+                    <div class="progress-text">
+                        <span class="label">บันทึกคีย์แล้ว</span>
+                        <span id="stats-percentage" class="percentage">0.0%</span>
+                    </div>
+                    <span id="stats-count" class="count">0 / 755 ห้อง</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div id="progress-fill" class="progress-bar-fill"></div>
+                </div>
+                <div class="sync-status">
+                    <span class="status-dot online" id="sync-dot"></span>
+                    <span id="sync-text" class="status-text">เชื่อมต่อเซิร์ฟเวอร์แล้ว</span>
+                    <span class="marked-count" id="marked-count"></span>
+                </div>
+            </div>
+
+            <div class="card form-card">
+                <h2>📥 บันทึกข้อมูลคีย์ใหม่</h2>
+                <p class="input-tip" id="input-tip">พิมพ์เลขห้องแล้วกด Enter ได้เลย! (เช่น 5 -> 42/005)</p>
+                <form id="add-form" autocomplete="off">
+                    <div class="input-group">
+                        <span class="prefix" id="add-prefix">42/</span>
+                        <input type="text" id="unit-input" placeholder="เลขห้อง (เช่น 001, 150)" required autofocus pattern="[0-9/a-zA-Z-]*">
+                        <button type="submit" class="btn btn-success" id="add-btn">
+                            <span class="btn-icon">➕</span> บันทึก
+                        </button>
+                    </div>
+                </form>
+                <div id="feedback-msg" class="feedback-message"></div>
+            </div>
+
+            <div class="card filter-card">
+                <h2>🔍 ค้นหาและกรองข้อมูล</h2>
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="search-input" placeholder="ค้นหาหมายเลขห้อง...">
+                    <button id="clear-search" class="clear-btn" type="button">&times;</button>
+                </div>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+                    <button class="filter-btn" data-filter="checked">✅ บันทึกแล้ว</button>
+                    <button class="filter-btn" data-filter="unchecked">❌ ยังไม่บันทึก</button>
+                    <button class="filter-btn" data-filter="marked">🌸 ไม่มีข้อมูล</button>
+                </div>
+            </div>
+
+            <div class="footer-info">
+                <button type="button" class="session-add-link hidden" id="session-add-link">+ สร้างโปรเจกต์</button>
+                <p>Cloudflare Tunnel Active 🌐</p>
+                <p>Domain: <span id="domain-display">api.vxpers.com</span></p>
+            </div>
+        </aside>
+
+        <main class="dashboard">
+            <header class="dashboard-header">
+                <div class="title-area">
+                    <h2 id="dashboard-title">แดชบอร์ดแสดงผลห้องทั้งหมด (42/001 - 42/755)</h2>
+                    <p class="subtitle">คลิกที่ห้องเพื่อบันทึกหรือจัดการรายละเอียด</p>
+                </div>
+                <div class="view-toggles">
+                    <button class="toggle-btn active" id="view-grid-btn">🔳 ตาราง (Grid)</button>
+                    <button class="toggle-btn" id="view-list-btn">📃 รายการ (List)</button>
+                </div>
+            </header>
+
+            <div id="room-grid" class="room-grid active-view"></div>
+            <div id="room-list" class="room-list"></div>
+        </main>
+    </div>
+
+    <div id="action-modal" class="modal">
+        <div class="modal-content glass">
+            <span class="close-modal">&times;</span>
+            <div class="modal-header">
+                <span class="modal-icon">🚪</span>
+                <h3 id="modal-title">ห้อง 42/001</h3>
+            </div>
+            <div class="modal-body">
+                <p>สถานะปัจจุบัน: <span id="modal-status-text">ยังไม่ได้บันทึก</span></p>
+                <div id="edit-section" class="edit-section">
+                    <label for="edit-unit-input">แก้ไขหมายเลขห้อง:</label>
+                    <div class="input-group">
+                        <span class="prefix" id="edit-prefix">42/</span>
+                        <input type="text" id="edit-unit-input" placeholder="001">
+                    </div>
+                    <div id="modal-feedback-msg" class="feedback-message"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="modal-toggle-btn" class="btn btn-primary">✅ บันทึกคีย์</button>
+                <button id="modal-mark-btn" class="btn btn-pink">🌸 มาร์คไม่มีข้อมูล</button>
+                <button id="modal-edit-btn" class="btn btn-warning">✏️ แก้ไขเลขห้อง</button>
+                <button id="modal-delete-btn" class="btn btn-danger">🗑️ ยกเลิกการคีย์</button>
+                <button id="modal-save-edit-btn" class="btn btn-success hidden">💾 บันทึกที่แก้ไข</button>
+                <button id="modal-cancel-edit-btn" class="btn btn-secondary hidden">ยกเลิก</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="session-modal" class="modal">
+        <div class="modal-content glass">
+            <span class="close-modal" id="session-modal-close">&times;</span>
+            <div class="modal-header">
+                <span class="modal-icon">🗂️</span>
+                <h3>สร้างโปรเจกต์ใหม่</h3>
+            </div>
+            <div class="modal-body">
+                <form id="session-form" autocomplete="off">
+                    <label class="field-label" for="session-name-input">ชื่อ</label>
+                    <div class="input-group">
+                        <input type="text" id="session-name-input" placeholder="เช่น อาคาร A" required>
+                    </div>
+                    <div class="session-form-row">
+                        <div>
+                            <label class="field-label" for="session-prefix-input">Prefix</label>
+                            <div class="input-group">
+                                <input type="text" id="session-prefix-input" placeholder="42/" required>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="field-label" for="session-total-input">จำนวนห้อง</label>
+                            <div class="input-group">
+                                <input type="number" id="session-total-input" placeholder="755" min="1" max="10000" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="session-feedback-msg" class="feedback-message"></div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="session-cancel-btn">ยกเลิก</button>
+                <button type="submit" form="session-form" class="btn btn-primary">สร้าง</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=1.09"></script>
+</body>
+</html>

@@ -5,8 +5,10 @@ function withBase(url) {
 
   try {
     const { hostname, port, protocol } = window.location
-    const isLocalFrontend = ['localhost', '127.0.0.1'].includes(hostname) && ['4173', '5173'].includes(port)
-    if (isLocalFrontend && u.startsWith('/api')) return `${protocol}//localhost:3001${u}`
+    // Tracker API is served from the same host as key.vxpers.com
+    if (hostname === 'key.vxpers.com' && u.startsWith('/api')) return u
+    const isLocalFrontend = ['localhost', '127.0.0.1'].includes(hostname) && ['3091', '4173', '5173'].includes(port)
+    if (isLocalFrontend && u.startsWith('/api')) return `${protocol}//${hostname}:3001${u}`
   } catch {
     // Fall through to the relative URL when window is unavailable.
   }
@@ -18,6 +20,7 @@ function withBase(url) {
 }
 
 const AUTH_TOKEN_STORAGE_KEY = 'auth_token'
+const AUTH_TOKEN_SESSION_STORAGE_KEY = 'auth_token_session'
 const COOKIE_CONSENT_STORAGE_KEY = 'cookie_consent'
 
 function normalizeConsent(raw) {
@@ -36,7 +39,13 @@ export function resolveApiUrl(url) {
 
 export function getAuthToken() {
   try {
-    return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+    const persistentToken = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+    if (persistentToken) return persistentToken
+  } catch {
+    // Fall through to the tab-scoped token.
+  }
+  try {
+    return sessionStorage.getItem(AUTH_TOKEN_SESSION_STORAGE_KEY)
   } catch {
     return null
   }
@@ -48,10 +57,13 @@ export function setAuthToken(token) {
   try {
     if (!token) {
       localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+      sessionStorage.removeItem(AUTH_TOKEN_SESSION_STORAGE_KEY)
     } else if (canPersistToken) {
       localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, String(token))
+      sessionStorage.removeItem(AUTH_TOKEN_SESSION_STORAGE_KEY)
     } else {
       localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+      sessionStorage.setItem(AUTH_TOKEN_SESSION_STORAGE_KEY, String(token))
       window.dispatchEvent(new CustomEvent('auth_token_not_persisted', { detail: { reason: 'personalization_consent_required' } }))
     }
     window.dispatchEvent(new Event('auth_token_changed'))
@@ -74,7 +86,15 @@ export function setCookieConsent(consent) {
   const normalized = normalizeConsent(consent)
   try {
     localStorage.setItem(COOKIE_CONSENT_STORAGE_KEY, JSON.stringify(normalized))
-    if (!normalized.personalization) localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+    if (!normalized.personalization) {
+      localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
+    } else {
+      const sessionToken = sessionStorage.getItem(AUTH_TOKEN_SESSION_STORAGE_KEY)
+      if (sessionToken && !localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)) {
+        localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, sessionToken)
+        sessionStorage.removeItem(AUTH_TOKEN_SESSION_STORAGE_KEY)
+      }
+    }
     window.dispatchEvent(new CustomEvent('cookie_consent_changed', { detail: normalized }))
   } catch {
     // ignore

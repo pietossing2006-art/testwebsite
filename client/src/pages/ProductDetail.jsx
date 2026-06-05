@@ -94,7 +94,8 @@ function getApiErrorMessage(error) {
 
 function getReviewErrorMessage(error) {
   const code = error?.data?.error
-  if (code === 'invalid_order_item_id') return 'กรุณาใส่เลขรายการสั่งซื้อให้ถูกต้อง'
+  if (code === 'invalid_reviewer_name') return 'กรุณาใส่ชื่อผู้รีวิว'
+  if (code === 'invalid_reviewer_name_too_long') return 'ชื่อผู้รีวิวยาวเกินไป'
   if (code === 'review_not_allowed') return 'รีวิวได้เฉพาะสินค้าที่คุณซื้อสำเร็จแล้ว'
   if (code === 'review_exists') return 'รายการนี้เคยส่งรีวิวแล้ว'
   if (code === 'invalid_rating') return 'กรุณาให้คะแนน 1-5 ดาว'
@@ -133,7 +134,7 @@ export default function ProductDetail() {
   const [mysteryRecentWins, setMysteryRecentWins] = useState([])
   const [wishlist, setWishlist] = useState({ followed: false, loaded: false })
   const [reviews, setReviews] = useState({ summary: null, reviews: [] })
-  const [reviewForm, setReviewForm] = useState({ order_item_id: '', rating: 5, comment: '' })
+  const [reviewForm, setReviewForm] = useState({ reviewer_name: '', rating: 5, comment: '' })
   const [reviewStatus, setReviewStatus] = useState('idle')
   const [reviewMessage, setReviewMessage] = useState('')
 
@@ -474,10 +475,10 @@ export default function ProductDetail() {
       return
     }
 
-    const orderItemId = Number(reviewForm.order_item_id)
-    if (!Number.isFinite(orderItemId) || orderItemId <= 0) {
+    const reviewerName = String(reviewForm.reviewer_name || '').trim()
+    if (!reviewerName) {
       setReviewStatus('error')
-      setReviewMessage('กรุณาใส่เลขรายการสั่งซื้อให้ถูกต้อง')
+      setReviewMessage('กรุณาใส่ชื่อผู้รีวิว')
       return
     }
 
@@ -488,12 +489,12 @@ export default function ProductDetail() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          order_item_id: Math.trunc(orderItemId),
+          reviewer_name: reviewerName,
           rating: Number(reviewForm.rating),
           comment: reviewForm.comment,
         }),
       })
-      setReviewForm({ order_item_id: '', rating: 5, comment: '' })
+      setReviewForm({ reviewer_name: '', rating: 5, comment: '' })
       setReviewStatus('success')
       setReviewMessage('ส่งรีวิวแล้ว รอแอดมินอนุมัติก่อนแสดงผล')
       await loadReviews()
@@ -533,8 +534,6 @@ export default function ProductDetail() {
       setSuccessData(data)
       setSuccessOption(selectedOption ?? null)
       setSuccessOpen(true)
-      triggerAppRefresh()
-      reloadPageSoon()
       const nextProduct = await fetchJson(`/api/products/${id}`).catch(() => null)
       if (nextProduct?.product) setProduct(nextProduct.product)
       const nextStock = await fetchJson(`/api/products/${id}/option-stock`).catch(() => null)
@@ -558,6 +557,18 @@ export default function ProductDetail() {
     if (outOfStock || selectedOptionOut || optionInsufficient || !canSubmit) return
     setBuyError('')
     setConfirmOpen(true)
+  }
+
+  function goToInboxAfterPurchase() {
+    setSuccessOpen(false)
+    triggerAppRefresh()
+    nav('/inbox')
+  }
+
+  function stayAfterPurchase() {
+    setSuccessOpen(false)
+    triggerAppRefresh()
+    reloadPageSoon(80)
   }
 
   if (loading) {
@@ -615,9 +626,9 @@ export default function ProductDetail() {
         <span className="text-white/75">{product.name}</span>
       </div>
 
-      <section className="motion-stagger grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(420px,0.88fr)]">
-        <div className="space-y-4">
-          <div className="motion-card motion-hover motion-soft-glow relative overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.035] shadow-[0_30px_100px_rgba(0,0,0,0.32)]" style={{ aspectRatio: uiImageSettings.product_detail_ratio }}>
+      <section className="motion-stagger grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(420px,0.88fr)]">
+        <div className="min-w-0 space-y-4">
+          <div className="product-detail-media-frame motion-card motion-hover motion-soft-glow relative overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.035] shadow-[0_30px_100px_rgba(0,0,0,0.32)]">
             <div className="absolute inset-0 scanline opacity-35" />
             {product.image_url ? (
               <img
@@ -625,7 +636,7 @@ export default function ProductDetail() {
                 alt={product.name}
                 loading="lazy"
                 decoding="async"
-                className={`motion-image absolute inset-0 h-full w-full ${uiImageSettings.product_detail_force_fit ? 'object-fill' : 'object-contain'}`}
+                className="product-detail-media-image motion-image absolute inset-0 h-full w-full"
               />
             ) : (
               <div className="grid h-full place-items-center bg-cyan-500/5 text-white/25">ไม่มีรูปสินค้า</div>
@@ -667,10 +678,10 @@ export default function ProductDetail() {
           ) : null}
         </div>
 
-        <aside className="motion-card rounded-3xl border border-white/[0.08] glass-strong p-4 sm:p-6">
+        <aside className="motion-card min-w-0 rounded-3xl border border-white/[0.08] glass-strong p-4 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-black leading-tight text-white">{product.name}</h1>
+            <div className="min-w-0">
+              <h1 className="break-words text-2xl font-black leading-tight text-white sm:text-3xl">{product.name}</h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-3 py-1 text-[11px] font-black ${outOfStock ? 'bg-red-500/10 text-red-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
                   {outOfStock ? 'ไม่พร้อมขาย' : 'พร้อมสั่งซื้อ'}
@@ -690,7 +701,7 @@ export default function ProductDetail() {
           <div className="mt-5">
             <div className="text-xs font-bold text-white/45">ราคา</div>
             <div className="mt-1 flex flex-wrap items-end gap-3">
-              <div className="motion-price text-4xl font-black text-emerald-300 [text-shadow:0_0_12px_rgba(110,231,183,0.18)]">{priceDisplayLabel}</div>
+              <div className="motion-price break-words text-3xl font-black text-emerald-300 [text-shadow:0_0_12px_rgba(110,231,183,0.18)] sm:text-4xl">{priceDisplayLabel}</div>
               {hasPromo ? <div className="text-sm font-bold text-white/35 line-through">{originalPriceLabel}</div> : null}
             </div>
             {hasPromo && product.promo_ends_at ? (
@@ -790,8 +801,8 @@ export default function ProductDetail() {
             ) : null}
 
             <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-              <div className="flex flex-wrap items-end gap-3">
-                <div>
+              <div className="grid gap-3">
+                <div className="min-w-0">
                   <label className="text-xs font-black text-white/55">จำนวน</label>
                   <input
                     type="number"
@@ -809,14 +820,17 @@ export default function ProductDetail() {
                       setQty(String(Math.max(1, Math.min(maxQty, Math.trunc(next)))))
                       setQtyRequiredOpen(false)
                     }}
-                    className="ui-field mt-2 h-12 w-32"
+                    className="ui-field mt-2 h-12 w-full"
                   />
+                  <div className="mt-2 text-[11px] text-white/42">เลือกได้ 1 - {fmt(maxQty)}</div>
                 </div>
-                <div className="pb-2 text-sm text-white/55">
-                  รวม <span className="font-black text-emerald-300">{fmt(displayTotalPoints)}</span> พ้อยท์
+                <div className="rounded-xl border border-emerald-300/15 bg-emerald-400/[0.06] px-3 py-3 text-sm text-white/55">
+                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/38">รวม</div>
+                  <div className="mt-1 whitespace-nowrap text-base font-black text-white">
+                    <span className="text-emerald-300">{fmt(displayTotalPoints)}</span> พ้อยท์
+                  </div>
                 </div>
               </div>
-              <div className="mt-2 text-[11px] text-white/42">เลือกได้ 1 - {fmt(maxQty)}</div>
             </div>
 
             <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
@@ -897,13 +911,14 @@ export default function ProductDetail() {
             {isAuthed === true ? (
               <form onSubmit={submitReview} className="grid gap-3">
                 <div>
-                  <label className="text-[11px] font-black text-white/55">เลขรายการสั่งซื้อ</label>
+                  <label className="text-[11px] font-black text-white/55">ชื่อ</label>
                   <input
-                    type="number"
-                    min={1}
-                    value={reviewForm.order_item_id}
-                    onChange={(event) => setReviewForm((prev) => ({ ...prev, order_item_id: event.target.value }))}
-                    placeholder="เช่น 1234"
+                    type="text"
+                    value={reviewForm.reviewer_name}
+                    onChange={(event) => setReviewForm((prev) => ({ ...prev, reviewer_name: event.target.value }))}
+                    maxLength={80}
+                    autoComplete="name"
+                    placeholder="ชื่อผู้รีวิว"
                     className="ui-field mt-1 h-11"
                   />
                 </div>
@@ -958,7 +973,7 @@ export default function ProductDetail() {
                 {review.created_at ? <div className="mt-3 text-[11px] text-white/35">{new Date(review.created_at).toLocaleDateString('th-TH')}</div> : null}
               </div>
             )) : (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm font-bold text-white/42">ยังไม่มีรีวิวที่ผ่านการอนุมัติ</div>
+              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm font-bold text-white/42">ยังไม่มีรีวิว</div>
             )}
           </div>
         </div>
@@ -1015,8 +1030,12 @@ export default function ProductDetail() {
             </div>
           ) : null}
           <div className="mt-5 flex gap-2">
-            <button type="button" onClick={() => { setSuccessOpen(false); nav('/inbox') }} className="ui-btn-primary h-10 flex-1 text-xs font-black">ไปกล่องรับของ</button>
-            <button type="button" onClick={() => setSuccessOpen(false)} className="ui-btn h-10 flex-1 text-xs font-black">อยู่ต่อ</button>
+            <button type="button" onClick={goToInboxAfterPurchase} className="h-10 flex-1 rounded-xl border border-cyan-200/25 bg-cyan-500/90 px-4 text-xs font-black text-white shadow-[0_12px_32px_rgba(6,182,212,0.18)] transition hover:border-cyan-100/45 hover:bg-cyan-400">
+              ไปกล่องรับของ
+            </button>
+            <button type="button" onClick={stayAfterPurchase} className="h-10 flex-1 rounded-xl border border-white/[0.12] bg-white/[0.06] px-4 text-xs font-black text-white/[0.86] transition hover:border-white/[0.22] hover:bg-white/[0.1]">
+              อยู่ต่อ
+            </button>
           </div>
         </Modal>
       ) : null}

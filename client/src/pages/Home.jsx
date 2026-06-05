@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { fetchJson, getAuthToken } from '../api.js'
 import { normalizeGrowthCampaigns } from '../components/growth/growthDisplayUtils.js'
@@ -176,11 +176,11 @@ function ProductCard({ product, optionStock, imageRatio, forceFit = true, compac
   return (
     <Link
       to={`/product/${product.id}`}
-      className={`home-product-card group motion-card motion-hover motion-soft-glow motion-sweep block overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] transition duration-200 hover:border-cyan-300/25 hover:bg-white/[0.055] ${compact ? '' : 'p-3'}`}
+      className={`home-product-card group motion-card motion-hover motion-soft-glow motion-sweep block overflow-hidden rounded-2xl border border-[#152b62] bg-[#091637] transition duration-200 hover:border-[#284a92] hover:bg-[#0d1c45] ${compact ? '' : 'p-3'}`}
     >
-      <div className={`home-product-image relative overflow-hidden bg-white/[0.04] ${compact ? '' : 'rounded-xl border border-white/[0.06]'}`} style={{ aspectRatio: imageRatio }}>
+      <div className={`home-product-image relative overflow-hidden bg-[#050d22] ${compact ? '' : 'rounded-xl border border-[#152b62]'}`} style={{ aspectRatio: imageRatio }}>
         {price.hasPromo ? (
-          <span className="absolute left-2 top-2 z-10 rounded-full border border-cyan-300/20 bg-cyan-500/20 px-2 py-1 text-[10px] font-black text-cyan-100 backdrop-blur">
+          <span className="absolute left-2 top-2 z-10 rounded-full border border-cyan-300/25 bg-[#0e7490] px-2 py-1 text-[10px] font-black text-white">
             {price.discountBadge}
           </span>
         ) : null}
@@ -254,7 +254,7 @@ function ShowcaseScroller({ products, optionStockByProduct, imageRatio, forceFit
       onTouchEnd={() => { setTimeout(() => { pausedRef.current = false }, 3000) }}
     >
       {products.map((product) => (
-        <div key={product.id} className="w-[220px] shrink-0">
+        <div key={product.id} className="w-[min(220px,78vw)] shrink-0">
           <ProductCard
             product={product}
             optionStock={optionStockByProduct?.[String(product.id)]}
@@ -271,7 +271,7 @@ function HomeSkeleton() {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {[0, 1, 2, 3].map((item) => (
-        <div key={item} className="h-48 animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.035]" />
+        <div key={item} className="h-48 animate-pulse rounded-2xl border border-[#152b62] bg-[#091637]" />
       ))}
     </div>
   )
@@ -287,10 +287,15 @@ export default function Home() {
   const [uiImageSettings, setUiImageSettings] = useState(DEFAULT_UI_IMAGE_SETTINGS)
   const [homepageSettings, setHomepageSettings] = useState(DEFAULT_HOMEPAGE_SETTINGS)
   const [loading, setLoading] = useState(true)
-  const [hasToken, setHasToken] = useState(Boolean(getAuthToken()))
+  const [hasToken, setHasToken] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
-    const onChange = () => setHasToken(Boolean(getAuthToken()))
+    const onChange = () => {
+      const nextHasToken = Boolean(getAuthToken())
+      setHasToken(nextHasToken)
+      setAuthChecked(!nextHasToken)
+    }
     window.addEventListener('auth_token_changed', onChange)
     return () => window.removeEventListener('auth_token_changed', onChange)
   }, [])
@@ -300,9 +305,15 @@ export default function Home() {
     async function syncAuthState() {
       try {
         await fetchJson('/api/me')
-        if (!cancelled) setHasToken(true)
+        if (!cancelled) {
+          setHasToken(true)
+          setAuthChecked(true)
+        }
       } catch (error) {
-        if (!cancelled && error?.status === 401) setHasToken(false)
+        if (!cancelled) {
+          if (error?.status === 401) setHasToken(false)
+          setAuthChecked(true)
+        }
       }
     }
     syncAuthState()
@@ -409,12 +420,10 @@ export default function Home() {
 
   return (
     <div className="space-y-10 sm:space-y-14">
-      <section className="home-hero home-premium-panel relative overflow-hidden rounded-3xl border border-white/[0.1] px-4 py-6 sm:px-7 sm:py-8 md:px-10 md:py-12">
-        <div className="absolute inset-0 grid-pattern opacity-25" />
-        <div className="absolute left-0 top-0 h-px w-full bg-gradient-to-r from-transparent via-cyan-200/35 to-transparent" />
-        <div className="absolute -right-28 -top-28 h-80 w-80 rounded-full bg-cyan-500/[0.08] blur-[90px]" />
+      <section className="home-hero home-premium-panel home-launch-redesign relative overflow-hidden rounded-3xl border border-[#1b3470] px-4 py-6 sm:px-7 sm:py-8 md:px-10 md:py-12">
+        <div className="absolute inset-0 grid-pattern opacity-10" />
 
-        <div className="relative grid items-center gap-6 lg:grid-cols-[minmax(0,1fr)_430px] xl:gap-9">
+        <div className="relative grid min-w-0 items-center gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,430px)] xl:gap-9">
           <div className="fade-in-up motion-stagger">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-500/[0.08] px-3.5 py-1.5 text-[11px] font-bold text-emerald-100/85">
               <span className="hero-status-dot-pulse h-2 w-2 rounded-full bg-emerald-300" />
@@ -432,30 +441,34 @@ export default function Home() {
             <p className="mt-5 max-w-2xl text-sm leading-7 text-white/66 sm:text-[15px]">{heroDesc}</p>
 
             <div className="mt-7 grid gap-3 sm:mt-8 sm:flex sm:flex-wrap">
-              <Link to={heroBtnLink} className="ui-btn-primary w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
-                {heroBtnText}
+              <Link to={heroBtnLink} className="home-hero-action home-hero-action--primary ui-btn-primary w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
+                <span>{heroBtnText}</span>
               </Link>
-              {!hasToken ? (
-                <Link to="/register" className="ui-btn w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
-                  สมัครสมาชิก
+              {!authChecked ? (
+                <span className="home-hero-action home-hero-action--secondary ui-btn pointer-events-none w-full px-7 py-2.5 text-sm font-bold opacity-70 sm:w-auto" aria-hidden>
+                  <span>กำลังตรวจสอบ</span>
+                </span>
+              ) : !hasToken ? (
+                <Link to="/register" className="home-hero-action home-hero-action--secondary ui-btn w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
+                  <span>สมัครสมาชิก</span>
                 </Link>
               ) : (
-                <Link to="/topup/angpao" className="ui-btn w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
-                  เติมเงิน
+                <Link to="/topup/angpao" className="home-hero-action home-hero-action--secondary ui-btn w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
+                  <span>เติมเงิน</span>
                 </Link>
               )}
             </div>
 
             <div className="motion-stagger mt-7 grid max-w-md grid-cols-3 gap-2 sm:mt-8 sm:gap-3">
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3">
+              <div className="rounded-2xl border border-[#1b3470] bg-[#0d1c45] px-4 py-3">
                 <div className="text-2xl font-black text-cyan-200">{categories.length}</div>
                 <div className="mt-1 text-[10px] font-bold text-white/45">หมวดหมู่</div>
               </div>
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3">
+              <div className="rounded-2xl border border-[#1b3470] bg-[#0d1c45] px-4 py-3">
                 <div className="text-2xl font-black text-emerald-300">24/7</div>
                 <div className="mt-1 text-[10px] font-bold text-white/45">อัตโนมัติ</div>
               </div>
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04] px-4 py-3">
+              <div className="rounded-2xl border border-[#1b3470] bg-[#0d1c45] px-4 py-3">
                 <div className="text-2xl font-black text-white">{featuredProducts.length + showcaseProducts.length}</div>
                 <div className="mt-1 text-[10px] font-bold text-white/45">แนะนำ</div>
               </div>
@@ -463,7 +476,7 @@ export default function Home() {
           </div>
 
           <div className="fade-in-up fade-in-delay-1">
-            <div className="home-premium-panel motion-hover motion-soft-glow rounded-3xl border border-white/[0.09] bg-black/15 p-3">
+            <div className="home-premium-panel motion-hover motion-soft-glow min-w-0 rounded-3xl border border-[#1b3470] bg-[#050d22] p-3">
               <div className="mb-3 flex items-center justify-between px-2">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-red-400/75" />
@@ -473,11 +486,11 @@ export default function Home() {
                 <span className="rounded-full border border-cyan-300/15 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100/75">Featured</span>
               </div>
               {loading ? (
-                <div className="motion-stagger grid grid-cols-2 gap-2">
-                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.04]" />)}
+                <div className="motion-stagger grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
+                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-2xl border border-[#152b62] bg-[#091637]" />)}
                 </div>
               ) : featuredProducts.length > 0 ? (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
                   {featuredProducts.slice(0, 4).map((product) => (
                     <ProductCard
                       key={product.id}
@@ -490,7 +503,7 @@ export default function Home() {
                   ))}
                 </div>
               ) : (
-                <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.025] p-8 text-center">
+                <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-[#1b3470] bg-[#091637] p-8 text-center">
                   <div>
                     <div className="text-sm font-bold text-white/80">ยังไม่มีสินค้าเด่น</div>
                     <div className="mt-1 text-xs text-white/40">เพิ่มสินค้าเด่นได้จากหน้า Admin Settings</div>
@@ -557,7 +570,7 @@ export default function Home() {
               <Link
                 key={bundle.id}
                 to={`/bundle/${bundle.id}`}
-                className="home-offer-card group motion-card motion-hover motion-soft-glow motion-sweep overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 transition hover:border-violet-300/25 hover:bg-white/[0.055]"
+                className="home-offer-card group motion-card motion-hover motion-soft-glow motion-sweep overflow-hidden rounded-2xl border border-[#152b62] bg-[#091637] p-4 transition hover:border-violet-300/25 hover:bg-[#0d1c45]"
               >
                 {bundle.image_url ? (
                   <div className="mb-3 overflow-hidden rounded-xl border border-white/[0.06]" style={{ aspectRatio: '16/7' }}>
@@ -600,7 +613,7 @@ export default function Home() {
               <Link
                 key={category.id}
                 to={`/category/${category.slug}`}
-                className="group motion-card motion-hover motion-soft-glow overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] transition hover:border-cyan-300/25 hover:bg-white/[0.055]"
+                className="group motion-card motion-hover motion-soft-glow overflow-hidden rounded-2xl border border-[#152b62] bg-[#091637] transition hover:border-[#284a92] hover:bg-[#0d1c45]"
               >
                 <div className="relative overflow-hidden" style={{ aspectRatio: uiImageSettings.home_categories_ratio }}>
                   {category.image_url ? (
@@ -629,11 +642,11 @@ export default function Home() {
         )}
       </section>
 
-      <section className="fade-in-up relative overflow-hidden rounded-3xl border border-white/[0.06] bg-slate-950/35 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] sm:p-6">
+      <section className="fade-in-up relative overflow-hidden rounded-3xl border border-[#152b62] bg-[#050d22] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] sm:p-6">
         <div className="absolute inset-0 grid-pattern opacity-10" />
         <div className={`motion-stagger relative grid gap-4 ${trustData.length <= 3 ? 'sm:grid-cols-3' : trustData.length === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
           {trustData.map((item, idx) => (
-            <div key={`trust-${idx}`} className="motion-card motion-hover flex items-start gap-3 rounded-2xl border border-white/[0.055] bg-slate-900/35 p-4 transition hover:border-white/[0.1] hover:bg-slate-800/35">
+            <div key={`trust-${idx}`} className="motion-card motion-hover flex items-start gap-3 rounded-2xl border border-[#152b62] bg-[#091637] p-4 transition hover:border-[#284a92] hover:bg-[#0d1c45]">
               {item.icon ? (
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-200/15 bg-cyan-400/[0.07]">
                   <svg viewBox="0 0 24 24" className="h-5 w-5 text-cyan-200/85" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -651,12 +664,12 @@ export default function Home() {
       </section>
 
       <section className="fade-in-up">
-        <div className="rounded-3xl border border-white/[0.06] bg-slate-950/30 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] sm:p-6">
+        <div className="rounded-3xl border border-[#152b62] bg-[#050d22] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] sm:p-6">
           <div className="mb-3">
             <h2 className="font-display text-2xl font-black text-white/92">คำถามที่พบบ่อย</h2>
             <div className="mt-1 text-xs font-semibold text-white/48">ข้อมูลสั้น ๆ ก่อนสั่งซื้อ</div>
           </div>
-          <Accordion type="single" collapsible className="rounded-2xl border border-white/[0.045] bg-slate-950/25 px-3 sm:px-4">
+          <Accordion type="single" collapsible className="rounded-2xl border border-[#152b62] bg-[#091637] px-3 sm:px-4">
             {faqData.map((item, idx) => (
               <AccordionItem key={`faq-${idx}`} value={`faq-${idx}`} className={`border-white/[0.055] ${idx === faqData.length - 1 ? 'border-b-0' : ''}`}>
                 <AccordionTrigger>{item.question}</AccordionTrigger>

@@ -22,6 +22,8 @@ function mapError(res, error) {
   if (msg === 'forbidden') return res.status(403).json({ error: 'forbidden' })
   if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
   if (msg === 'invalid_order_item_id') return res.status(400).json({ error: 'invalid_order_item_id' })
+  if (msg === 'invalid_reviewer_name') return res.status(400).json({ error: 'invalid_reviewer_name' })
+  if (msg === 'invalid_reviewer_name_too_long') return res.status(400).json({ error: 'invalid_reviewer_name_too_long' })
   if (msg === 'review_not_allowed') return res.status(403).json({ error: 'review_not_allowed' })
   if (msg === 'review_exists') return res.status(409).json({ error: 'review_exists' })
   return res.status(500).json({ error: 'db_error' })

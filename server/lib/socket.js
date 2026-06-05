@@ -1,6 +1,8 @@
 import { Server } from 'socket.io'
 import { getSession, getUserById } from '../db.js'
 import { COOKIE_NAME } from './cookies.js'
+import { getRoomById } from './trackerStore.js'
+import { hasTrackerRoomAccessFromCookieHeader } from './trackerAuth.js'
 
 let _io = null
 
@@ -23,6 +25,18 @@ export function initSocketIO(httpServer, corsOptions) {
 
   _io.use(async (socket, next) => {
     try {
+      if (socket.handshake.auth?.channel === 'tracker') {
+        const roomId = String(socket.handshake.auth?.roomId || '').trim()
+        if (!roomId) return next(new Error('unauthorized'))
+        const room = await getRoomById(roomId, { includePassword: true })
+        if (!room || !hasTrackerRoomAccessFromCookieHeader(socket.handshake.headers.cookie || '', room)) {
+          return next(new Error('unauthorized'))
+        }
+        socket.data.publicTracker = true
+        socket.data.trackerRoomId = String(room.id)
+        return next()
+      }
+
       const cookie = socket.handshake.headers.cookie || ''
       const token = parseCookieToken(cookie)
       const authHeader = socket.handshake.auth?.token || socket.handshake.headers.authorization || ''
@@ -47,6 +61,11 @@ export function initSocketIO(httpServer, corsOptions) {
   })
 
   _io.on('connection', (socket) => {
+    if (socket.data.publicTracker) {
+      socket.join(`tracker:${socket.data.trackerRoomId}`)
+      return
+    }
+
     const { userId, role } = socket.data
 
     // Every user joins their personal room
@@ -98,6 +117,11 @@ export function emitFulfillmentEvent(payload) {
 export function emitDashboardEvent(payload) {
   if (!_io) return
   _io.to('dashboard:staff').emit('dashboard_update', payload)
+}
+
+export function emitTrackerEvent(roomId, payload) {
+  if (!_io) return
+  _io.to(`tracker:${roomId}`).emit('tracker_update', payload || {})
 }
 
 export function emitNotificationEvent(userId, payload) {

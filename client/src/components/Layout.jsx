@@ -10,7 +10,6 @@ import AnnIcon from './AnnIcon.jsx'
 import AnnRichText from './AnnRichText.jsx'
 
 const ANIM_TARGETS = [
-  '.page-fade',
   '.fade-in-up',
   '.motion-stagger',
   '.motion-card',
@@ -23,7 +22,7 @@ const ANIM_TARGETS = [
   '.hero-title-glow',
   '.hero-status-dot-pulse',
 ].join(', ')
-const ANNOUNCEMENT_DEFAULT_BG = 'linear-gradient(135deg, rgba(8,145,178,0.92) 0%, rgba(14,116,144,0.88) 48%, rgba(15,23,42,0.95) 100%)'
+const ANNOUNCEMENT_DEFAULT_BG = '#091637'
 const ANNOUNCEMENT_DISMISS_MS = 86400000
 
 function getAnnouncementKey(ann) {
@@ -74,8 +73,6 @@ function FooterA({ href, children }) {
 export default function Layout() {
   const loc = useLocation()
   const rootRef = useRef(null)
-  const [routeProgress, setRouteProgress] = useState(0)
-  const [routeLoading, setRouteLoading] = useState(false)
   const [branding, setBranding] = useState(DEFAULT_UI_BRANDING_SETTINGS)
   const [siteSettings, setSiteSettings] = useState(null)
   const [announcements, setAnnouncements] = useState([])
@@ -107,7 +104,6 @@ export default function Layout() {
     if (!key) return
     setAnnClosedSet((prev) => new Set(prev).add(key))
   }
-  const firstRoutePaintRef = useRef(true)
   const isAdminRoute = String(loc.pathname || '').startsWith('/admin')
   const isAuthRoute = ['/login', '/register'].includes(String(loc.pathname || '').trim())
 
@@ -155,48 +151,6 @@ export default function Layout() {
   }, [])
 
   useEffect(() => {
-    if (firstRoutePaintRef.current) {
-      firstRoutePaintRef.current = false
-      return
-    }
-
-    let cancelled = false
-    const start = setTimeout(() => {
-      if (cancelled) return
-      setRouteLoading(true)
-      setRouteProgress(14)
-    }, 0)
-
-    const t1 = setTimeout(() => {
-      if (!cancelled) setRouteProgress(42)
-    }, 80)
-    const t2 = setTimeout(() => {
-      if (!cancelled) setRouteProgress(68)
-    }, 170)
-    const t3 = setTimeout(() => {
-      if (!cancelled) setRouteProgress(84)
-    }, 280)
-    const done = setTimeout(() => {
-      if (cancelled) return
-      setRouteProgress(100)
-      setTimeout(() => {
-        if (cancelled) return
-        setRouteLoading(false)
-        setRouteProgress(0)
-      }, 220)
-    }, 430)
-
-    return () => {
-      cancelled = true
-      clearTimeout(start)
-      clearTimeout(t1)
-      clearTimeout(t2)
-      clearTimeout(t3)
-      clearTimeout(done)
-    }
-  }, [loc.pathname, loc.search])
-
-  useEffect(() => {
     applyRouteSeo(loc.pathname, branding?.site_name, siteSettings)
   }, [loc.pathname, branding?.site_name, siteSettings])
 
@@ -231,12 +185,6 @@ export default function Layout() {
 
     function animateDesktop(el) {
       if (!el || el.dataset.gsapAnimated === '1') return
-
-      if (el.classList.contains('page-fade')) {
-        markAnimated(el)
-        gsap.fromTo(el, { autoAlpha: 0, y: 16 }, { autoAlpha: 1, y: 0, duration: 0.44, ease: 'power3.out' })
-        return
-      }
 
       if (el.classList.contains('fade-in-up') && !hasMotionBehavior(el)) {
         markAnimated(el)
@@ -335,12 +283,6 @@ export default function Layout() {
 
     function animateMobile(el) {
       if (!el || el.dataset.gsapAnimated === '1') return
-
-      if (el.classList.contains('page-fade')) {
-        markAnimated(el)
-        gsap.fromTo(el, { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.3, ease: 'power2.out' })
-        return
-      }
 
       if (el.classList.contains('fade-in-up') && !hasMotionBehavior(el)) {
         markAnimated(el)
@@ -488,17 +430,8 @@ export default function Layout() {
     return (
       <div ref={rootRef} className="relative min-h-screen overflow-hidden bg-[#04070d] text-white">
         <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(80%_70%_at_12%_-6%,rgba(56,189,248,0.16),transparent_60%),radial-gradient(70%_70%_at_100%_0%,rgba(59,130,246,0.16),transparent_56%),linear-gradient(180deg,#070d18_0%,#04070d_54%,#03060b_100%)]" />
-        <div
-          aria-hidden
-          className={`pointer-events-none fixed left-0 right-0 top-0 z-[70] h-[3px] transition-opacity duration-200 ${routeLoading ? 'opacity-100' : 'opacity-0'}`}
-        >
-          <div
-            className="h-full rounded-r-full bg-gradient-to-r from-sky-500 via-blue-500 to-indigo-500 shadow-[0_0_24px_rgba(59,130,246,0.65)] transition-[width] duration-250 ease-out"
-            style={{ width: `${routeProgress}%` }}
-          />
-        </div>
         <main className="relative z-10 min-h-screen w-full p-0">
-          <div key={loc.pathname} className="page-fade min-h-screen">
+          <div className="min-h-screen">
             <Outlet />
           </div>
         </main>
@@ -508,16 +441,7 @@ export default function Layout() {
 
   return (
     <div ref={rootRef} className="relative min-h-screen flex flex-col">
-      <div
-        aria-hidden
-        className={`pointer-events-none fixed left-0 right-0 top-0 z-[70] h-[3px] transition-opacity duration-200 ${routeLoading ? 'opacity-100' : 'opacity-0'}`}
-      >
-        <div
-          className="h-full rounded-r-full bg-gradient-to-r from-[#22d3ee] via-[#06b6d4] to-[#67e8f9] shadow-[0_0_22px_rgba(34,211,238,0.72)] transition-[width] duration-250 ease-out"
-          style={{ width: `${routeProgress}%` }}
-        />
-      </div>
-      <div className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(circle_at_12%_-8%,rgba(255,255,255,0.06),transparent_38%),radial-gradient(circle_at_88%_0%,rgba(163,23,23,0.12),transparent_34%)]" />
+      <div className="pointer-events-none fixed inset-0 z-0 bg-[#030713]" />
       <div aria-hidden className="snow-fall-overlay pointer-events-none fixed inset-0 z-0" />
       <div aria-hidden className="crt-overlay" />
       <Navbar />
@@ -531,7 +455,7 @@ export default function Layout() {
         return (
           <div className="ann-tray">
             {visible.map((ann, idx) => (
-              <div key={getAnnouncementKey(ann) || ann.text} className="ann-card ann-slide-in" style={{ background: ann.bg || ANNOUNCEMENT_DEFAULT_BG, animationDelay: `${idx * 90}ms` }}>
+              <div key={getAnnouncementKey(ann) || ann.text} className="ann-card ann-slide-in" style={{ background: ANNOUNCEMENT_DEFAULT_BG, animationDelay: `${idx * 90}ms` }}>
                 <span className="ann-card__glow" aria-hidden />
                 <div className="ann-card__icon">
                   <AnnIcon icon={ann.icon} className="h-4 w-4" />
@@ -560,12 +484,12 @@ export default function Layout() {
         )
       })()}
       <main className={isAdminRoute ? 'relative z-10 w-full flex-1 px-3 py-3 sm:px-4 sm:py-4' : 'relative z-10 mx-auto w-full max-w-[min(1500px,96vw)] flex-1 px-3 py-7 sm:px-4 sm:py-9 md:max-w-[min(1500px,92vw)] md:px-6 md:py-12'}>
-        <div key={loc.pathname} className="page-fade">
+        <div>
           <Outlet />
         </div>
       </main>
       {!isAdminRoute ? (
-        <footer style={{ position: 'relative', zIndex: 10, borderTop: '1px solid rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.6)', marginTop: '5rem', padding: '4rem 1.5rem' }}>
+        <footer style={{ position: 'relative', zIndex: 10, borderTop: '1px solid #152b62', background: '#050d22', marginTop: '5rem', padding: '4rem 1.5rem' }}>
           <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
             {(() => {
               const siteName = branding?.site_name || 'VXPERS STORE'
