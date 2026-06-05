@@ -45,6 +45,7 @@ import {
   parseStorageNumberInRange,
   mapThumbQualityToFfmpegQ,
   buildStorageVideoThumbFfmpegArgs,
+  buildStorageFolderTree,
   createStorageAccessToken,
   verifyStorageAccessToken,
 } from '../lib/storage.js'
@@ -182,6 +183,24 @@ router.get('/api/admin/rbac/matrix', requireAuth, requireAnyRole(['finance', 'su
     Object.entries(ADMIN_ROLE_ACTION_ACCESS).map(([action, roles]) => [action, roles.includes(role)]),
   )
   res.json({ ok: true, role, modules, actions, matrix: { modules: ADMIN_ROLE_MODULE_ACCESS, actions: ADMIN_ROLE_ACTION_ACCESS } })
+})
+
+router.get('/api/admin/storage/tree', requireAuth, requireOwner, async (req, res) => {
+  const rawPath = typeof req.query.path === 'string' ? req.query.path : ''
+
+  try {
+    const result = await buildStorageFolderTree(rawPath, {
+      maxDepth: req.query.max_depth,
+      maxFolders: req.query.max_folders,
+    })
+    res.json({ ok: true, ...result })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_path') return res.status(400).json({ error: 'invalid_path' })
+    if (msg === 'not_directory') return res.status(400).json({ error: 'not_directory' })
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+    res.status(500).json({ error: 'storage_tree_failed' })
+  }
 })
 
 router.get('/api/admin/storage/list', requireAuth, requireOwner, async (req, res) => {

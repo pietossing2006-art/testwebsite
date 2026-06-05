@@ -1,5 +1,6 @@
 import path from 'node:path'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 
 export const STORAGE_THUMB_DEFAULT_WIDTH = 240
 export const STORAGE_THUMB_MIN_WIDTH = 96
@@ -22,6 +23,10 @@ export const STORAGE_VIDEO_EXTENSIONS = new Set([
 ])
 
 export const STORAGE_ACCESS_TOKEN_MAX_AGE_SECONDS = 60 * 60
+export const STORAGE_TREE_DEFAULT_MAX_DEPTH = 10
+export const STORAGE_TREE_DEFAULT_MAX_FOLDERS = 1500
+export const STORAGE_TREE_HARD_MAX_DEPTH = 24
+export const STORAGE_TREE_HARD_MAX_FOLDERS = 10000
 
 export const STORAGE_MIME_BY_EXT = {
   '.jpg': 'image/jpeg',
@@ -141,6 +146,117 @@ export function buildStorageVideoThumbFfmpegArgs({ inputPath, width, ffmpegQ }) 
     String(ffmpegQ),
     'pipe:1',
   ]
+}
+
+function parseStorageTreeLimit(raw, { fallback, min, max }) {
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return fallback
+  const n = Math.floor(value)
+  if (n < min) return min
+  if (n > max) return max
+  return n
+}
+
+async function hasVisibleDirectoryChild(absolutePath) {
+  try {
+    const entries = await fs.promises.readdir(absolutePath, { withFileTypes: true })
+    return entries.some((entry) => {
+      const name = String(entry?.name || '')
+      return name && !name.startsWith('.') && entry.isDirectory()
+    })
+  } catch {
+    return false
+  }
+}
+
+export async function buildStorageFolderTree(rawPath = '', options = {}) {
+  const target = resolveStoragePath(rawPath)
+  const maxDepth = parseStorageTreeLimit(options.maxDepth, {
+    fallback: STORAGE_TREE_DEFAULT_MAX_DEPTH,
+    min: 0,
+    max: STORAGE_TREE_HARD_MAX_DEPTH,
+  })
+  const maxFolders = parseStorageTreeLimit(options.maxFolders, {
+    fallback: STORAGE_TREE_DEFAULT_MAX_FOLDERS,
+    min: 1,
+    max: STORAGE_TREE_HARD_MAX_FOLDERS,
+  })
+
+  const stat = await fs.promises.stat(target.absolute)
+  if (!stat.isDirectory()) throw new Error('not_directory')
+
+  let folderCount = 0
+  let traversalTruncated = false
+
+  async function buildNode(absolutePath, relPath, depth) {
+    const node = {
+      name: relPath ? path.basename(relPath) : 'All files',
+      path: relPath,
+      children: [],
+      truncated: false,
+    }
+
+    let entries = []
+    try {
+      entries = await fs.promises.readdir(absolutePath, { withFileTypes: true })
+    } catch (e) {
+      if (e?.code === 'ENOENT') throw e
+      node.truncated = true
+      traversalTruncated = true
+      return node
+    }
+
+    const folders = entries
+      .filter((entry) => {
+        const name = String(entry?.name || '')
+        return name && !name.startsWith('.') && entry.isDirectory()
+      })
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, {
+        sensitivity: 'base',
+        numeric: true,
+      }))
+
+    for (const entry of folders) {
+      if (folderCount >= maxFolders) {
+        node.truncated = true
+        traversalTruncated = true
+        break
+      }
+
+      const name = String(entry.name)
+      const childRelPath = relPath ? `${relPath}/${name}` : name
+      const childAbsolutePath = path.join(absolutePath, name)
+      folderCount += 1
+
+      if (depth + 1 >= maxDepth) {
+        const childNode = {
+          name,
+          path: childRelPath,
+          children: [],
+          truncated: await hasVisibleDirectoryChild(childAbsolutePath),
+        }
+        if (childNode.truncated) traversalTruncated = true
+        node.children.push(childNode)
+        continue
+      }
+
+      node.children.push(await buildNode(childAbsolutePath, childRelPath, depth + 1))
+    }
+
+    return node
+  }
+
+  const tree = await buildNode(target.absolute, target.rel, 0)
+
+  return {
+    root: target.root,
+    path: target.rel,
+    tree,
+    folder_count: folderCount,
+    max_depth: maxDepth,
+    max_folders: maxFolders,
+    truncated: traversalTruncated,
+  }
 }
 
 function getStorageAccessSecret() {
