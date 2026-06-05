@@ -16,6 +16,7 @@ export function Icon({ name, className = 'h-4 w-4' }) {
   if (name === 'arrow-left') return <svg {...common}><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></svg>
   if (name === 'arrow-right') return <svg {...common}><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
   if (name === 'chevron-right') return <svg {...common}><path d="m9 18 6-6-6-6" /></svg>
+  if (name === 'chevron-down') return <svg {...common}><path d="m6 9 6 6 6-6" /></svg>
   if (name === 'close') return <svg {...common}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
   if (name === 'copy') return <svg {...common}><rect x="9" y="9" width="13" height="13" rx="2" /><rect x="2" y="2" width="13" height="13" rx="2" /></svg>
   if (name === 'folder') return <svg {...common}><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z" /></svg>
@@ -36,10 +37,10 @@ export function ToolbarButton({ active, children, className = '', ...props }) {
     <button
       type="button"
       className={joinClasses(
-        'inline-flex h-9 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-bold transition',
+        'inline-flex h-9 items-center justify-center gap-2 rounded-md border px-3 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-55',
         active
-          ? 'border-cyan-300/40 bg-cyan-400/15 text-cyan-100'
-          : 'border-white/10 bg-white/[0.04] text-white/68 hover:border-white/18 hover:bg-white/[0.08] hover:text-white',
+          ? 'border-slate-950 bg-slate-950 text-white'
+          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950',
         className,
       )}
       {...props}
@@ -53,10 +54,10 @@ export function LoadingGrid() {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
       {Array.from({ length: 10 }).map((_, idx) => (
-        <div key={idx} className="rounded-2xl border border-white/10 bg-white/[0.035] p-2.5">
-          <div className="aspect-[4/3] animate-pulse rounded-xl bg-white/[0.055]" />
-          <div className="mt-2 h-3 w-4/5 animate-pulse rounded bg-white/[0.055]" />
-          <div className="mt-2 h-3 w-2/5 animate-pulse rounded bg-white/[0.04]" />
+        <div key={idx} className="rounded-lg border border-slate-200 bg-white p-2">
+          <div className="aspect-[4/3] animate-pulse rounded-md bg-slate-100" />
+          <div className="mt-2 h-3 w-4/5 animate-pulse rounded bg-slate-100" />
+          <div className="mt-2 h-3 w-2/5 animate-pulse rounded bg-slate-100" />
         </div>
       ))}
     </div>
@@ -65,21 +66,21 @@ export function LoadingGrid() {
 
 export function EmptyState({ title, detail }) {
   return (
-    <div className="rounded-2xl border border-dashed border-white/14 bg-black/18 px-4 py-10 text-center">
-      <div className="mx-auto grid h-12 w-12 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-white/45">
+    <div className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-10 text-center">
+      <div className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-slate-200 bg-slate-50 text-slate-400">
         <Icon name="search" className="h-5 w-5" />
       </div>
-      <div className="mt-3 text-sm font-bold text-white/82">{title}</div>
-      {detail ? <div className="mt-1 text-xs text-white/48">{detail}</div> : null}
+      <div className="mt-3 text-sm font-bold text-slate-800">{title}</div>
+      {detail ? <div className="mt-1 text-xs text-slate-500">{detail}</div> : null}
     </div>
   )
 }
 
 export const StatPill = memo(function StatPill({ label, value, tone = 'cyan' }) {
-  const toneClass = tone === 'amber' ? 'text-amber-200' : tone === 'emerald' ? 'text-emerald-200' : 'text-cyan-200'
+  const toneClass = tone === 'amber' ? 'text-amber-700' : tone === 'emerald' ? 'text-emerald-700' : 'text-slate-950'
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2">
-      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/38">{label}</div>
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase text-slate-400">{label}</div>
       <div className={joinClasses('mt-1 truncate text-base font-black leading-tight', toneClass)}>{value}</div>
     </div>
   )
@@ -91,7 +92,10 @@ export const SmartMediaPreview = memo(function SmartMediaPreview({ mediaKind, me
   const [previewFailed, setPreviewFailed] = useState(false)
 
   useEffect(() => {
-    setPreviewFailed(false)
+    const id = setTimeout(() => {
+      setPreviewFailed(false)
+    }, 0)
+    return () => clearTimeout(id)
   }, [mediaUrl])
 
   useEffect(() => {
@@ -113,8 +117,8 @@ export const SmartMediaPreview = memo(function SmartMediaPreview({ mediaKind, me
   const shouldLoadPreview = isVisible || typeof IntersectionObserver === 'undefined'
 
   return (
-    <div ref={boxRef} className="relative aspect-[4/3] overflow-hidden rounded-xl border border-white/10 bg-[#0b111a]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.18),transparent_40%),linear-gradient(160deg,rgba(12,18,28,0.9),rgba(5,9,14,0.95))]" />
+    <div ref={boxRef} className="relative aspect-[4/3] overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+      <div className="absolute inset-0 bg-slate-100" />
       {shouldLoadPreview && !previewFailed ? (
         <img
           src={mediaUrl}
@@ -126,13 +130,13 @@ export const SmartMediaPreview = memo(function SmartMediaPreview({ mediaKind, me
         />
       ) : null}
       {!shouldLoadPreview || previewFailed ? (
-        <div className="absolute inset-0 z-20 grid place-items-center text-white/42">
+        <div className="absolute inset-0 z-20 grid place-items-center text-slate-400">
           <Icon name={mediaKind === 'video' ? 'play' : 'image'} className="h-8 w-8" />
         </div>
       ) : null}
       {mediaKind === 'video' ? (
         <div className="absolute inset-0 z-30 grid place-items-center">
-          <div className="grid h-11 w-11 place-items-center rounded-full border border-white/18 bg-black/55 text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur">
+          <div className="grid h-11 w-11 place-items-center rounded-full border border-white/70 bg-black/60 text-white shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur">
             <Icon name="play" className="h-5 w-5" />
           </div>
         </div>
@@ -146,9 +150,9 @@ export const FolderChip = memo(function FolderChip({ name, path, onClick }) {
     <button
       type="button"
       onClick={() => onClick(path)}
-      className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-bold text-white/70 transition hover:border-cyan-300/30 hover:bg-white/[0.08] hover:text-white"
+      className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
     >
-      <Icon name="folder" className="h-3.5 w-3.5 text-cyan-200" />
+      <Icon name="folder" className="h-3.5 w-3.5 text-slate-400" />
       <span className="max-w-[180px] truncate">{formatNameForCard(name, 24)}</span>
     </button>
   )
@@ -157,13 +161,13 @@ export const FolderChip = memo(function FolderChip({ name, path, onClick }) {
 export const MediaMeta = memo(function MediaMeta({ item }) {
   if (!item) return null
   return (
-    <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/48">
+    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
       <span>{formatBytes(item.size)}</span>
-      <span className="text-white/22">|</span>
+      <span className="text-slate-300">|</span>
       <span>{formatDate(item.mtime)}</span>
       {getExtension(item.name) ? (
         <>
-          <span className="text-white/22">|</span>
+          <span className="text-slate-300">|</span>
           <span>{getExtension(item.name)}</span>
         </>
       ) : null}
