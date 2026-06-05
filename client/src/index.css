@@ -652,7 +652,7 @@ body::before {
 }
 
 .product-detail-media-image {
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
 }
 
