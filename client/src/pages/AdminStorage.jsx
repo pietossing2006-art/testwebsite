@@ -1,7 +1,6 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { copyToClipboard, fetchJson, setAuthToken } from '../api.js'
-import StorageFolderTree from './admin-storage/StorageFolderTree.jsx'
 import StorageFullscreenViewer from './admin-storage/StorageFullscreenViewer.jsx'
 import StorageMediaGrid from './admin-storage/StorageMediaGrid.jsx'
 import StoragePathBar from './admin-storage/StoragePathBar.jsx'
@@ -12,7 +11,7 @@ import {
   decodeViewMode,
   encodeViewMode,
   getCookieValue,
-  getEntryThumbnailUrl,
+  getStorageFullscreenPreviewUrl,
   INITIAL_MEDIA_RENDER_LIMIT,
   joinClasses,
   MEDIA_RENDER_STEP,
@@ -21,12 +20,10 @@ import {
   setCookieValue,
   VIEW_MODE_COOKIE,
 } from './admin-storage/storageMediaUtils.js'
-import { createExpandedPathSet, togglePathInSet } from './admin-storage/storageTreeUtils.js'
 
 export default function AdminStorage() {
   const nav = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const treeLoadedRef = useRef(false)
   const [status, setStatus] = useState('loading')
   const [errorText, setErrorText] = useState('')
   const [role, setRole] = useState('user')
@@ -39,20 +36,14 @@ export default function AdminStorage() {
     const savedMode = decodeViewMode(getCookieValue(VIEW_MODE_COOKIE))
     return savedMode === 'grid' || savedMode === 'column' ? savedMode : 'grid'
   })
-  const [sortBy, setSortBy] = useState('date')
-  const [sortOrder, setSortOrder] = useState('desc')
+  const [sortBy, setSortBy] = useState('name') // Changed default sort to name for better folder browsing
+  const [sortOrder, setSortOrder] = useState('asc') // Changed default sort order to asc
   const [mediaFilter, setMediaFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [copiedKey, setCopiedKey] = useState('')
   const [selectedMediaPath, setSelectedMediaPath] = useState('')
   const [isFullscreenOpen, setIsFullscreenOpen] = useState(false)
   const [isCompactDevice, setIsCompactDevice] = useState(false)
-  const [treeStatus, setTreeStatus] = useState('loading')
-  const [treeErrorText, setTreeErrorText] = useState('')
-  const [folderTree, setFolderTree] = useState(null)
-  const [treeTruncated, setTreeTruncated] = useState(false)
-  const [expandedTreePaths, setExpandedTreePaths] = useState(() => new Set(['']))
-  const [treeQuery, setTreeQuery] = useState('')
 
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
@@ -90,49 +81,16 @@ export default function AdminStorage() {
     [setSearchParams],
   )
 
-  const expandTreeToPath = useCallback((pathValue) => {
-    setExpandedTreePaths((prev) => {
-      const next = new Set(prev)
-      for (const item of createExpandedPathSet(pathValue)) next.add(item)
-      return next
-    })
-  }, [])
-
   const handleSelectPath = useCallback(
     (nextPath) => {
-      expandTreeToPath(nextPath)
       setPathInUrl(nextPath)
     },
-    [expandTreeToPath, setPathInUrl],
+    [setPathInUrl],
   )
-
-  const handleToggleTreePath = useCallback((pathValue) => {
-    setExpandedTreePaths((prev) => togglePathInSet(prev, pathValue))
-  }, [])
 
   useEffect(() => {
     setCookieValue(VIEW_MODE_COOKIE, encodeViewMode(viewMode))
   }, [viewMode])
-
-  const loadFolderTree = useCallback(async (pathForExpansion = '') => {
-    setTreeStatus('loading')
-    setTreeErrorText('')
-    try {
-      const data = await fetchJson('/api/admin/storage/tree')
-      setFolderTree(data?.tree && typeof data.tree === 'object' ? data.tree : null)
-      setTreeTruncated(Boolean(data?.truncated))
-      expandTreeToPath(pathForExpansion)
-      setTreeStatus('idle')
-    } catch (e) {
-      if (e?.status === 401) {
-        setAuthToken(null)
-        nav('/login', { replace: true })
-        return
-      }
-      setTreeStatus('error')
-      setTreeErrorText(e?.status === 403 ? 'Owner access required.' : 'Folder tree could not be loaded.')
-    }
-  }, [expandTreeToPath, nav])
 
   const loadFolder = useCallback(async (pathValue = '') => {
     setStatus('loading')
@@ -140,17 +98,8 @@ export default function AdminStorage() {
     try {
       const qs = new URLSearchParams()
       if (pathValue) qs.set('path', pathValue)
-      const [meRes, data] = await Promise.all([
-        fetchJson('/api/me'),
-        fetchJson(`/api/admin/storage/list?${qs.toString()}`),
-      ])
-      const userRole = String(meRes?.user?.role || 'user').toLowerCase()
-      setRole(userRole)
-      if (userRole !== 'owner') {
-        setStatus('forbidden')
-        setErrorText('Owner access required.')
-        return
-      }
+      const data = await fetchJson(`/api/admin/storage/list?${qs.toString()}`)
+      setRole('owner')
       setRootPath(String(data?.root || ''))
       setCurrentPath(String(data?.path || ''))
       setEntries(Array.isArray(data?.entries) ? data.entries : [])
@@ -185,22 +134,6 @@ export default function AdminStorage() {
     return () => clearTimeout(id)
   }, [loadFolder, urlPath])
 
-  useEffect(() => {
-    if (treeLoadedRef.current) return
-    const id = setTimeout(() => {
-      treeLoadedRef.current = true
-      loadFolderTree(urlPath)
-    }, 0)
-    return () => clearTimeout(id)
-  }, [loadFolderTree, urlPath])
-
-  useEffect(() => {
-    const id = setTimeout(() => {
-      expandTreeToPath(currentPath)
-    }, 0)
-    return () => clearTimeout(id)
-  }, [currentPath, expandTreeToPath])
-
   const deferredQuery = useDeferredValue(query)
   const queryText = useMemo(() => normalizeText(deferredQuery), [deferredQuery])
 
@@ -225,13 +158,24 @@ export default function AdminStorage() {
     }
   }, [entries])
 
-  const mediaEntries = useMemo(() => {
-    return entries
+  const gridEntries = useMemo(() => {
+    const folders = entries.filter(x => x?.type === 'directory')
+    const media = entries
       .filter((x) => x?.type === 'file' && (x?.media_kind === 'image' || x?.media_kind === 'video'))
       .filter((x) => mediaFilter === 'all' || x?.media_kind === mediaFilter)
-      .filter(visibleEntryMatcher)
-      .sort((a, b) => compareEntries(a, b, sortBy, sortOrder))
+    
+    const filteredFolders = folders.filter(visibleEntryMatcher)
+    const filteredMedia = media.filter(visibleEntryMatcher)
+
+    filteredFolders.sort((a, b) => compareEntries(a, b, sortBy, sortOrder))
+    filteredMedia.sort((a, b) => compareEntries(a, b, sortBy, sortOrder))
+
+    return [...filteredFolders, ...filteredMedia]
   }, [entries, mediaFilter, sortBy, sortOrder, visibleEntryMatcher])
+
+  const mediaEntries = useMemo(() => {
+    return gridEntries.filter(x => x.type === 'file')
+  }, [gridEntries])
 
   useEffect(() => {
     const id = setTimeout(() => {
@@ -267,16 +211,12 @@ export default function AdminStorage() {
   )
 
   const selectedMediaPreviewUrl = useMemo(
-    () => {
-      if (!selectedMedia) return ''
-      if (selectedMedia.media_kind === 'image') return buildStorageMediaUrl('thumb', selectedMedia, { w: 1280, q: 80 })
-      return getEntryThumbnailUrl(selectedMedia)
-    },
+    () => getStorageFullscreenPreviewUrl(selectedMedia),
     [selectedMedia],
   )
 
-  const visibleMediaEntries = useMemo(() => mediaEntries.slice(0, mediaRenderLimit), [mediaEntries, mediaRenderLimit])
-  const hasMoreMedia = mediaEntries.length > visibleMediaEntries.length
+  const visibleGridEntries = useMemo(() => gridEntries.slice(0, mediaRenderLimit), [gridEntries, mediaRenderLimit])
+  const hasMoreMedia = gridEntries.length > visibleGridEntries.length
 
   const breadcrumbItems = useMemo(() => {
     const parts = String(currentPath || '')
@@ -357,10 +297,6 @@ export default function AdminStorage() {
     loadFolder(currentPath)
   }, [currentPath, loadFolder])
 
-  const handleRefreshTree = useCallback(() => {
-    loadFolderTree(currentPath)
-  }, [currentPath, loadFolderTree])
-
   const handleCopy = useCallback(async (key, value) => {
     const ok = await copyToClipboard(value)
     if (!ok) return
@@ -371,98 +307,80 @@ export default function AdminStorage() {
   return (
     <div className="min-h-screen bg-[#f6f7f9] text-slate-950">
       <div className="mx-auto w-full max-w-[1800px] px-3 pb-8 pt-3 sm:px-4 lg:px-5">
-        <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="min-h-[280px] max-h-[52vh] lg:sticky lg:top-3 lg:h-[calc(100vh-1.5rem)] lg:max-h-none">
-            <StorageFolderTree
-              tree={folderTree}
-              currentPath={currentPath}
-              expandedPaths={expandedTreePaths}
-              treeQuery={treeQuery}
-              status={treeStatus}
-              errorText={treeErrorText}
-              truncated={treeTruncated}
-              onTreeQueryChange={setTreeQuery}
-              onTogglePath={handleToggleTreePath}
-              onSelectPath={handleSelectPath}
-              onRefreshTree={handleRefreshTree}
-            />
-          </aside>
+        <main className="min-w-0">
+          <StorageToolbar
+            query={query}
+            onQueryChange={setQuery}
+            mediaFilter={mediaFilter}
+            onMediaFilterChange={setMediaFilter}
+            sortBy={sortBy}
+            onSortByChange={setSortBy}
+            sortOrder={sortOrder}
+            onToggleSortOrder={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+            summary={summary}
+            status={status}
+            onRefresh={handleRefresh}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+          />
 
-          <main className="min-w-0">
-            <StorageToolbar
-              query={query}
-              onQueryChange={setQuery}
-              mediaFilter={mediaFilter}
-              onMediaFilterChange={setMediaFilter}
-              sortBy={sortBy}
-              onSortByChange={setSortBy}
-              sortOrder={sortOrder}
-              onToggleSortOrder={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-              summary={summary}
-              status={status}
-              onRefresh={handleRefresh}
-              onRefreshTree={handleRefreshTree}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-            />
-
-            <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0 flex-1">
-                <StoragePathBar
-                  currentPath={currentPath}
-                  rootPath={rootPath}
-                  breadcrumbItems={breadcrumbItems}
-                  onSelectPath={handleSelectPath}
-                  copiedKey={copiedKey}
-                  onCopy={handleCopy}
-                />
-              </div>
-
-              <Link
-                to="/admin-v3"
-                className="inline-flex h-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
-              >
-                Back to admin
-              </Link>
+          <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <StoragePathBar
+                currentPath={currentPath}
+                rootPath={rootPath}
+                breadcrumbItems={breadcrumbItems}
+                onSelectPath={handleSelectPath}
+                copiedKey={copiedKey}
+                onCopy={handleCopy}
+              />
             </div>
 
-            {status === 'forbidden' ? (
-              <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-5 text-sm font-semibold text-rose-700">{errorText || 'Forbidden'}</div>
-            ) : null}
+            <Link
+              to="/admin-v3"
+              className="inline-flex h-10 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-xs font-black text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+            >
+              Back to admin
+            </Link>
+          </div>
 
-            {status !== 'forbidden' ? (
-              <div className="mt-4">
-                {status === 'loading' ? <LoadingGrid /> : null}
-                {status === 'error' ? <EmptyState title={errorText} detail="Refresh media or choose another folder from the tree." /> : null}
+          {status === 'forbidden' ? (
+            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-5 text-sm font-semibold text-rose-700">{errorText || 'Forbidden'}</div>
+          ) : null}
 
-                {status === 'idle' ? (
-                  <StorageMediaGrid
-                    items={visibleMediaEntries}
-                    viewMode={viewMode}
-                    selectedPath={selectedMediaPath}
-                    onSelect={handleSelectMedia}
-                    renderLimit={mediaRenderLimit}
-                    onLoadMore={() => setMediaRenderLimit((n) => n + mediaRenderStep)}
-                    hasMore={hasMoreMedia}
-                    totalCount={mediaEntries.length}
-                    emptyTitle={queryText ? 'No media matches this search' : 'This folder has no images or videos'}
-                    emptyDetail={queryText ? 'Try a shorter query or switch media filters.' : 'Supported images and videos will appear as thumbnails here.'}
-                  />
-                ) : null}
+          {status !== 'forbidden' ? (
+            <div className="mt-4">
+              {status === 'loading' ? <LoadingGrid /> : null}
+              {status === 'error' ? <EmptyState title={errorText} detail="Refresh media or check the path." /> : null}
 
-                {truncated ? (
-                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-                    This folder result is partial because it contains many entries.
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+              {status === 'idle' ? (
+                <StorageMediaGrid
+                  items={visibleGridEntries}
+                  viewMode={viewMode}
+                  selectedPath={selectedMediaPath}
+                  onSelect={handleSelectMedia}
+                  onSelectFolder={handleSelectPath}
+                  renderLimit={mediaRenderLimit}
+                  onLoadMore={() => setMediaRenderLimit((n) => n + mediaRenderStep)}
+                  hasMore={hasMoreMedia}
+                  totalCount={gridEntries.length}
+                  emptyTitle={queryText ? 'No content matches this search' : 'This folder is empty'}
+                  emptyDetail={queryText ? 'Try a shorter query or switch filters.' : 'Supported images, videos, and subfolders will appear here.'}
+                />
+              ) : null}
 
-            {role && role !== 'owner' && status !== 'forbidden' ? (
-              <div className={joinClasses('mt-4 text-xs font-semibold text-slate-500', role === 'owner' ? 'hidden' : '')}>Role: {role}</div>
-            ) : null}
-          </main>
-        </div>
+              {truncated ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+                  This folder result is partial because it contains many entries.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {role && role !== 'owner' && status !== 'forbidden' ? (
+            <div className={joinClasses('mt-4 text-xs font-semibold text-slate-500', role === 'owner' ? 'hidden' : '')}>Role: {role}</div>
+          ) : null}
+        </main>
       </div>
 
       <StorageFullscreenViewer

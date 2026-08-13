@@ -1,7 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { buildStorageMediaUrl, canPreviewInBrowser, encodeStoragePathForRoute } from './storageMediaUtils.js'
+import {
+  INITIAL_MEDIA_RENDER_LIMIT,
+  MEDIA_RENDER_STEP,
+  VIDEO_THUMB_QUALITY,
+  VIDEO_THUMB_WIDTH,
+  buildStorageMediaUrl,
+  canPreviewInBrowser,
+  encodeStoragePathForRoute,
+  getStorageFullscreenPreviewUrl,
+} from './storageMediaUtils.js'
 
 test('canPreviewInBrowser allows storage host videos beyond the old mp4/webm list', () => {
   assert.equal(canPreviewInBrowser({ name: 'clip.mov', media_kind: 'video' }), true)
@@ -27,4 +36,18 @@ test('buildStorageMediaUrl uses exact path routes without exposing storage token
   assert.equal(url.includes('path='), false)
   assert.equal(url.includes('st='), false)
   assert.equal(url.includes('secret-token'), false)
+})
+
+test('media grid opens folders with a small first thumbnail batch', () => {
+  assert.ok(INITIAL_MEDIA_RENDER_LIMIT <= 60)
+  assert.ok(MEDIA_RENDER_STEP <= 60)
+  assert.ok(VIDEO_THUMB_WIDTH <= 180)
+  assert.ok(VIDEO_THUMB_QUALITY <= 42)
+})
+
+test('fullscreen video preview avoids generating an extra video thumbnail before playback', () => {
+  assert.equal(getStorageFullscreenPreviewUrl({ path: 'folder/clip.mov', media_kind: 'video' }), '')
+
+  const imageUrl = getStorageFullscreenPreviewUrl({ path: 'folder/photo.jpg', media_kind: 'image' })
+  assert.equal(imageUrl, '/api/admin/storage/thumb/raw/folder/photo.jpg?w=1280&q=80')
 })

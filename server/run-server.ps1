@@ -16,6 +16,13 @@ trap {
 
 Set-Location -Path $PSScriptRoot
 
+$nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCommand) {
+  Write-Host "ERROR: Node.js is required to start the server." -ForegroundColor Red
+  exit 1
+}
+$nodeExe = $nodeCommand.Source
+
 if ($Install) {
   Write-Host '=== Installing server dependencies ==='
   npm install
@@ -41,9 +48,9 @@ Write-Host 'Press Ctrl+C to stop.'
 
 try {
   if ($Mode -eq 'dev') {
-    npm run dev
+    & $nodeExe index.js
   } else {
-    npm run start
+    & $nodeExe index.js
   }
   $exitCode = $LASTEXITCODE
 } catch {

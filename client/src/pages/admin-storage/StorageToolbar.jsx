@@ -13,7 +13,6 @@ export default function StorageToolbar({
   summary,
   status,
   onRefresh,
-  onRefreshTree,
   viewMode,
   onViewModeChange,
 }) {
@@ -118,14 +117,9 @@ export default function StorageToolbar({
               <span className="hidden sm:inline">{sortOrder === 'asc' ? 'Asc' : 'Desc'}</span>
             </ToolbarButton>
 
-            <ToolbarButton onClick={onRefresh} disabled={status === 'loading'} className="h-10 px-3" title="Refresh media">
+            <ToolbarButton onClick={onRefresh} disabled={status === 'loading'} className="h-10 px-3" title="Refresh">
               <Icon name="refresh" className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Media</span>
-            </ToolbarButton>
-
-            <ToolbarButton onClick={onRefreshTree} className="h-10 px-3" title="Refresh folder tree">
-              <Icon name="folder" className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Tree</span>
+              <span className="hidden sm:inline">Refresh</span>
             </ToolbarButton>
           </div>
         </div>

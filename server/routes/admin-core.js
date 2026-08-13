@@ -39,12 +39,17 @@ import {
   STORAGE_VIDEO_THUMB_MIN_QUALITY,
   STORAGE_VIDEO_THUMB_MAX_QUALITY,
   STORAGE_ACCESS_TOKEN_MAX_AGE_SECONDS,
+  STORAGE_LIST_STAT_CONCURRENCY,
+  STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES,
   resolveStoragePath,
   getStorageMediaKindByPath,
   getStorageMimeByPath,
   parseStorageNumberInRange,
   mapThumbQualityToFfmpegQ,
   buildStorageVideoThumbFfmpegArgs,
+  mapStorageItemsWithConcurrency,
+  buildStorageThumbnailCacheKey,
+  createStorageMemoryCache,
   buildStorageFolderTree,
   createStorageAccessToken,
   verifyStorageAccessToken,
@@ -61,6 +66,15 @@ import {
 import { redis, QUEUE_SLA_SECONDS, QUEUE_TICK_MS, lastQueueTick, queueTimer } from '../lib/queue.js'
 
 const router = Router()
+const storageThumbCache = createStorageMemoryCache({ maxEntries: STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES })
+
+function sendStorageThumbnail(res, { etag, contentType, output }) {
+  res.setHeader('ETag', etag)
+  res.setHeader('Content-Type', contentType)
+  res.setHeader('Content-Length', String(output.length))
+  res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate')
+  return res.status(200).send(output)
+}
 
 function getStorageMediaToken(req) {
   const raw = req.query.st ?? req.query.storage_token
@@ -217,29 +231,26 @@ router.get('/api/admin/storage/list', requireAuth, requireOwner, async (req, res
     if (!st.isDirectory()) return res.status(400).json({ error: 'not_directory' })
 
     const allEntries = await fs.promises.readdir(target.absolute, { withFileTypes: true })
-    const entries = []
-
-    for (const entry of allEntries) {
+    const entries = (await mapStorageItemsWithConcurrency(allEntries, async (entry) => {
       const name = String(entry?.name || '')
-      if (!name || name.startsWith('.')) continue
+      if (!name || name.startsWith('.')) return null
       const relPath = target.rel ? `${target.rel}/${name}` : name
       const absolutePath = path.join(target.absolute, name)
 
       if (entry.isDirectory()) {
-        entries.push({
+        return {
           name,
           path: relPath,
           type: 'directory',
           media_kind: null,
           size: null,
           mtime: null,
-        })
-        continue
+        }
       }
 
-      if (!entry.isFile()) continue
+      if (!entry.isFile()) return null
       const mediaKind = getStorageMediaKindByPath(absolutePath)
-      if (!mediaKind) continue
+      if (!mediaKind) return null
 
       let fileStat = null
       try {
@@ -248,7 +259,7 @@ router.get('/api/admin/storage/list', requireAuth, requireOwner, async (req, res
         fileStat = null
       }
 
-      entries.push({
+      return {
         name,
         path: relPath,
         type: 'file',
@@ -256,8 +267,8 @@ router.get('/api/admin/storage/list', requireAuth, requireOwner, async (req, res
         size: fileStat?.size ?? null,
         mtime: fileStat?.mtime ?? null,
         access_token: createStorageAccessToken(relPath),
-      })
-    }
+      }
+    }, { concurrency: STORAGE_LIST_STAT_CONCURRENCY })).filter(Boolean)
 
     entries.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
@@ -365,17 +376,26 @@ router.get(['/api/admin/storage/thumb', '/api/admin/storage/thumb/raw/*'], requi
     const etag = `W/"thumb-${stat.size}-${Number(stat.mtimeMs || 0)}-${width}-${quality}"`
     if (req.headers['if-none-match'] === etag) return res.status(304).end()
 
+    const cacheKey = buildStorageThumbnailCacheKey({
+      kind: 'image-webp',
+      absolutePath: target.absolute,
+      stat,
+      width,
+      quality,
+    })
+    const cachedOutput = storageThumbCache.get(cacheKey)
+    if (cachedOutput) {
+      return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output: cachedOutput })
+    }
+
     const output = await sharp(target.absolute)
       .rotate()
       .resize({ width, fit: 'inside', withoutEnlargement: true })
       .webp({ quality })
       .toBuffer()
 
-    res.setHeader('ETag', etag)
-    res.setHeader('Content-Type', 'image/webp')
-    res.setHeader('Content-Length', String(output.length))
-    res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate')
-    return res.status(200).send(output)
+    storageThumbCache.set(cacheKey, output)
+    return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output })
   } catch (e) {
     if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
     return res.status(500).json({ error: 'thumbnail_failed' })
@@ -412,6 +432,18 @@ router.get(['/api/admin/storage/video-thumb', '/api/admin/storage/video-thumb/ra
 
     const etag = `W/"vthumb-${stat.size}-${Number(stat.mtimeMs || 0)}-${width}-${quality}"`
     if (req.headers['if-none-match'] === etag) return res.status(304).end()
+
+    const cacheKey = buildStorageThumbnailCacheKey({
+      kind: 'video-jpeg',
+      absolutePath: target.absolute,
+      stat,
+      width,
+      quality,
+    })
+    const cachedOutput = storageThumbCache.get(cacheKey)
+    if (cachedOutput) {
+      return sendStorageThumbnail(res, { etag, contentType: 'image/jpeg', output: cachedOutput })
+    }
 
     const args = buildStorageVideoThumbFfmpegArgs({ inputPath: target.absolute, width, ffmpegQ })
 
@@ -455,11 +487,8 @@ router.get(['/api/admin/storage/video-thumb', '/api/admin/storage/video-thumb/ra
     const output = Buffer.concat(outChunks)
     if (!output.length) return res.status(500).json({ error: 'thumbnail_failed' })
 
-    res.setHeader('ETag', etag)
-    res.setHeader('Content-Type', 'image/jpeg')
-    res.setHeader('Content-Length', String(output.length))
-    res.setHeader('Cache-Control', 'private, max-age=300, must-revalidate')
-    return res.status(200).send(output)
+    storageThumbCache.set(cacheKey, output)
+    return sendStorageThumbnail(res, { etag, contentType: 'image/jpeg', output })
   } catch (e) {
     if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
     return res.status(500).json({ error: 'thumbnail_failed' })

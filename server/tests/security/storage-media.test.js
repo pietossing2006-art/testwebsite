@@ -32,6 +32,62 @@ test('buildStorageVideoThumbFfmpegArgs restricts ffmpeg input protocols to local
   assert.equal(args.join(',').includes('subfile'), false)
 })
 
+test('default storage tree budget covers large roots before showing partial state', () => {
+  assert.ok(storage.STORAGE_TREE_DEFAULT_MAX_FOLDERS >= 50000)
+})
+
+test('mapStorageItemsWithConcurrency preserves order while capping active workers', async () => {
+  let active = 0
+  let maxActive = 0
+
+  const result = await storage.mapStorageItemsWithConcurrency(
+    [1, 2, 3, 4, 5, 6],
+    async (item) => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await new Promise((resolve) => setTimeout(resolve, item === 1 ? 20 : 2))
+      active -= 1
+      return item * 10
+    },
+    { concurrency: 2 },
+  )
+
+  assert.deepEqual(result, [10, 20, 30, 40, 50, 60])
+  assert.ok(maxActive <= 2)
+})
+
+test('createStorageMemoryCache refreshes hits and evicts the oldest idle entry', () => {
+  const cache = storage.createStorageMemoryCache({ maxEntries: 2 })
+
+  cache.set('one', Buffer.from('1'))
+  cache.set('two', Buffer.from('2'))
+  assert.equal(cache.get('one').toString('utf8'), '1')
+  cache.set('three', Buffer.from('3'))
+
+  assert.equal(cache.get('two'), null)
+  assert.equal(cache.get('one').toString('utf8'), '1')
+  assert.equal(cache.get('three').toString('utf8'), '3')
+})
+
+test('buildStorageThumbnailCacheKey changes when source file metadata changes', () => {
+  const base = {
+    kind: 'video',
+    absolutePath: path.join(storageTreeRoot, 'clip.mp4'),
+    stat: { size: 100, mtimeMs: 200 },
+    width: 160,
+    quality: 40,
+  }
+
+  assert.notEqual(
+    storage.buildStorageThumbnailCacheKey(base),
+    storage.buildStorageThumbnailCacheKey({ ...base, stat: { size: 101, mtimeMs: 200 } }),
+  )
+  assert.notEqual(
+    storage.buildStorageThumbnailCacheKey(base),
+    storage.buildStorageThumbnailCacheKey({ ...base, stat: { size: 100, mtimeMs: 201 } }),
+  )
+})
+
 test('buildStorageFolderTree skips hidden folders and sorts visible folders', async () => {
   await fs.promises.mkdir(path.join(storageTreeRoot, 'visible', 'beta'), { recursive: true })
   await fs.promises.mkdir(path.join(storageTreeRoot, 'visible', 'alpha'), { recursive: true })

@@ -23,10 +23,12 @@ export const STORAGE_VIDEO_EXTENSIONS = new Set([
 ])
 
 export const STORAGE_ACCESS_TOKEN_MAX_AGE_SECONDS = 60 * 60
-export const STORAGE_TREE_DEFAULT_MAX_DEPTH = 10
-export const STORAGE_TREE_DEFAULT_MAX_FOLDERS = 1500
+export const STORAGE_TREE_DEFAULT_MAX_DEPTH = 16
+export const STORAGE_TREE_DEFAULT_MAX_FOLDERS = 50000
 export const STORAGE_TREE_HARD_MAX_DEPTH = 24
-export const STORAGE_TREE_HARD_MAX_FOLDERS = 10000
+export const STORAGE_TREE_HARD_MAX_FOLDERS = 100000
+export const STORAGE_LIST_STAT_CONCURRENCY = 32
+export const STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES = 180
 
 export const STORAGE_MIME_BY_EXT = {
   '.jpg': 'image/jpeg',
@@ -146,6 +148,80 @@ export function buildStorageVideoThumbFfmpegArgs({ inputPath, width, ffmpegQ }) 
     String(ffmpegQ),
     'pipe:1',
   ]
+}
+
+export async function mapStorageItemsWithConcurrency(items, worker, options = {}) {
+  const rows = Array.isArray(items) ? items : []
+  if (!rows.length) return []
+
+  const requestedConcurrency = Number(options.concurrency)
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      rows.length,
+      Number.isFinite(requestedConcurrency) ? Math.floor(requestedConcurrency) : STORAGE_LIST_STAT_CONCURRENCY,
+    ),
+  )
+  const results = new Array(rows.length)
+  let nextIndex = 0
+
+  async function runWorker() {
+    while (nextIndex < rows.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await worker(rows[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => runWorker()))
+  return results
+}
+
+export function buildStorageThumbnailCacheKey({ kind, absolutePath, stat, width, quality }) {
+  const normalizedKind = String(kind || 'thumb').trim().toLowerCase() || 'thumb'
+  const filePath = path.resolve(String(absolutePath || ''))
+  const fileSize = Number(stat?.size || 0)
+  const fileMtime = String(Number(stat?.mtimeMs || 0))
+  const targetWidth = Math.floor(Number(width) || 0)
+  const targetQuality = Math.floor(Number(quality) || 0)
+  return `${normalizedKind}:${filePath}:${fileSize}:${fileMtime}:${targetWidth}:${targetQuality}`
+}
+
+export function createStorageMemoryCache(options = {}) {
+  const requestedMaxEntries = Number(options.maxEntries)
+  const maxEntries = Math.max(
+    1,
+    Number.isFinite(requestedMaxEntries) ? Math.floor(requestedMaxEntries) : STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES,
+  )
+  const entries = new Map()
+
+  return {
+    get(key) {
+      const cacheKey = String(key || '')
+      if (!cacheKey || !entries.has(cacheKey)) return null
+      const value = entries.get(cacheKey)
+      entries.delete(cacheKey)
+      entries.set(cacheKey, value)
+      return value
+    },
+    set(key, value) {
+      const cacheKey = String(key || '')
+      if (!cacheKey || !value) return value
+      entries.delete(cacheKey)
+      entries.set(cacheKey, value)
+      while (entries.size > maxEntries) {
+        const oldestKey = entries.keys().next().value
+        entries.delete(oldestKey)
+      }
+      return value
+    },
+    clear() {
+      entries.clear()
+    },
+    get size() {
+      return entries.size
+    },
+  }
 }
 
 function parseStorageTreeLimit(raw, { fallback, min, max }) {

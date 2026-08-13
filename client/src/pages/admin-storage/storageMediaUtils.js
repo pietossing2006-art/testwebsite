@@ -1,11 +1,11 @@
 import { resolveApiUrl } from '../../api.js'
 
-export const INITIAL_MEDIA_RENDER_LIMIT = 120
-export const MEDIA_RENDER_STEP = 120
+export const INITIAL_MEDIA_RENDER_LIMIT = 48
+export const MEDIA_RENDER_STEP = 48
 export const THUMB_WIDTH = 220
 export const THUMB_QUALITY = 52
-export const VIDEO_THUMB_WIDTH = 200
-export const VIDEO_THUMB_QUALITY = 48
+export const VIDEO_THUMB_WIDTH = 160
+export const VIDEO_THUMB_QUALITY = 40
 export const VIEW_MODE_COOKIE = 'AdminSessionViewMode'
 export const VIEW_MODE_GRID_TOKEN = 'qf51qw781455s1fw54w8f4w1aaafwlvk'
 export const VIEW_MODE_COLUMN_TOKEN = 'qf51qw781455s1fw54w8f4w1aaafwlv2'
@@ -137,4 +137,10 @@ export function getEntryThumbnailUrl(row) {
   return row.media_kind === 'image'
     ? buildStorageMediaUrl('thumb', row, { w: THUMB_WIDTH, q: THUMB_QUALITY })
     : buildStorageMediaUrl('video-thumb', row, { w: VIDEO_THUMB_WIDTH, q: VIDEO_THUMB_QUALITY })
+}
+
+export function getStorageFullscreenPreviewUrl(row) {
+  if (!row) return ''
+  if (row.media_kind === 'image') return buildStorageMediaUrl('thumb', row, { w: 1280, q: 80 })
+  return ''
 }

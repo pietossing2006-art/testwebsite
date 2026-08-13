@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { copyToClipboard } from '../../api.js'
 import { Icon } from './StoragePrimitives.jsx'
 import { clampMediaTime, getDoubleTapSeekDelta, getSwipeNavigationAction } from './storageInteractionUtils.js'
@@ -9,13 +9,12 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
   const touchStartRef = useRef(null)
   const lastVideoTapRef = useRef(null)
   const videoRef = useRef(null)
-  const [previewFailed, setPreviewFailed] = useState(false)
-  const [copyState, setCopyState] = useState('')
+  const [previewFailure, setPreviewFailure] = useState({ key: '', failed: false })
+  const [copyStatus, setCopyStatus] = useState({ key: '', value: '' })
 
-  useEffect(() => {
-    setPreviewFailed(false)
-    setCopyState('')
-  }, [media?.path, mediaUrl, previewUrl])
+  const mediaStateKey = `${media?.path || ''}|${mediaUrl || ''}|${previewUrl || ''}`
+  const previewFailed = previewFailure.key === mediaStateKey && previewFailure.failed
+  const copyState = copyStatus.key === mediaStateKey ? copyStatus.value : ''
 
   if (!media || typeof document === 'undefined') return null
 
@@ -87,8 +86,11 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
 
   const handleCopyLink = async () => {
     const ok = await copyToClipboard(mediaUrl)
-    setCopyState(ok ? 'copied' : 'failed')
-    window.setTimeout(() => setCopyState(''), 1400)
+    const nextValue = ok ? 'copied' : 'failed'
+    setCopyStatus({ key: mediaStateKey, value: nextValue })
+    window.setTimeout(() => {
+      setCopyStatus((current) => (current.key === mediaStateKey ? { key: mediaStateKey, value: '' } : current))
+    }, 1400)
   }
 
   return createPortal(
@@ -167,7 +169,7 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
               src={previewUrl || mediaUrl}
               alt={media.name}
               className="max-h-[84vh] w-full object-contain"
-              onError={() => setPreviewFailed(true)}
+              onError={() => setPreviewFailure({ key: mediaStateKey, failed: true })}
             />
           ) : (
             <video
@@ -176,10 +178,10 @@ export default function StorageFullscreenViewer({ media, mediaUrl, previewUrl, o
               src={mediaUrl}
               poster={previewUrl || undefined}
               playsInline
-              preload="metadata"
+              preload="auto"
               controls
               onDoubleClick={handleVideoDoubleClick}
-              onError={() => setPreviewFailed(true)}
+              onError={() => setPreviewFailure({ key: mediaStateKey, failed: true })}
               className="max-h-[84vh] w-full bg-black"
             />
           )}
