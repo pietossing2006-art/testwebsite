@@ -1,3 +1,20 @@
+function isLanDevHost(hostname) {
+  return ['localhost', '127.0.0.1'].includes(hostname)
+    || /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    || /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    || /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)
+}
+
+function vxpersApiBase(hostname, protocol) {
+  if (hostname === 'api.vxpers.com' || hostname === 'key.vxpers.com') {
+    return `${protocol}//${hostname}`
+  }
+  if (hostname.endsWith('vxpers.com')) {
+    return 'https://api.vxpers.com'
+  }
+  return null
+}
+
 function withBase(url) {
   const base = import.meta.env?.VITE_API_BASE
   const u = String(url)
@@ -5,9 +22,13 @@ function withBase(url) {
 
   try {
     const { hostname, port, protocol } = window.location
-    // Tracker API is served from the same host as key.vxpers.com
-    if (hostname === 'key.vxpers.com' && u.startsWith('/api')) return u
-    const isLocalFrontend = ['localhost', '127.0.0.1'].includes(hostname) && ['3091', '4173', '5173'].includes(port)
+    const vxpersBase = vxpersApiBase(hostname, protocol)
+    if (vxpersBase) {
+      if (u.startsWith('/api')) return `${vxpersBase}${u}`
+      if (u === '/' || u === '') return vxpersBase
+    }
+    const devPorts = new Set(['3091', '4173', '5173'])
+    const isLocalFrontend = isLanDevHost(hostname) && (devPorts.has(port) || !port)
     if (isLocalFrontend && u.startsWith('/api')) return `${protocol}//${hostname}:3001${u}`
   } catch {
     // Fall through to the relative URL when window is unavailable.

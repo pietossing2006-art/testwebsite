@@ -8,14 +8,22 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
   },
   server: {
+    host: true,
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      '/socket.io': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
   preview: {
-    allowedHosts: ['www.vxpers.com', 'key.vxpers.com'],
+    host: true,
+    allowedHosts: true,
   },
 })

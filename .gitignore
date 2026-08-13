@@ -35,5 +35,16 @@ server/.env*
 
 server/data.sqlite
 server/uploads/
+manga_ocr_server/storage/uploads/
+manga_ocr_server/storage/results/
+manga_ocr_server/storage/fonts/
+manga_ocr_server/__pycache__/
+**/__pycache__/
+*.py[cod]
 
-vxpersstore design.zip
+manga_ocr_server/.env
+manga_ocr_server/.env.*
+!manga_ocr_server/.env.example
+
+cloudflare/*.json
+!cloudflare/config.example.yml

@@ -14,6 +14,8 @@ const AdminStorage = lazy(() => import('./pages/AdminStorage.jsx'))
 const Profile = lazy(() => import('./pages/Profile.jsx'))
 const Topup = lazy(() => import('./pages/Topup.jsx'))
 const Register = lazy(() => import('./pages/Register.jsx'))
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword.jsx'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword.jsx'))
 const TopupHistory = lazy(() => import('./pages/TopupHistory.jsx'))
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory.jsx'))
 const OrderTracking = lazy(() => import('./pages/OrderTracking.jsx'))
@@ -23,6 +25,7 @@ const Support = lazy(() => import('./pages/Support.jsx'))
 const BundleDetail = lazy(() => import('./pages/BundleDetail.jsx'))
 const DiscordInvite = lazy(() => import('./pages/DiscordInvite.jsx'))
 const Tracker = lazy(() => import('./pages/Tracker.jsx'))
+const MangaOcr = lazy(() => import('./pages/MangaOcr.jsx'))
 
 function canUseDocumentNavigation(event, anchor) {
   if (!anchor || event.defaultPrevented || event.button !== 0) return false
@@ -123,6 +126,7 @@ export default function App() {
             <Route path="/inbox" element={<Inbox />} />
             <Route path="/support" element={<Support />} />
             <Route path="/discord" element={<DiscordInvite />} />
+            <Route path="/mangaocr" element={<MangaOcr />} />
             <Route path="/tos" element={<Tos />} />
             <Route path="/topup" element={<Navigate to="/topup/angpao" replace />} />
             <Route path="/topup/:method" element={<Topup />} />
@@ -131,6 +135,8 @@ export default function App() {
             <Route path="/admin/storage" element={<AdminStorage />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

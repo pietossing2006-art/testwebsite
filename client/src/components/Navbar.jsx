@@ -258,6 +258,7 @@ export default function Navbar() {
                 </NavItem>
               )
             ))}
+            <NavItem to="/mangaocr">MANGA OCR</NavItem>
           </nav>
         </div>
 
@@ -480,9 +481,10 @@ export default function Navbar() {
                   </Link>
                   <Link to="/topup/angpao" onClick={() => setMobileOpen(false)} className="ui-btn-primary h-11 justify-center">เติมเงิน</Link>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Link to="/history/purchases" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center">ประวัติซื้อ</Link>
-                  <Link to="/history/topups" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center">ประวัติเติม</Link>
+                <div className="grid grid-cols-3 gap-2">
+                  <Link to="/mangaocr" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center text-cyan-300 text-xs">📖 Manga OCR</Link>
+                  <Link to="/history/purchases" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center text-xs">ประวัติซื้อ</Link>
+                  <Link to="/history/topups" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center text-xs">ประวัติเติม</Link>
                 </div>
                 {(canAccessAdmin || isOwner) ? (
                   <div className="grid gap-2 border-t border-white/[0.07] pt-3">

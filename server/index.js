@@ -1,4 +1,4 @@
-﻿import dotenv from 'dotenv'
+import dotenv from 'dotenv'
 import http from 'node:http'
 import express from 'express'
 import cors from 'cors'
@@ -19,6 +19,7 @@ import adminCoreRoutes from './routes/admin-core.js'
 import adminCatalogRoutes from './routes/admin-catalog.js'
 import adminOpsRoutes from './routes/admin-ops.js'
 import trackerRoutes from './routes/tracker.js'
+import mangaOcrRoutes from './routes/mangaocr.js'
 import { initTrackerStore } from './lib/trackerStore.js'
 import { startDiscordBot } from './lib/discordBot.js'
 import { csrfOriginGuard, globalErrorHandler, securityHeaders } from './lib/security.js'
@@ -31,6 +32,10 @@ dotenv.config({ path: path.join(__dirname, '.env') })
 const app = express()
 
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
+
+if (TRUE_VALUES.has(String(process.env.TRUST_PROXY ?? 'true').trim().toLowerCase())) {
+  app.set('trust proxy', 1)
+}
 function normalizeOriginValue(value) {
   return String(value || '')
     .trim()
@@ -38,9 +43,9 @@ function normalizeOriginValue(value) {
     .toLowerCase()
 }
 function isLocalDevOrigin(origin) {
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(String(origin || ''))
+  return /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(String(origin || ''))
 }
-const CLIENT_ORIGINS_RAW = process.env.CLIENT_ORIGINS ? String(process.env.CLIENT_ORIGINS) : process.env.CLIENT_ORIGIN ? String(process.env.CLIENT_ORIGIN) : 'http://localhost:5173'
+const CLIENT_ORIGINS_RAW = process.env.CLIENT_ORIGINS ? String(process.env.CLIENT_ORIGINS) : process.env.CLIENT_ORIGIN ? String(process.env.CLIENT_ORIGIN) : 'http://localhost:5173,https://www.vxpers.com,https://key.vxpers.com'
 const CLIENT_ORIGINS = CLIENT_ORIGINS_RAW.split(',')
   .map((x) => normalizeOriginValue(x))
   .filter(Boolean)
@@ -106,6 +111,7 @@ app.use(adminCoreRoutes)
 app.use(adminCatalogRoutes)
 app.use(adminOpsRoutes)
 app.use('/api/tracker', trackerRoutes)
+app.use(mangaOcrRoutes)
 
 ;(async () => {
   try {

@@ -2,7 +2,8 @@ param(
   [ValidateSet('dev','preview')]
   [string]$Mode = 'preview',
   [switch]$Install,
-  [switch]$Build
+  [switch]$Build,
+  [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,6 +17,14 @@ trap {
 }
 
 Set-Location -Path $PSScriptRoot
+
+$nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+$viteCli = Join-Path $PSScriptRoot 'node_modules\vite\bin\vite.js'
+if (-not $nodeCommand -or -not (Test-Path -LiteralPath $viteCli)) {
+  Write-Host "ERROR: Node.js or the local Vite dependency is missing. Restore client dependencies first." -ForegroundColor Red
+  exit 1
+}
+$nodeExe = $nodeCommand.Source
 
 if ($Install) {
   Write-Host '=== Installing client dependencies ==='
@@ -41,7 +50,7 @@ if ($Mode -eq 'dev') {
   Write-Host "Working Directory: $(Get-Location)" -ForegroundColor Gray
   Write-Host 'Press Ctrl+C to stop.'
   try {
-    npm run dev
+    & $nodeExe $viteCli
     $exitCode = $LASTEXITCODE
   } catch {
     Write-Host "Error running dev server: $_" -ForegroundColor Red
@@ -56,26 +65,30 @@ if ($Mode -eq 'dev') {
 }
 
 # preview mode
-Write-Host '=== Building client ===' -ForegroundColor Cyan
-try {
-  npm run build
-  $exitCode = $LASTEXITCODE
-} catch {
-  Write-Host "Error building client: $_" -ForegroundColor Red
-  $exitCode = 1
-}
-if ($exitCode -ne 0) { 
-  Write-Host "Build failed" -ForegroundColor Red
-  Write-Host "Press any key to exit..."
-  $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
-  exit $exitCode 
+if (-not $SkipBuild -or $Build) {
+  Write-Host '=== Building client ===' -ForegroundColor Cyan
+  try {
+    & $nodeExe $viteCli build
+    $exitCode = $LASTEXITCODE
+  } catch {
+    Write-Host "Error building client: $_" -ForegroundColor Red
+    $exitCode = 1
+  }
+  if ($exitCode -ne 0) { 
+    Write-Host "Build failed" -ForegroundColor Red
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    exit $exitCode 
+  }
+} else {
+  Write-Host '=== Using existing client build ===' -ForegroundColor Cyan
 }
 
 Write-Host '=== Starting client preview server ===' -ForegroundColor Cyan
 Write-Host 'Press Ctrl+C to stop.'
 
 try {
-  npm run preview
+  & $nodeExe $viteCli preview
   $exitCode = $LASTEXITCODE
 } catch {
   Write-Host "Error running preview: $_" -ForegroundColor Red

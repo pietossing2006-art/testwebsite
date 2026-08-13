@@ -23,7 +23,7 @@ function shouldAllowLocalDevOrigins() {
 }
 
 function isLocalDevOrigin(origin) {
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(String(origin || ''))
+  return /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(String(origin || ''))
 }
 
 function firstHeaderValue(value) {
@@ -81,7 +81,18 @@ export function securityHeaders({ clientOrigins = [], allowLocalDevOrigins = sho
     if (origin.startsWith('http://')) connectSrc.push(origin.replace(/^http:\/\//, 'ws://'))
   }
   if (allowLocalDevOrigins) {
-    connectSrc.push('http://localhost:*', 'http://127.0.0.1:*', 'ws://localhost:*', 'ws://127.0.0.1:*')
+    connectSrc.push(
+      'http://localhost:*',
+      'http://127.0.0.1:*',
+      'ws://localhost:*',
+      'ws://127.0.0.1:*',
+      'http://192.168.*:*',
+      'ws://192.168.*:*',
+      'http://10.*:*',
+      'ws://10.*:*',
+      'http://172.*:*',
+      'ws://172.*:*',
+    )
   }
 
   return helmet({
