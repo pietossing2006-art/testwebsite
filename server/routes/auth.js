@@ -1,5 +1,8 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   createSession,
   getUserByLogin,
@@ -9,7 +12,18 @@ import {
   deleteSession,
   checkPassword,
   findOrCreateUserFromDiscord,
+  getUserByEmail,
+  savePasswordResetToken,
+  getPasswordResetToken,
+  deletePasswordResetToken,
+  deleteUserPasswordResetTokens,
+  setUserPassword,
+  getDiscordLinkForUser,
 } from '../db.js'
+import { sendDiscordPasswordResetLink } from '../lib/discordBot.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 import {
   isSecureCookie,
   cookieDomain,
@@ -447,11 +461,130 @@ router.get('/api/cookie-consent', (req, res) => {
   res.json({ ok: true, consent })
 })
 
-router.post('/api/cookie-consent', (req, res) => {
-  const secure = isSecureCookie(req)
-  const consent = normalizeConsentInput(req.body?.consent)
-  setCookieConsentCookie(res, consent, { secure })
-  res.json({ ok: true, consent })
+function logSimulatedEmail(email, subject, body) {
+  try {
+    const logDir = path.join(__dirname, '..', 'logs')
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true })
+    }
+    const logPath = path.join(logDir, 'email-simulation.log')
+    const logEntry = `[${new Date().toISOString()}] To: ${email}\nSubject: ${subject}\nBody:\n${body}\n========================================\n\n`
+    fs.appendFileSync(logPath, logEntry, 'utf8')
+    console.log(`[EMAIL SIMULATION] Logged email to ${email} (Subject: ${subject}) in ${logPath}`)
+  } catch (err) {
+    console.error('Failed to log simulated email:', err)
+  }
+}
+
+router.post('/api/auth/forgot-password', rateLimitMiddleware({ windowMs: 60_000, max: 5, keyPrefix: 'forgot_password' }), async (req, res) => {
+  const emailInput = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+  if (!emailInput || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput)) {
+    return res.status(400).json({ error: 'invalid_email' })
+  }
+
+  try {
+    const user = await getUserByEmail(emailInput)
+    if (user) {
+      await deleteUserPasswordResetTokens(user.id)
+
+      const token = crypto.randomBytes(32).toString('hex')
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
+
+      await savePasswordResetToken({ userId: user.id, tokenHash, email: user.email, expiresAt })
+
+      const clientOrigin = clientOriginFromRequest(req)
+      const resetLink = `${clientOrigin.replace(/\/+$/, '')}/reset-password?token=${token}`
+
+      const discordLink = await getDiscordLinkForUser(user.id)
+      let sentDiscord = false
+      if (discordLink && discordLink.discord_user_id) {
+        try {
+          await sendDiscordPasswordResetLink({
+            discordUserId: discordLink.discord_user_id,
+            resetLink,
+            accountLabel: user.display_name || user.username || user.email,
+            expiresMinutes: 30
+          })
+          sentDiscord = true
+        } catch (err) {
+          console.error('[Discord Reset DM] Failed to send DM:', err?.message || err)
+        }
+      }
+
+      const emailBody = `สวัสดีคุณ ${user.display_name || user.username || 'ผู้ใช้งาน'},\n\n` +
+        `เราได้รับคำขอกู้คืนรหัสผ่านสำหรับบัญชีของคุณ\n` +
+        `กรุณาคลิกที่ลิงก์ด้านล่างเพื่อตั้งค่ารหัสผ่านใหม่:\n\n` +
+        `${resetLink}\n\n` +
+        `ลิงก์นี้จะมีอายุการใช้งาน 30 นาที หากคุณไม่ได้ส่งคำขอนี้ กรุณาละเลยอีเมลนี้\n\n` +
+        `ขอบคุณครับ,\nทีมงาน VxperS Store\n` +
+        (sentDiscord ? `(ลิงก์นี้ถูกส่งไปยัง Discord DM ของคุณเรียบร้อยแล้วเช่นกัน)` : '')
+
+      logSimulatedEmail(user.email, 'กู้คืนรหัสผ่านของคุณ - VxperS Store', emailBody)
+    }
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[Forgot Password] Error:', err)
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/auth/verify-reset-token', async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+  if (!token) return res.status(400).json({ error: 'token_required' })
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
+    const record = await getPasswordResetToken(tokenHash)
+
+    if (!record) {
+      return res.json({ valid: false })
+    }
+
+    const expiresAt = new Date(record.expires_at).getTime()
+    if (expiresAt <= Date.now()) {
+      await deletePasswordResetToken(tokenHash)
+      return res.json({ valid: false })
+    }
+
+    res.json({ valid: true, email: record.email })
+  } catch (err) {
+    console.error('[Verify Reset Token] Error:', err)
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/auth/reset-password', rateLimitMiddleware({ windowMs: 60_000, max: 5, keyPrefix: 'reset_password' }), async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token.trim() : ''
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+
+  if (!token) return res.status(400).json({ error: 'token_required' })
+  if (!password || password.length < 8) return res.status(400).json({ error: 'weak_password' })
+  if (!/^[\x20-\x7E]+$/.test(password)) return res.status(400).json({ error: 'invalid_password_charset' })
+
+  try {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
+    const record = await getPasswordResetToken(tokenHash)
+
+    if (!record) {
+      return res.status(400).json({ error: 'invalid_or_expired_token' })
+    }
+
+    const expiresAt = new Date(record.expires_at).getTime()
+    if (expiresAt <= Date.now()) {
+      await deletePasswordResetToken(tokenHash)
+      return res.status(400).json({ error: 'invalid_or_expired_token' })
+    }
+
+    await setUserPassword({ userId: record.user_id, password })
+    await deleteUserPasswordResetTokens(record.user_id)
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[Reset Password] Error:', err)
+    res.status(500).json({ error: 'db_error' })
+  }
 })
 
 export default router

@@ -59,6 +59,8 @@ export const ProfileBodySchema = z
   .object({
     display_name: z.unknown().optional().transform((value) => (typeof value === 'string' ? value : null)),
     avatar_url: z.unknown().optional().transform((value) => (typeof value === 'string' ? value : null)),
+    username: z.unknown().optional().transform((value) => (typeof value === 'string' ? value.trim() : null)),
+    email: z.unknown().optional().transform((value) => (typeof value === 'string' ? value.trim().toLowerCase() : null)),
   })
   .passthrough()
 

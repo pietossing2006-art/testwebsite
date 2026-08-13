@@ -24,6 +24,8 @@ import {
   savePushSubscription,
   removePushSubscription,
   getMyOrderDetail,
+  removeUserOwnAccount,
+  checkPassword,
 } from '../db.js'
 import { requireAuth, rateLimitMiddleware } from '../lib/auth.js'
 import { decodeDataUrlImage, sanitizeAvatarImage } from '../lib/image.js'
@@ -31,6 +33,7 @@ import { AvatarUploadBodySchema, PasswordChangeBodySchema, ProfileBodySchema } f
 import { validateBody } from '../lib/validation.js'
 import { publishSupportEvent } from '../lib/events.js'
 import { requestDiscordPasswordResetCode, verifyDiscordPasswordResetCode } from '../lib/discordBot.js'
+import { isSecureCookie, clearAuthCookie } from '../lib/cookies.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -63,12 +66,57 @@ router.get('/api/me', requireAuth, async (req, res) => {
 router.put('/api/me/profile', requireAuth, async (req, res) => {
   const parsed = validateBody(ProfileBodySchema, req.body)
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
-  const { display_name, avatar_url } = parsed.data
+  const { display_name, avatar_url, username, email } = parsed.data
   try {
-    const user = await updateUserProfile({ userId: req.user.id, displayName: display_name, avatarUrl: avatar_url })
+    const user = await updateUserProfile({
+      userId: req.user.id,
+      displayName: display_name,
+      avatarUrl: avatar_url,
+      username,
+      email,
+    })
     res.json({ ok: true, user })
-  } catch {
+  } catch (err) {
+    const msg = String(err?.message ?? '')
+    if (msg === 'invalid_username') return res.status(400).json({ error: 'invalid_username' })
+    if (msg === 'invalid_username_charset') return res.status(400).json({ error: 'invalid_username_charset' })
+    if (msg === 'username_taken') return res.status(409).json({ error: 'username_taken' })
+    if (msg === 'invalid_email') return res.status(400).json({ error: 'invalid_email' })
+    if (msg === 'email_taken') return res.status(409).json({ error: 'email_taken' })
     res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/me/delete-account', requireAuth, async (req, res) => {
+  const { password, discord_code } = req.body ?? {}
+  try {
+    const discordLink = await getDiscordLinkForUser(req.user.id)
+    if (discordLink) {
+      if (typeof discord_code !== 'string' || !discord_code.trim()) {
+        return res.status(400).json({ error: 'discord_code_required' })
+      }
+      verifyDiscordPasswordResetCode({ userId: req.user.id, code: discord_code })
+    } else {
+      if (typeof password !== 'string' || !password) {
+        return res.status(400).json({ error: 'password_required' })
+      }
+      const user = await getUserById(req.user.id)
+      if (!user) return res.status(404).json({ error: 'user_not_found' })
+      const isMatch = await checkPassword(password, user.password_hash)
+      if (!isMatch) return res.status(400).json({ error: 'invalid_password' })
+    }
+
+    await removeUserOwnAccount(req.user.id)
+
+    clearAuthCookie(res, { secure: isSecureCookie(req) })
+    res.json({ ok: true })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'discord_code_required') return res.status(400).json({ error: 'discord_code_required' })
+    if (msg === 'discord_code_invalid') return res.status(400).json({ error: 'discord_code_invalid' })
+    if (msg === 'discord_code_expired') return res.status(400).json({ error: 'discord_code_expired' })
+    if (msg === 'cannot_remove_last_owner') return res.status(400).json({ error: 'cannot_remove_last_owner' })
+    res.status(500).json({ error: 'delete_failed' })
   }
 })
 

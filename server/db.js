@@ -4758,6 +4758,17 @@ export async function initDbPg() {
     )
   `)
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS password_reset_tokens_expires_at_idx ON password_reset_tokens (expires_at)`)
+
   try {
     await migrateDigitalStockToPools()
   } catch (e) {
@@ -7270,11 +7281,108 @@ export async function adminSearchOrderByRef(ref) {
   )
 }
 
-export async function updateUserProfile({ userId, displayName, avatarUrl }) {
+export async function updateUserProfile({ userId, displayName, avatarUrl, username, email }) {
+  const uid = Number(userId)
   const dn = typeof displayName === 'string' ? displayName.trim() : null
   const au = typeof avatarUrl === 'string' ? avatarUrl.trim() : null
-  await query('UPDATE users SET display_name = $2, avatar_url = $3 WHERE id = $1', [userId, dn, au])
-  return getUserById(userId)
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    if (typeof username === 'string' && username.trim()) {
+      const un = username.trim()
+      if (un.length < 6) throw new Error('invalid_username')
+      if (!/^[a-zA-Z0-9._-]+$/.test(un)) throw new Error('invalid_username_charset')
+
+      const taken = await client.query('SELECT id FROM users WHERE username = $1 AND id != $2', [un, uid])
+      if (taken.rows.length > 0) throw new Error('username_taken')
+
+      await client.query('UPDATE users SET username = $2 WHERE id = $1', [uid, un])
+    }
+
+    if (typeof email === 'string' && email.trim()) {
+      const em = email.trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) throw new Error('invalid_email')
+
+      const taken = await client.query('SELECT id FROM users WHERE email = $1 AND id != $2', [em, uid])
+      if (taken.rows.length > 0) throw new Error('email_taken')
+
+      await client.query('UPDATE users SET email = $2 WHERE id = $1', [uid, em])
+    }
+
+    await client.query('UPDATE users SET display_name = $2, avatar_url = $3 WHERE id = $1', [uid, dn, au])
+
+    await client.query('COMMIT')
+    return getUserById(uid)
+  } catch (e) {
+    await client.query('ROLLBACK')
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+export async function removeUserOwnAccount(userId) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid) || uid <= 0) throw new Error('invalid_id')
+
+  const target = await get('SELECT id, role FROM users WHERE id = $1', [uid])
+  if (!target) throw new Error('not_found')
+
+  const targetRole = String(target.role || 'user').trim().toLowerCase()
+  if (targetRole === 'owner') {
+    const row = await get(`SELECT COUNT(*)::int AS c FROM users WHERE role = 'owner'`)
+    if ((row?.c ?? 0) <= 1) throw new Error('cannot_remove_last_owner')
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('UPDATE topups SET approved_by = NULL WHERE approved_by = $1', [uid])
+    await client.query('UPDATE farm_requests SET assigned_booster_id = NULL, assigned_at = NULL WHERE assigned_booster_id = $1', [uid])
+    const deleted = await client.query('DELETE FROM users WHERE id = $1', [uid])
+    if ((deleted?.rowCount ?? 0) < 1) {
+      await client.query('ROLLBACK')
+      throw new Error('not_found')
+    }
+    await client.query('COMMIT')
+    return { ok: true, deleted: 1 }
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    throw e
+  } finally {
+    client.release()
+  }
+}
+
+export async function savePasswordResetToken({ userId, tokenHash, expiresAt, email }) {
+  await query(
+    `INSERT INTO password_reset_tokens (token_hash, user_id, email, expires_at)
+     VALUES ($1, $2, $3, $4)`,
+    [tokenHash, userId, email, expiresAt]
+  )
+}
+
+export async function getPasswordResetToken(tokenHash) {
+  return get(
+    `SELECT token_hash, user_id, email, expires_at
+     FROM password_reset_tokens
+     WHERE token_hash = $1`,
+    [tokenHash]
+  )
+}
+
+export async function deletePasswordResetToken(tokenHash) {
+  await query(`DELETE FROM password_reset_tokens WHERE token_hash = $1`, [tokenHash])
+}
+
+export async function deleteUserPasswordResetTokens(userId) {
+  await query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [userId])
 }
 
 export async function adminUpdateUserAccount({ userId, email, username, displayName, avatarUrl }) {

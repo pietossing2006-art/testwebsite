@@ -167,6 +167,37 @@ export function verifyDiscordPasswordResetCode({ userId, code }) {
   return true
 }
 
+export async function sendDiscordPasswordResetLink({ discordUserId, resetLink, accountLabel, expiresMinutes }) {
+  const did = String(discordUserId || '').trim()
+  if (!did) throw new Error('invalid_payload')
+  if (!discordClientPromise) throw new Error('bot_not_ready')
+
+  const client = await discordClientPromise
+  if (!client) throw new Error('bot_not_ready')
+
+  try {
+    const discordUser = await client.users.fetch(did)
+    await discordUser.send({
+      embeds: [
+        ctx.warningEmbed(
+          'Password Reset Request',
+          'You have requested to reset your password. Use the link below to set a new password.',
+          [
+            { name: 'Reset Link', value: `[Click here to reset your password](${resetLink})`, inline: false },
+            { name: 'Account', value: String(accountLabel || 'User Account'), inline: true },
+            { name: 'Expires In', value: `${expiresMinutes} minutes`, inline: true },
+          ]
+        ),
+      ],
+    })
+  } catch (err) {
+    throw new Error(err?.code === 50007 ? 'dm_failed' : 'bot_delivery_failed')
+  }
+
+  return { ok: true }
+}
+
+
 async function registerCommands(client) {
   const body = buildCommandPayload()
   await registerDiscordCommands({ client, envValue: ctx.envValue, body })

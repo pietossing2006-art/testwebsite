@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { copyToClipboard, fetchJson, setAuthToken } from '../api.js'
 import { formatWishlistStockStatus, getVipProgressPercent, normalizeNotificationPreferences } from '../components/growth/growthDisplayUtils.js'
@@ -100,6 +100,16 @@ export default function Profile() {
   const [vip, setVip] = useState(null)
   const [notificationPreferences, setNotificationPreferences] = useState(normalizeNotificationPreferences(null))
   const [preferencesStatus, setPreferencesStatus] = useState('idle')
+  const [editUsername, setEditUsername] = useState('')
+  const [editEmail, setEditEmail] = useState('')
+  const [usernameStatus, setUsernameStatus] = useState('idle')
+  const [emailStatus, setEmailStatus] = useState('idle')
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [deleteDiscordCode, setDeleteDiscordCode] = useState('')
+  const [deleteStatus, setDeleteStatus] = useState('idle')
+  const [deleteError, setDeleteError] = useState('')
+  const [deleteDiscordSent, setDeleteDiscordSent] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -119,6 +129,8 @@ export default function Profile() {
         if (!cancelled) {
           setMe(meRes)
           setDisplayNameInput(String(meRes?.user?.display_name || ''))
+          setEditUsername(String(meRes?.user?.username || ''))
+          setEditEmail(String(meRes?.user?.email || ''))
           setTx(Array.isArray(txRes?.transactions) ? txRes.transactions : [])
           setOrders(Array.isArray(ordersRes?.orders) ? ordersRes.orders : [])
           setDiscordLink(discordRes)
@@ -377,6 +389,76 @@ export default function Profile() {
     }
   }
 
+  async function saveUsernameEmail() {
+    if (usernameStatus === 'submitting' || emailStatus === 'submitting') return
+    setUsernameStatus('submitting')
+    setEmailStatus('submitting')
+    try {
+      await fetchJson('/api/me/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: editUsername.trim(), email: editEmail.trim() }),
+      })
+      const meRes = await fetchJson('/api/me')
+      setMe(meRes)
+      setEditUsername(String(meRes?.user?.username || ''))
+      setEditEmail(String(meRes?.user?.email || ''))
+      setUsernameStatus('success')
+      setEmailStatus('success')
+      window.dispatchEvent(new Event('app_refresh'))
+      setTimeout(() => { setUsernameStatus('idle'); setEmailStatus('idle') }, 1300)
+    } catch (err) {
+      if (err?.status === 401) {
+        setAuthToken(null)
+        nav('/login', { replace: true })
+        return
+      }
+      const code = String(err?.data?.error || '')
+      if (code === 'username_taken') setUsernameStatus('taken')
+      else if (code === 'email_taken') setEmailStatus('taken')
+      else if (code === 'invalid_username') setUsernameStatus('invalid')
+      else if (code === 'invalid_email') setEmailStatus('invalid')
+      else { setUsernameStatus('error'); setEmailStatus('error') }
+    }
+  }
+
+  async function requestDeleteDiscordCode() {
+    if (deleteDiscordSent) return
+    try {
+      await fetchJson('/api/me/password/discord-code', { method: 'POST' })
+      setDeleteDiscordSent(true)
+    } catch {
+      setDeleteError('ส่งรหัสยืนยัน Discord ไม่สำเร็จ')
+    }
+  }
+
+  async function confirmDeleteAccount() {
+    if (deleteStatus === 'submitting') return
+    setDeleteError('')
+    setDeleteStatus('submitting')
+    try {
+      await fetchJson('/api/me/delete-account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: deletePassword, discord_code: deleteDiscordCode }),
+      })
+      setAuthToken(null)
+      window.location.assign('/')
+    } catch (err) {
+      if (err?.status === 401) {
+        setAuthToken(null)
+        nav('/login', { replace: true })
+        return
+      }
+      const code = String(err?.data?.error || '')
+      setDeleteStatus('error')
+      if (code === 'invalid_password') setDeleteError('รหัสผ่านไม่ถูกต้อง')
+      else if (code === 'discord_code_required') setDeleteError('ต้องใส่รหัสยืนยันจาก Discord')
+      else if (code === 'discord_code_invalid') setDeleteError('รหัสยืนยัน Discord ไม่ถูกต้อง')
+      else setDeleteError('ลบบัญชีไม่สำเร็จ กรุณาลองใหม่')
+    }
+  }
+
   const vipProgress = getVipProgressPercent(vip)
   const vipNextThreshold = Number(vip?.next_threshold_points)
   const vipPointsSpent = Number(vip?.points_spent || 0)
@@ -604,13 +686,21 @@ export default function Profile() {
           <section className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5">
             <SectionTitle
               title="แก้ไขโปรไฟล์"
-              subtitle="เปลี่ยนชื่อที่แสดงและรูปโปรไฟล์"
+              subtitle="เปลี่ยนชื่อผู้ใช้ อีเมล ชื่อที่แสดง และรูปโปรไฟล์"
               action={canAccessAdmin ? <Link to="/admin-v2" className="ui-btn h-9 px-4 text-xs font-black">Admin</Link> : null}
             />
             <div className="grid gap-4">
               <label className="grid gap-1">
                 <span className="text-xs font-bold text-white/50">Username</span>
-                <input value={user?.username || ''} readOnly disabled className="ui-field h-11 cursor-not-allowed opacity-50" />
+                <input value={editUsername} onChange={(event) => setEditUsername(event.target.value)} placeholder="Username" className="ui-field h-11" />
+                {usernameStatus === 'taken' ? <div className="text-xs font-bold text-cyan-200">Username นี้ถูกใช้แล้ว</div> : null}
+                {usernameStatus === 'invalid' ? <div className="text-xs font-bold text-cyan-200">Username ไม่ถูกต้อง (อย่างน้อย 6 ตัว, a-z, 0-9, ., -, _)</div> : null}
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-bold text-white/50">Email</span>
+                <input value={editEmail} onChange={(event) => setEditEmail(event.target.value)} placeholder="Email" type="email" className="ui-field h-11" />
+                {emailStatus === 'taken' ? <div className="text-xs font-bold text-cyan-200">Email นี้ถูกใช้แล้ว</div> : null}
+                {emailStatus === 'invalid' ? <div className="text-xs font-bold text-cyan-200">กรุณากรอก Email ให้ถูกต้อง</div> : null}
               </label>
               <label className="grid gap-1">
                 <span className="text-xs font-bold text-white/50">Display name</span>
@@ -621,8 +711,8 @@ export default function Profile() {
                 <input type="file" accept="image/jpeg,image/jpg,image/png,image/webp" onChange={onPickAvatarFile} className="ui-field h-11 py-2 text-xs" />
               </label>
               <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={saveProfile} disabled={profileStatus === 'submitting'} className="ui-btn-primary h-11 px-5 text-sm font-black">
-                  {profileStatus === 'submitting' ? 'กำลังบันทึก...' : 'บันทึกโปรไฟล์'}
+                <button type="button" onClick={() => { saveProfile(); saveUsernameEmail() }} disabled={profileStatus === 'submitting' || usernameStatus === 'submitting'} className="ui-btn-primary h-11 px-5 text-sm font-black">
+                  {profileStatus === 'submitting' || usernameStatus === 'submitting' ? 'กำลังบันทึก...' : 'บันทึกโปรไฟล์'}
                 </button>
                 <button type="button" onClick={() => window.dispatchEvent(new Event('open_cookie_settings'))} className="ui-btn h-11 px-5 text-sm font-black">
                   Cookie Settings
@@ -630,8 +720,8 @@ export default function Profile() {
               </div>
               {avatarStatus === 'invalid_type' ? <div className="text-xs font-bold text-cyan-200">รองรับเฉพาะ JPG/PNG/WEBP</div> : null}
               {avatarStatus === 'too_large' ? <div className="text-xs font-bold text-cyan-200">ไฟล์ใหญ่เกิน 6MB</div> : null}
-              {profileStatus === 'success' ? <div className="text-xs font-bold text-emerald-300">บันทึกสำเร็จ</div> : null}
-              {profileStatus === 'error' ? <div className="text-xs font-bold text-cyan-200">บันทึกไม่สำเร็จ</div> : null}
+              {profileStatus === 'success' || usernameStatus === 'success' ? <div className="text-xs font-bold text-emerald-300">บันทึกสำเร็จ</div> : null}
+              {profileStatus === 'error' || usernameStatus === 'error' ? <div className="text-xs font-bold text-cyan-200">บันทึกไม่สำเร็จ</div> : null}
             </div>
           </section>
 
@@ -722,6 +812,43 @@ export default function Profile() {
           </section>
         </div>
       </div>
+
+      <section className="motion-card rounded-3xl border border-red-500/10 bg-red-950/10 p-5">
+        <SectionTitle title="ลบบัญชี" subtitle="เมื่อลบแล้วจะไม่สามารถกู้คืนข้อมูลได้" />
+        <button type="button" onClick={() => setDeleteModalOpen(true)} className="rounded-xl border border-red-400/25 bg-red-500/15 px-5 py-2.5 text-sm font-black text-red-200 transition hover:bg-red-500/25">
+          ลบบัญชีของฉัน
+        </button>
+      </section>
+
+      {deleteModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-red-500/20 bg-slate-950 p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-red-200">ยืนยันการลบบัญชี</h3>
+            <p className="mt-2 text-xs text-white/55">การลบบัญชีจะลบข้อมูลทั้งหมดถาวร รวมถึงพ้อยท์ ออเดอร์ และการเชื่อมต่อ Discord</p>
+            <div className="mt-4 space-y-3">
+              <input value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} placeholder="รหัสผ่านปัจจุบัน" type="password" className="ui-field h-11" />
+              {discordLinked ? (
+                <div className="rounded-xl border border-cyan-300/15 bg-cyan-500/10 p-3 space-y-2">
+                  <div className="text-xs font-bold text-cyan-100/85">บัญชีนี้ลิงก์ Discord อยู่ ต้องยืนยันรหัสจาก DM</div>
+                  <button type="button" onClick={requestDeleteDiscordCode} disabled={deleteDiscordSent} className="ui-btn h-9 px-4 text-xs font-black">
+                    {deleteDiscordSent ? 'ส่งรหัสแล้ว' : 'ส่งรหัสยืนยันไปที่ Discord'}
+                  </button>
+                  <input value={deleteDiscordCode} onChange={(e) => setDeleteDiscordCode(e.target.value)} placeholder="รหัสยืนยัน 6 หลักจาก Discord DM" inputMode="numeric" className="ui-field h-11" />
+                </div>
+              ) : null}
+            </div>
+            {deleteError ? <div className="mt-3 text-xs font-bold text-red-300">{deleteError}</div> : null}
+            <div className="mt-5 flex items-center justify-end gap-3">
+              <button type="button" onClick={() => { setDeleteModalOpen(false); setDeletePassword(''); setDeleteDiscordCode(''); setDeleteError(''); setDeleteStatus('idle'); setDeleteDiscordSent(false) }} className="ui-btn h-10 px-5 text-sm font-black">
+                ยกเลิก
+              </button>
+              <button type="button" onClick={confirmDeleteAccount} disabled={deleteStatus === 'submitting' || !deletePassword} className="rounded-xl border border-red-400/25 bg-red-500/20 px-5 py-2.5 text-sm font-black text-red-200 transition hover:bg-red-500/30 disabled:opacity-50">
+                {deleteStatus === 'submitting' ? 'กำลังลบ...' : 'ยืนยันลบบัญชี'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
