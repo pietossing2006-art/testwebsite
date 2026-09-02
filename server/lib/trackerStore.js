@@ -252,6 +252,23 @@ export async function touchRoom(roomId) {
   await pool.query('update public.tracker_sessions set last_active_at = now() where id = $1', [roomId])
 }
 
+export async function renameRoom(roomId, name) {
+  const cleanName = String(name || '').trim()
+  if (!cleanName) throw new TrackerError('Room name is required')
+  const res = await pool.query(
+    `update public.tracker_sessions set name = $2 where id = $1
+     returning id, name, prefix, total_rooms, is_active, created_by_user_id, created_by_guest_name, last_active_at, created_at, updated_at`,
+    [roomId, cleanName],
+  )
+  if (!res.rows[0]) throw new TrackerError('Room not found', 404)
+  return serializeSession(res.rows[0])
+}
+
+export async function deleteRoom(roomId) {
+  const res = await pool.query('delete from public.tracker_sessions where id = $1 returning id', [roomId])
+  if (!res.rows[0]) throw new TrackerError('Room not found', 404)
+}
+
 export async function createSession(name, prefix, totalRooms, makeActive = true) {
   await initTrackerStore()
   const normalizedPrefix = normalizePrefix(prefix)

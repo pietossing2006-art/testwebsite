@@ -6,12 +6,14 @@ import {
 } from '../lib/trackerHelpers.js'
 import {
   createRoom,
+  deleteRoom,
   deleteUnitStatus,
   editCheckedUnit,
   getRoomById,
   getRoomStatePayload,
   getStatus,
   listRooms,
+  renameRoom,
   setUnitStatus,
   touchRoom,
   toggleMark,
@@ -124,6 +126,31 @@ router.get('/rooms/:roomId/state', loadRoomForAccess, async (req, res) => {
     await okState(res, req.trackerRoom.id)
   } catch (err) {
     console.error('[tracker] get room state failed', err)
+    errorResponse(res, 'Internal server error', 500)
+  }
+})
+
+router.patch('/rooms/:roomId', loadRoomForAccess, async (req, res) => {
+  try {
+    await renameRoom(req.trackerRoom.id, req.body?.name)
+    await touchRoom(req.trackerRoom.id)
+    await okState(res, req.trackerRoom.id, {}, true)
+  } catch (err) {
+    if (err instanceof TrackerError) return errorResponse(res, err.message, err.statusCode)
+    console.error('[tracker] rename room failed', err)
+    errorResponse(res, 'Internal server error', 500)
+  }
+})
+
+router.delete('/rooms/:roomId', loadRoomForAccess, async (req, res) => {
+  try {
+    const roomId = req.trackerRoom.id
+    await deleteRoom(roomId)
+    emitTrackerEvent(roomId, { success: true, deleted: true, room_id: roomId })
+    res.json({ success: true, deleted: true })
+  } catch (err) {
+    if (err instanceof TrackerError) return errorResponse(res, err.message, err.statusCode)
+    console.error('[tracker] delete room failed', err)
     errorResponse(res, 'Internal server error', 500)
   }
 })

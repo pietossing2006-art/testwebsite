@@ -343,6 +343,16 @@ body {
     min-width: 92px;
 }
 
+.room-card-active {
+    font-size: 12px !important;
+    color: var(--text-muted) !important;
+}
+
+.lobby-search-box {
+    margin-bottom: 20px;
+    max-width: 360px;
+}
+
 .empty-lobby {
     border: 1px dashed rgba(255, 255, 255, 0.18);
     border-radius: 14px;
@@ -657,6 +667,13 @@ body.tracker-page .dashboard {
     background-color: #4b5563;
 }
 
+.btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
 /* Feedback Message */
 .feedback-message {
     margin-top: 10px;
@@ -951,6 +968,8 @@ body.tracker-page .dashboard {
     transition: all 0.2s ease;
     position: relative;
     overflow: hidden;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 72px auto 53px;
 }
 
 .room-cell:hover {
@@ -1070,6 +1089,8 @@ body.tracker-page .dashboard {
     border: 1px solid rgba(255, 255, 255, 0.04);
     cursor: pointer;
     transition: all 0.15s;
+    content-visibility: auto;
+    contain-intrinsic-height: auto 42px;
 }
 
 .room-list-item:hover {

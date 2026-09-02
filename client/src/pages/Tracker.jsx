@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { resolveApiUrl } from '../api.js'
 import { connectTrackerSocket } from '../socket.js'
 import './tracker-isolation.css'
@@ -50,6 +50,20 @@ function getSortValue(str) {
   }
 }
 
+function formatRelativeTime(isoString) {
+  if (!isoString) return ''
+  const then = new Date(isoString).getTime()
+  if (Number.isNaN(then)) return ''
+  const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000))
+  if (diffSec < 60) return 'เมื่อสักครู่'
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin} นาทีที่แล้ว`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour} ชั่วโมงที่แล้ว`
+  const diffDay = Math.floor(diffHour / 24)
+  return `${diffDay} วันที่แล้ว`
+}
+
 export default function Tracker() {
   const [sessions, setSessions] = useState([])
   const [activeSession, setActiveSession] = useState(null)
@@ -77,6 +91,11 @@ export default function Tracker() {
   const [modalFeedback, setModalFeedback] = useState({ text: '', type: '', visible: false })
   const [sessionForm, setSessionForm] = useState({ name: '', password: '', guest_name: '', prefix: '42/', total: '755' })
   const [sessionFeedback, setSessionFeedback] = useState({ text: '', type: '', visible: false })
+  const [lobbySearch, setLobbySearch] = useState('')
+  const [roomSettingsOpen, setRoomSettingsOpen] = useState(false)
+  const [roomNameDraft, setRoomNameDraft] = useState('')
+  const [roomSettingsFeedback, setRoomSettingsFeedback] = useState({ text: '', type: '', visible: false })
+  const [roomActionBusy, setRoomActionBusy] = useState(false)
 
   const unitInputRef = useRef(null)
   const backdropPointerStartedRef = useRef(false)
@@ -196,6 +215,14 @@ export default function Tracker() {
       setOnline(false)
     }
     const onTrackerUpdate = (data) => {
+      if (data?.deleted) {
+        if (typeof window !== 'undefined') window.history.pushState({}, '', '/tracker')
+        setCurrentRoomId('')
+        setActiveSession(null)
+        loadRooms()
+        setFeedback({ text: '🗑️ ห้องนี้ถูกลบแล้ว', type: 'error', visible: true })
+        return
+      }
       applyState(data || {})
       setOnline(true)
     }
@@ -217,7 +244,7 @@ export default function Tracker() {
       clearTimeout(initialTimer)
       clearInterval(timer)
     }
-  }, [activeSession?.id, applyState, loadData])
+  }, [activeSession?.id, applyState, loadData, loadRooms])
 
   useEffect(() => {
     document.title = '🔑 Unit Key Tracker - ระบบบันทึกคีย์ห้องชุด'
@@ -237,6 +264,18 @@ export default function Tracker() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!modalOpen && !sessionModalOpen && !roomSettingsOpen) return undefined
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return
+      if (modalOpen) closeModal()
+      else if (roomSettingsOpen) closeRoomSettings()
+      else if (sessionModalOpen) setSessionModalOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [modalOpen, sessionModalOpen, roomSettingsOpen])
+
   const showFeedback = (text, type, autoHide = true) => {
     setFeedback({ text, type, visible: true })
     if (autoHide) {
@@ -253,6 +292,8 @@ export default function Tracker() {
     return `${prefix}${parsed}`
   }
 
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+
   const filteredUnits = useMemo(() => {
     const combined = new Set([...allUnitsList, ...checkedUnits, ...markedUnits])
     const unitsArray = Array.from(combined).sort((a, b) => {
@@ -262,8 +303,9 @@ export default function Tracker() {
       return String(valA).localeCompare(String(valB))
     })
 
+    const query = deferredSearchQuery.trim().toLowerCase()
     return unitsArray.filter((unit) => {
-      if (!unit.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false
+      if (!unit.toLowerCase().includes(query)) return false
       const isChecked = checkedUnits.has(unit)
       const isMarked = markedUnits.has(unit)
       if (currentFilter === 'checked') return isChecked
@@ -271,7 +313,14 @@ export default function Tracker() {
       if (currentFilter === 'marked') return isMarked
       return true
     })
-  }, [allUnitsList, checkedUnits, markedUnits, searchQuery, currentFilter])
+  }, [allUnitsList, checkedUnits, markedUnits, deferredSearchQuery, currentFilter])
+
+  const deferredLobbySearch = useDeferredValue(lobbySearch)
+  const filteredSessions = useMemo(() => {
+    const query = deferredLobbySearch.trim().toLowerCase()
+    if (!query) return sessions
+    return sessions.filter((room) => room.name.toLowerCase().includes(query))
+  }, [sessions, deferredLobbySearch])
 
   const count = checkedUnits.size
   const markedCount = markedUnits.size
@@ -475,6 +524,52 @@ export default function Tracker() {
     if (sessionId) navigateToRoom(sessionId)
   }
 
+  const openRoomSettings = () => {
+    setRoomNameDraft(activeSession?.name || '')
+    setRoomSettingsFeedback({ text: '', type: '', visible: false })
+    setRoomSettingsOpen(true)
+  }
+
+  const closeRoomSettings = () => {
+    setRoomSettingsOpen(false)
+    setRoomSettingsFeedback({ text: '', type: '', visible: false })
+  }
+
+  const handleRenameRoom = async (e) => {
+    e.preventDefault()
+    if (!activeSession?.id || !roomNameDraft.trim()) return
+    setRoomActionBusy(true)
+    try {
+      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: roomNameDraft.trim() }),
+      })
+      applyState(data)
+      closeRoomSettings()
+      showFeedback('✅ เปลี่ยนชื่อห้องแล้ว', 'success')
+    } catch (err) {
+      setRoomSettingsFeedback({ text: err.message, type: 'error', visible: true })
+    } finally {
+      setRoomActionBusy(false)
+    }
+  }
+
+  const handleDeleteRoom = async () => {
+    if (!activeSession?.id) return
+    if (!window.confirm(`ลบห้อง '${activeSession.name}' และข้อมูลทั้งหมดในห้องนี้ใช่หรือไม่? การกระทำนี้ย้อนกลับไม่ได้`)) return
+    setRoomActionBusy(true)
+    try {
+      await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}`, { method: 'DELETE' })
+      closeRoomSettings()
+      navigateToLobby()
+      showFeedback('🗑️ ลบห้องแล้ว', 'success')
+    } catch (err) {
+      setRoomSettingsFeedback({ text: err.message, type: 'error', visible: true })
+    } finally {
+      setRoomActionBusy(false)
+    }
+  }
+
   const handleCreateSession = async (e) => {
     e.preventDefault()
     try {
@@ -570,10 +665,24 @@ export default function Tracker() {
               <h1>Active Rooms</h1>
               <p>เลือกห้อง</p>
             </div>
-            <span>{sessions.length} ห้อง</span>
+            <span>{filteredSessions.length} / {sessions.length} ห้อง</span>
           </header>
+          {sessions.length > 6 ? (
+            <div className="search-box lobby-search-box">
+              <span className="search-icon">🔍</span>
+              <input
+                type="text"
+                value={lobbySearch}
+                onChange={(e) => setLobbySearch(e.target.value)}
+                placeholder="ค้นหาชื่อห้อง..."
+              />
+              {lobbySearch ? (
+                <button type="button" className="clear-btn" style={{ display: 'block' }} onClick={() => setLobbySearch('')}>&times;</button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="lobby-grid">
-            {sessions.map((room) => (
+            {filteredSessions.map((room) => (
               <article key={room.id} className="room-card">
                 <div className="room-card-head">
                   <h2>{room.name}</h2>
@@ -585,11 +694,13 @@ export default function Tracker() {
                 </div>
                 <p>Prefix: {room.prefix}</p>
                 <p>Owner: {room.created_by_guest_name || (room.created_by_user_id ? `User #${room.created_by_user_id}` : 'guest')}</p>
+                {room.last_active_at ? <p className="room-card-active">🕓 ใช้งานล่าสุด {formatRelativeTime(room.last_active_at)}</p> : null}
                 <button type="button" className="btn btn-primary" onClick={() => navigateToRoom(room.id)}>Join</button>
               </article>
             ))}
           </div>
           {!sessions.length ? <div className="empty-lobby">ยังไม่มีห้อง สร้างห้องแรกได้เลย</div> : null}
+          {sessions.length && !filteredSessions.length ? <div className="empty-lobby">ไม่พบห้องที่ตรงกับ &quot;{lobbySearch}&quot;</div> : null}
         </main>
         {sessionModalOpen ? (
           <div
@@ -663,6 +774,7 @@ export default function Tracker() {
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
+            <button type="button" className="session-new-btn" onClick={openRoomSettings} title="ตั้งค่าห้อง">⚙️</button>
           </div>
 
           <div className="stats-card">
@@ -930,6 +1042,40 @@ export default function Tracker() {
                 {sessionFeedback.visible ? <div className={`feedback-message ${sessionFeedback.type}`}>{sessionFeedback.text}</div> : null}
                 <button type="submit" className="btn btn-primary session-submit" style={{ marginTop: 12, width: '100%' }}>สร้าง</button>
               </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {roomSettingsOpen ? (
+        <div
+          className="modal active"
+          onPointerDown={handleBackdropPointerDown}
+          onClick={(e) => handleBackdropClick(e, closeRoomSettings)}
+        >
+          <div className="modal-content glass">
+            <span className="close-modal" onClick={closeRoomSettings} role="button" tabIndex={0}>&times;</span>
+            <div className="modal-header">
+              <span className="modal-icon">⚙️</span>
+              <h3>ตั้งค่าห้อง</h3>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={handleRenameRoom} autoComplete="off">
+                <label className="field-label" htmlFor="room-name-input">ชื่อห้อง</label>
+                <div className="input-group">
+                  <input
+                    id="room-name-input"
+                    value={roomNameDraft}
+                    onChange={(e) => setRoomNameDraft(e.target.value)}
+                    required
+                  />
+                </div>
+                {roomSettingsFeedback.visible ? <div className={`feedback-message ${roomSettingsFeedback.type}`}>{roomSettingsFeedback.text}</div> : null}
+                <button type="submit" className="btn btn-primary session-submit" style={{ marginTop: 12, width: '100%' }} disabled={roomActionBusy}>บันทึกชื่อห้อง</button>
+              </form>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-danger" onClick={handleDeleteRoom} disabled={roomActionBusy}>🗑️ ลบห้องนี้</button>
             </div>
           </div>
         </div>
