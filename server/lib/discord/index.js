@@ -6,6 +6,7 @@ import { registerCommands as registerDiscordCommands } from './commandRegistrati
 import { createGlobalPanelHandlers } from './commands/globalpanel.js'
 import { createLinkHandlers } from './commands/link.js'
 import { createPointsHandlers } from './commands/points.js'
+import { createProfileHandlers } from './commands/profile.js'
 import { createTopupsHandlers } from './commands/topups.js'
 import { createUnlinkHandlers } from './commands/unlink.js'
 import { createDiscordContext } from './shared/context.js'
@@ -14,6 +15,7 @@ const ctx = createDiscordContext()
 const handlers = {
   ...createLinkHandlers(ctx),
   ...createUnlinkHandlers(ctx),
+  ...createProfileHandlers(ctx),
   ...createPointsHandlers(ctx),
   ...createGlobalPanelHandlers(ctx),
   ...createTopupsHandlers(ctx),

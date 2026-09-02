@@ -220,15 +220,15 @@ export default function BundleDetail() {
   }
 
   if (loading) {
-    return <div className="py-24 text-center text-sm font-bold text-white/45">กำลังโหลด Bundle...</div>
+    return <div className="py-24 text-center text-sm font-bold text-slate-500">กำลังโหลด Bundle...</div>
   }
 
   if (!bundle) {
     return (
       <div className="mx-auto max-w-md py-24 text-center">
-        <div className="text-lg font-black text-white">ไม่พบ Bundle นี้</div>
-        <p className="mt-2 text-sm text-white/45">รายการอาจถูกปิดหรือหมดช่วงเวลาแสดงผลแล้ว</p>
-        <Link to="/" className="mt-5 inline-flex h-10 items-center rounded-2xl border border-white/10 bg-white/[0.04] px-4 text-sm font-black text-white/80 hover:bg-white/[0.08]">
+        <div className="text-lg font-black text-slate-900">ไม่พบ Bundle นี้</div>
+        <p className="mt-2 text-sm text-slate-500">รายการอาจถูกปิดหรือหมดช่วงเวลาแสดงผลแล้ว</p>
+        <Link to="/" className="mt-5 inline-flex h-10 items-center rounded-2xl border border-sky-200 bg-white px-4 text-sm font-black text-slate-800 shadow-sm hover:bg-sky-50">
           กลับหน้าหลัก
         </Link>
       </div>
@@ -236,118 +236,118 @@ export default function BundleDetail() {
   }
 
   return (
-    <div className="space-y-6 pb-8 fade-in-up">
-      <div className="text-xs font-bold text-white/45">
-        <Link to="/" className="text-white/55 hover:text-white">หน้าหลัก</Link>
-        <span className="mx-2 text-white/20">/</span>
-        <span className="text-white/80">{bundle.name}</span>
+    <div className="mx-auto max-w-6xl space-y-6 pb-8 fade-in-up">
+      <div className="text-xs font-bold text-slate-500">
+        <Link to="/" className="text-sky-600 hover:underline">หน้าหลัก</Link>
+        <span className="mx-2 text-slate-400">/</span>
+        <span className="text-slate-800">{bundle.name}</span>
       </div>
 
-      <section className="motion-stagger grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
-        <div className="motion-card motion-hover motion-soft-glow overflow-hidden rounded-[28px] border border-white/[0.08] bg-white/[0.04] shadow-[0_24px_90px_rgba(0,0,0,0.45)]">
-          <div className="relative aspect-[4/3] bg-black/30">
+      <section className="grid min-w-0 gap-6 lg:grid-cols-12 items-start">
+        <div className="overflow-hidden rounded-3xl border border-sky-200 bg-white p-2 shadow-sm lg:col-span-6">
+          <div className="relative aspect-[16/10] overflow-hidden rounded-2xl bg-sky-50">
             {bundle.image_url ? (
-              <img src={bundle.image_url} alt={bundle.name} className="motion-image absolute inset-0 h-full w-full object-cover" />
+              <img src={bundle.image_url} alt={bundle.name} className="h-full w-full object-cover" />
             ) : (
-              <div className="absolute inset-0 grid place-items-center text-sm font-black text-white/30">Bundle</div>
+              <div className="absolute inset-0 grid place-items-center text-sm font-black text-slate-400">Bundle</div>
             )}
-            <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/65 to-transparent" />
             <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-              <span className="rounded-full border border-white/15 bg-black/45 px-3 py-1 text-[11px] font-black text-white/85 backdrop-blur">Bundle</span>
-              {savingsPct > 0 ? <span className="rounded-full border border-cyan-300/25 bg-cyan-500/15 px-3 py-1 text-[11px] font-black text-cyan-100 backdrop-blur">ประหยัด {savingsPct}%</span> : null}
+              <span className="rounded-full border border-sky-300 bg-sky-500 px-3 py-1 text-[11px] font-black text-white shadow-sm">Bundle</span>
+              {savingsPct > 0 ? <span className="rounded-full border border-emerald-300 bg-emerald-500 px-3 py-1 text-[11px] font-black text-white shadow-sm">ประหยัด {savingsPct}%</span> : null}
             </div>
           </div>
         </div>
 
-        <aside className="motion-card rounded-[28px] border border-white/[0.08] bg-white/[0.045] p-4 shadow-[0_24px_90px_rgba(0,0,0,0.38)] sm:p-5">
+        <aside className="rounded-3xl border border-sky-200 bg-white p-5 shadow-sm sm:p-7 lg:col-span-6">
           <div className="flex flex-wrap items-center gap-2">
             <CountdownPill countdown={!isExpired && !notStarted ? countdown : null} />
-            {notStarted ? <span className="rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-1 text-[11px] font-black text-amber-100">รอเปิดขาย</span> : null}
-            {isExpired ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-black text-white/45">หมดเวลา</span> : null}
+            {notStarted ? <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-black text-amber-800">รอเปิดขาย</span> : null}
+            {isExpired ? <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-[11px] font-black text-slate-500">หมดเวลา</span> : null}
           </div>
 
-          <div className="mt-5">
-            <h1 className="text-3xl font-black leading-tight text-white">{bundle.name}</h1>
-            <div className="mt-2 text-sm font-bold text-white/45">ราคา Bundle</div>
+          <div className="mt-4">
+            <h1 className="text-2xl font-black leading-tight text-slate-900 sm:text-3xl">{bundle.name}</h1>
+            <div className="mt-2 text-xs font-bold text-slate-500">ราคา Bundle</div>
             <div className="mt-1 flex flex-wrap items-end gap-3">
-              <div className="motion-price text-4xl font-black text-emerald-300 [text-shadow:0_0_18px_rgba(110,231,183,0.22)]">{fmt(total)} พ้อย</div>
-              {couponDiscount > 0 ? <div className="pb-1 text-sm font-black text-white/35 line-through">{fmt(bundlePrice)} พ้อย</div> : null}
+              <div className="text-3xl font-black text-emerald-600 sm:text-4xl">{fmt(total)} พ้อยท์</div>
+              {couponDiscount > 0 ? <div className="pb-1 text-sm font-bold text-slate-400 line-through">{fmt(bundlePrice)} พ้อยท์</div> : null}
             </div>
           </div>
 
-          <div className="motion-stagger mt-5 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/[0.08] bg-black/25 p-3">
-              <div className="text-[11px] font-black text-white/40">มูลค่ารวม</div>
-              <div className="mt-1 text-lg font-black text-white">{fmt(originalTotal)}</div>
+          <div className="mt-5 grid gap-2 sm:grid-cols-3">
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-3">
+              <div className="text-[11px] font-black text-slate-500">มูลค่ารวม</div>
+              <div className="mt-1 text-lg font-black text-slate-800">{fmt(originalTotal)}</div>
             </div>
-            <div className="rounded-2xl border border-cyan-300/15 bg-cyan-500/10 p-3">
-              <div className="text-[11px] font-black text-cyan-100/65">ลดจาก Bundle</div>
-              <div className="mt-1 text-lg font-black text-cyan-100">{fmt(bundleDiscount)}</div>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-3">
+              <div className="text-[11px] font-black text-sky-700">ลดจาก Bundle</div>
+              <div className="mt-1 text-lg font-black text-sky-700">{fmt(bundleDiscount)}</div>
             </div>
-            <div className="rounded-2xl border border-emerald-300/15 bg-emerald-500/10 p-3">
-              <div className="text-[11px] font-black text-emerald-100/65">จ่ายจริง</div>
-              <div className="mt-1 text-lg font-black text-emerald-100">{fmt(total)}</div>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-3">
+              <div className="text-[11px] font-black text-emerald-700">จ่ายจริง</div>
+              <div className="mt-1 text-lg font-black text-emerald-700">{fmt(total)}</div>
             </div>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-white/[0.08] bg-black/28 p-4">
+          <div className="mt-5 rounded-2xl border border-sky-100 bg-sky-50/40 p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
-              <div className="text-sm font-black text-white">สินค้าในชุด</div>
-              <div className="text-xs font-bold text-white/35">{items.length} รายการ</div>
+              <div className="text-sm font-black text-slate-900">สินค้าในชุด</div>
+              <div className="text-xs font-bold text-slate-500">{items.length} รายการ</div>
             </div>
             <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
               {items.map((item) => (
-                <div key={`${item.bundle_item_id || item.product_id}-${item.product_option?.id || 'default'}`} className="motion-card motion-hover flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-2.5">
+                <div key={`${item.bundle_item_id || item.product_id}-${item.product_option?.id || 'default'}`} className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-white p-2.5 shadow-xs">
                   {item.product_image_url ? (
-                    <img src={item.product_image_url} alt={item.product_name} className="h-11 w-11 shrink-0 rounded-xl border border-white/10 object-cover" />
+                    <img src={item.product_image_url} alt={item.product_name} className="h-11 w-11 shrink-0 rounded-xl border border-sky-100 object-cover" />
                   ) : (
-                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-[10px] font-black text-white/30">ITEM</div>
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-sky-100 bg-sky-50 text-[10px] font-black text-slate-400">ITEM</div>
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
-                      <div className="truncate text-sm font-black text-white">{item.product_name}</div>
+                      <div className="truncate text-sm font-black text-slate-900">{item.product_name}</div>
                       <StockBadge item={item} />
                     </div>
-                    {item.product_option?.label ? <div className="mt-0.5 truncate text-[11px] font-bold text-cyan-100/65">{item.product_option.label}</div> : null}
-                    <div className="mt-0.5 text-xs font-bold text-white/35">x{item.qty} · {fmt(item.subtotal_points)} พ้อย</div>
+                    {item.product_option?.label ? <div className="mt-0.5 truncate text-[11px] font-bold text-sky-700">{item.product_option.label}</div> : null}
+                    <div className="mt-0.5 text-xs font-bold text-slate-500">x{item.qty} · {fmt(item.subtotal_points)} พ้อยท์</div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="mt-4 rounded-2xl border border-white/[0.08] bg-black/24 p-3">
-            <div className="grid gap-2 sm:flex">
+          <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+            <label className="text-xs font-black text-slate-700">โค้ดส่วนลด</label>
+            <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
               <input
-                className="h-11 min-w-0 flex-1 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm font-bold text-white outline-none placeholder:text-white/25 focus:border-cyan-300/35"
-                placeholder="โค้ดส่วนลด"
+                className="ui-field h-10"
+                placeholder="กรอกโค้ดคูปอง ถ้ามี"
                 value={couponInput}
                 onChange={(event) => setCouponInput(event.target.value)}
                 disabled={buyStatus === 'working'}
               />
-              <button type="button" onClick={applyCoupon} disabled={buyStatus === 'working' || quoteStatus === 'loading'} className="h-11 shrink-0 rounded-2xl border border-white/10 bg-white/[0.06] px-4 text-sm font-black text-white/80 hover:bg-white/[0.1] disabled:opacity-50">
+              <button type="button" onClick={applyCoupon} disabled={buyStatus === 'working' || quoteStatus === 'loading'} className="ui-btn h-10 px-4 text-xs font-black">
                 ใช้โค้ด
               </button>
             </div>
             {appliedCoupon && !couponError ? (
-              <div className="mt-2 flex items-center justify-between gap-2 text-xs font-bold text-emerald-200">
-                <span>ใช้โค้ด {appliedCoupon}{couponDiscount > 0 ? ` ลด ${fmt(couponDiscount)} พ้อย` : ''}</span>
-                <button type="button" className="text-white/45 hover:text-white" onClick={() => { setAppliedCoupon(''); setCouponInput('') }}>ลบ</button>
+              <div className="mt-2 flex items-center justify-between gap-2 text-xs font-bold text-emerald-700">
+                <span>ใช้โค้ด {appliedCoupon}{couponDiscount > 0 ? ` ลด ${fmt(couponDiscount)} พ้อยท์` : ''}</span>
+                <button type="button" className="text-slate-500 hover:text-slate-900 underline" onClick={() => { setAppliedCoupon(''); setCouponInput('') }}>ลบ</button>
               </div>
             ) : null}
-            {couponError ? <div className="mt-2 text-xs font-bold text-rose-200">{couponError}</div> : null}
+            {couponError ? <div className="mt-2 text-xs font-bold text-rose-600">{couponError}</div> : null}
             <DiscountBreakdown quote={quote} />
           </div>
 
-          {quote?.available === false ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-100">มีสินค้าบางรายการไม่พอสำหรับ Bundle นี้</div> : null}
-          {buyError ? <div className="mt-3 rounded-2xl border border-rose-300/20 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-100">{buyError}</div> : null}
+          {quote?.available === false ? <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">มีสินค้าบางรายการไม่พอสำหรับ Bundle นี้</div> : null}
+          {buyError ? <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700">{buyError}</div> : null}
           {successData ? (
-            <div className="motion-card mt-3 rounded-2xl border border-emerald-300/20 bg-emerald-500/10 px-4 py-3">
-              <div className="text-sm font-black text-emerald-100">สั่งซื้อสำเร็จแล้ว</div>
-              <div className="mt-1 text-xs font-bold text-emerald-100/65">เลขออเดอร์ {successData?.order?.ref || successData?.order?.id}</div>
+            <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <div className="text-sm font-black text-emerald-800">สั่งซื้อสำเร็จแล้ว</div>
+              <div className="mt-1 text-xs font-bold text-emerald-700">เลขออเดอร์ {successData?.order?.ref || successData?.order?.id}</div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Link to="/inbox" className="rounded-xl bg-emerald-300 px-3 py-2 text-xs font-black text-black">เปิดกล่องรับของ</Link>
-                <Link to="/history/purchases" className="rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-xs font-black text-white/80">ดูประวัติ</Link>
+                <Link to="/inbox" className="ui-btn-primary px-3 py-1.5 text-xs font-black">เปิดกล่องรับของ</Link>
+                <Link to="/history/purchases" className="ui-btn px-3 py-1.5 text-xs font-black">ดูประวัติ</Link>
               </div>
             </div>
           ) : null}
@@ -356,7 +356,7 @@ export default function BundleDetail() {
             type="button"
             onClick={handlePurchase}
             disabled={isUnavailable || buyStatus === 'working' || buyStatus === 'success' || quoteStatus === 'loading'}
-            className="mt-4 h-12 w-full rounded-2xl bg-cyan-500 px-5 text-sm font-black text-white shadow-[0_18px_42px_rgba(6,182,212,0.22)] hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-white/35 disabled:shadow-none"
+            className="ui-btn-primary mt-4 h-12 w-full text-xs font-black disabled:cursor-not-allowed disabled:opacity-50"
           >
             {buyStatus === 'working'
               ? 'กำลังดำเนินการ...'
@@ -366,15 +366,15 @@ export default function BundleDetail() {
                   ? 'ยังไม่เปิดขาย'
                   : quote?.available === false
                     ? 'สินค้าในชุดไม่พอ'
-                    : `ซื้อ Bundle · ${fmt(total)} พ้อย`}
+                    : `ซื้อ Bundle · ${fmt(total)} พ้อยท์`}
           </button>
         </aside>
       </section>
 
       {bundle.description ? (
-        <section className="motion-card rounded-[24px] border border-white/[0.08] bg-white/[0.035] p-5">
-          <div className="text-sm font-black text-white">รายละเอียด</div>
-          <p className="mt-3 whitespace-pre-line text-sm font-medium leading-7 text-white/58">{bundle.description}</p>
+        <section className="rounded-3xl border border-sky-200 bg-white p-6 shadow-sm">
+          <div className="text-base font-black text-slate-900">รายละเอียด Bundle</div>
+          <p className="mt-3 whitespace-pre-line text-xs leading-relaxed text-slate-600">{bundle.description}</p>
         </section>
       ) : null}
     </div>

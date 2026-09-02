@@ -1,9 +1,84 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchJson, getAuthToken } from '../api.js'
+import { gsap } from 'gsap'
+import { fetchJson, getAuthToken, resolveImageUrl } from '../api.js'
 import { normalizeGrowthCampaigns } from '../components/growth/growthDisplayUtils.js'
 import { DEFAULT_UI_IMAGE_SETTINGS, normalizeUiImageSettings } from '../uiImageSettings.js'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../components/ui/accordion.jsx'
+
+function HeroSplitTitle({ title }) {
+  const containerRef = useRef(null)
+
+  const wordData = useMemo(() => {
+    const raw = String(title || 'VxperS Store').trim()
+    const words = raw.split(/\s+/).filter(Boolean)
+    const segmenter = typeof Intl !== 'undefined' && Intl.Segmenter
+      ? new Intl.Segmenter(['th', 'en'], { granularity: 'grapheme' })
+      : null
+
+    return words.map((word) => {
+      const chars = segmenter
+        ? [...segmenter.segment(word)].map((s) => s.segment)
+        : Array.from(word)
+      return { word, chars }
+    })
+  }, [title])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const chars = el.querySelectorAll('.split-char')
+    if (!chars || chars.length === 0) return
+
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        chars,
+        {
+          opacity: 0,
+          y: 28,
+          rotateX: -45,
+          scale: 0.9,
+          filter: 'blur(4px)',
+        },
+        {
+          opacity: 1,
+          y: 0,
+          rotateX: 0,
+          scale: 1,
+          filter: 'blur(0px)',
+          duration: 0.65,
+          ease: 'power3.out',
+          stagger: 0.03,
+        }
+      )
+    }, el)
+
+    return () => ctx.revert()
+  }, [title])
+
+  return (
+    <h1
+      ref={containerRef}
+      className="font-display text-4xl font-black tracking-tight sm:text-5xl lg:text-6xl select-none"
+      style={{ perspective: 1000 }}
+    >
+      {wordData.map((item, wIdx) => (
+        <span key={`w-${wIdx}`} className="inline-block whitespace-nowrap mr-[0.28em] last:mr-0">
+          {item.chars.map((char, cIdx) => (
+            <span
+              key={`c-${wIdx}-${cIdx}`}
+              className="split-char inline-block will-change-transform bg-gradient-to-r from-slate-900 via-sky-900 to-sky-600 bg-clip-text text-transparent"
+              style={{ display: 'inline-block', transformOrigin: '50% 100%' }}
+            >
+              {char}
+            </span>
+          ))}
+        </span>
+      ))}
+    </h1>
+  )
+}
 
 const DEFAULT_HOMEPAGE_SETTINGS = {
   hero_title: '',
@@ -121,16 +196,21 @@ function getProductPrice(product) {
   return { priceLabel, discountedLabel, hasPromo, discountBadge }
 }
 
-function CountdownPill({ endsAt, tone = 'cyan' }) {
+function CountdownPill({ endsAt, tone = 'amber' }) {
   const time = useCountdown(endsAt)
   if (!time) return null
   const pad = (value) => String(value).padStart(2, '0')
-  const color = tone === 'violet' ? 'text-violet-200 bg-violet-500/10 border-violet-300/15' : 'text-cyan-200 bg-cyan-500/10 border-cyan-300/15'
+  const color = tone === 'violet'
+    ? 'text-violet-950 bg-violet-100 border-violet-300 shadow-xs'
+    : 'text-amber-950 bg-gradient-to-r from-amber-200/90 to-amber-100 border-amber-300 shadow-xs'
 
   return (
-    <div className={`mt-2 inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold tabular-nums ${color}`}>
-      <span>หมดใน</span>
-      <span>{time.d > 0 ? `${time.d}วัน ` : ''}{pad(time.h)}:{pad(time.m)}:{pad(time.s)}</span>
+    <div className={`inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[11px] font-black tabular-nums ${color}`}>
+      <span className="text-amber-600 animate-pulse text-[11px]">⏰</span>
+      <span className="text-[10px] font-bold text-amber-800">หมดใน</span>
+      <span className="font-extrabold tracking-tight text-amber-950">
+        {time.d > 0 ? `${time.d}ว ` : ''}{pad(time.h)}:{pad(time.m)}:{pad(time.s)}
+      </span>
     </div>
   )
 }
@@ -145,13 +225,13 @@ function IconPlaceholder({ className = 'h-8 w-8 text-white/15' }) {
 
 function EmptyState({ title, description }) {
   return (
-    <div className="home-empty-state">
+    <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-8 text-center">
       <div>
-        <div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-cyan-300/15 bg-cyan-500/10">
-          <IconPlaceholder className="h-5 w-5 text-cyan-200/70" />
+        <div className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-sky-200 bg-white shadow-sm text-sky-600">
+          <IconPlaceholder className="h-5 w-5" />
         </div>
-        <div className="mt-3 text-sm font-black text-white/85">{title}</div>
-        {description ? <div className="mt-1 text-xs leading-5 text-white/45">{description}</div> : null}
+        <div className="mt-3 text-sm font-black text-slate-800">{title}</div>
+        {description ? <div className="mt-1 text-xs leading-5 text-slate-500">{description}</div> : null}
       </div>
     </div>
   )
@@ -175,22 +255,49 @@ function ProductCard({ product, optionStock, imageRatio, forceFit = true, compac
 
   return (
     <Link
-      to={`/product/${product.id}`}
-      className={`home-product-card group motion-card motion-hover motion-soft-glow motion-sweep block overflow-hidden rounded-2xl border border-[#152b62] bg-[#091637] transition duration-200 hover:border-[#284a92] hover:bg-[#0d1c45] ${compact ? '' : 'p-3'}`}
+      to={`/p/${product.slug || product.id}`}
+      className={`g2a-card group block bg-white ${compact ? '' : 'p-3'}`}
     >
-      <div className={`home-product-image relative overflow-hidden bg-[#050d22] ${compact ? '' : 'rounded-xl border border-[#152b62]'}`} style={{ aspectRatio: imageRatio }}>
-        {price.hasPromo ? (
-          <span className="absolute left-2 top-2 z-10 rounded-full border border-cyan-300/25 bg-[#0e7490] px-2 py-1 text-[10px] font-black text-white">
-            {price.discountBadge}
-          </span>
-        ) : null}
+      <div className={`relative overflow-hidden bg-sky-50/50 ${compact ? '' : 'rounded-xl border border-sky-100'}`} style={{ aspectRatio: imageRatio }}>
+        {/* Top badges bar - vertically stacked on left to never collide with instant pill on right */}
+        <div className="absolute inset-x-2.5 top-2.5 z-10 flex items-start justify-between gap-1 pointer-events-none">
+          <div className="flex flex-col items-start gap-1 max-w-[62%] pointer-events-auto">
+            {product.badge ? (
+              <span className="rounded-md border border-rose-400 bg-rose-500 px-2 py-0.5 text-[10px] font-black text-white shadow-md">
+                {product.badge}
+              </span>
+            ) : null}
+            {product.promo_is_flash_sale ? (
+              <span className="rounded-md border border-amber-300 bg-gradient-to-r from-amber-500 to-rose-500 px-2 py-0.5 text-[10px] font-black text-white shadow-md">
+                ⚡ Flash Sale
+              </span>
+            ) : product.promo_badge_text ? (
+              <span className="rounded-md border border-sky-400 bg-sky-600 px-2 py-0.5 text-[10px] font-black text-white shadow-md">
+                {product.promo_badge_text}
+              </span>
+            ) : price.hasPromo ? (
+              <span className="g2a-badge-discount shadow-lg">
+                {price.discountBadge}
+              </span>
+            ) : null}
+          </div>
+
+          {/* Instant delivery pill */}
+          <div className="pointer-events-auto shrink-0">
+            <span className="g2a-badge-instant backdrop-blur-md">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              ส่งทันที
+            </span>
+          </div>
+        </div>
+
         {product.image_url ? (
           <img
-            src={product.image_url}
+            src={resolveImageUrl(product.image_url)}
             alt={product.name}
             loading="lazy"
             decoding="async"
-            className={`motion-image absolute inset-0 h-full w-full ${forceFit ? 'object-fill' : 'object-contain'} transition duration-500 group-hover:scale-105`}
+            className={`motion-image absolute inset-0 h-full w-full ${forceFit ? 'object-cover' : 'object-contain'} transition-transform duration-500 group-hover:scale-108`}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -199,14 +306,28 @@ function ProductCard({ product, optionStock, imageRatio, forceFit = true, compac
         )}
       </div>
       <div className={compact ? 'p-3' : 'pt-3'}>
-        <div className="truncate text-sm font-bold text-white/90 transition group-hover:text-cyan-200">{product.name}</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-black text-emerald-300">{price.hasPromo ? price.discountedLabel : price.priceLabel} พ้อยท์</span>
-          {price.hasPromo ? <span className="text-[10px] font-bold text-white/35 line-through">{price.priceLabel}</span> : null}
+        <div className="truncate text-sm font-extrabold text-slate-900 transition-colors group-hover:text-sky-600">{product.name}</div>
+        
+        <div className="mt-2 flex items-baseline justify-between gap-2">
+          <div>
+            <div className="text-xs text-slate-500 font-medium">เริ่มต้น</div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm font-black text-amber-500 group-hover:text-amber-600 transition-colors">
+                {price.hasPromo ? price.discountedLabel : price.priceLabel}
+              </span>
+              <span className="text-[10px] font-bold text-amber-600">พ้อยท์</span>
+            </div>
+          </div>
+          {price.hasPromo ? (
+            <span className="text-[11px] font-semibold text-slate-400 line-through">
+              {price.priceLabel}
+            </span>
+          ) : null}
         </div>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${isOutOfStock ? 'bg-red-500/10 text-red-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
-            {isOutOfStock ? 'สินค้าหมด' : 'พร้อมสั่งซื้อ'}
+
+        <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-sky-100 pt-2 text-[11px]">
+          <span className={`font-bold ${isOutOfStock ? 'text-rose-600' : 'text-emerald-600'}`}>
+            {isOutOfStock ? '● สินค้าหมด' : '● มีสินค้าพร้อมส่ง'}
           </span>
           {product.promo_ends_at ? <CountdownPill endsAt={product.promo_ends_at} /> : null}
         </div>
@@ -271,7 +392,7 @@ function HomeSkeleton() {
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {[0, 1, 2, 3].map((item) => (
-        <div key={item} className="h-48 animate-pulse rounded-2xl border border-[#152b62] bg-[#091637]" />
+        <div key={item} className="h-48 animate-pulse rounded-2xl border border-sky-100 bg-sky-50" />
       ))}
     </div>
   )
@@ -326,11 +447,12 @@ export default function Home() {
 
   const loadAll = useCallback(async (signal) => {
     try {
-      const [cat, settings, bundlesRes, campaignRes] = await Promise.all([
-        fetchJson('/api/categories'),
-        fetchJson('/api/ui-settings'),
+      const [cat, settings, bundlesRes, campaignRes, dbFeaturedRes] = await Promise.all([
+        fetchJson('/api/categories').catch(() => ({ categories: [] })),
+        fetchJson('/api/ui-settings').catch(() => ({})),
         fetchJson('/api/bundles').catch(() => ({})),
         fetchJson('/api/growth-campaigns/active').catch(() => null),
+        fetchJson('/api/products?category=featured').catch(() => ({ products: [] })),
       ])
       if (signal?.aborted) return
 
@@ -352,13 +474,26 @@ export default function Home() {
 
       if (signal?.aborted) return
       const byIdMap = new Map(byIdProducts.map((product) => [Number(product.id), product]))
+      const dbFeatured = Array.isArray(dbFeaturedRes?.products) ? dbFeaturedRes.products : []
+
+      const manualFeat = featIds.map((id) => byIdMap.get(id)).filter(Boolean)
+      const manualShow = showIds.map((id) => byIdMap.get(id)).filter(Boolean)
+
+      const finalFeatured = manualFeat.length > 0
+        ? manualFeat
+        : dbFeatured
+
+      const finalShowcase = manualShow.length > 0
+        ? manualShow
+        : dbFeatured
+
       setCategories(Array.isArray(cat?.categories) ? cat.categories : [])
       setBundles(Array.isArray(bundlesRes?.bundles) ? bundlesRes.bundles : [])
       setGrowthCampaigns(normalizeGrowthCampaigns(campaignRes))
       setUiImageSettings(normalizeUiImageSettings(settings?.image_settings))
       setHomepageSettings(merged)
-      setFeaturedProducts(featIds.map((id) => byIdMap.get(id)).filter(Boolean))
-      setShowcaseProducts(showIds.map((id) => byIdMap.get(id)).filter(Boolean))
+      setFeaturedProducts(finalFeatured)
+      setShowcaseProducts(finalShowcase)
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
@@ -398,6 +533,12 @@ export default function Home() {
     }
   }, [featuredProducts, showcaseProducts])
 
+  const mainCategories = useMemo(() => {
+    const isSub = (c) => Boolean(c?.parent_id) && Number(c.parent_id) > 0
+    const roots = categories.filter((c) => !isSub(c))
+    return roots.length > 0 ? roots : categories
+  }, [categories])
+
   const visibleBundles = useMemo(() => {
     const now = Date.now()
     return bundles.filter((bundle) => {
@@ -419,78 +560,111 @@ export default function Home() {
   const faqData = Array.isArray(homepageSettings.faq_items) && homepageSettings.faq_items.length > 0 ? homepageSettings.faq_items : DEFAULT_FAQ_ITEMS
 
   return (
-    <div className="space-y-10 sm:space-y-14">
-      <section className="home-hero home-premium-panel home-launch-redesign relative overflow-hidden rounded-3xl border border-[#1b3470] px-4 py-6 sm:px-7 sm:py-8 md:px-10 md:py-12">
-        <div className="absolute inset-0 grid-pattern opacity-10" />
+    <div className="space-y-8 sm:space-y-12">
+      {/* 🌟 Live Alert & Announcement Ticker */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-gradient-to-r from-sky-50 via-cyan-50 to-sky-50 px-4 py-2.5 shadow-sm">
+        <div className="flex items-center gap-2 text-xs font-bold text-sky-900">
+          <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+          <span className="text-base">🚀</span>
+          <span>ระบบจัดส่งสินค้าอัตโนมัติ 24 ชม. รับของได้ทันทีหลังชำระเงิน</span>
+        </div>
+        <div className="hidden sm:flex items-center gap-4 text-xs font-bold text-sky-700">
+          <span>⚡ สต็อกแน่นพร้อมส่ง</span>
+          <span>•</span>
+          <span>🔒 ปลอดภัย 100%</span>
+        </div>
+      </div>
 
-        <div className="relative grid min-w-0 items-center gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,430px)] xl:gap-9">
-          <div className="fade-in-up motion-stagger">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-500/[0.08] px-3.5 py-1.5 text-[11px] font-bold text-emerald-100/85">
-              <span className="hero-status-dot-pulse h-2 w-2 rounded-full bg-emerald-300" />
-              ร้านค้าออนไลน์พร้อมใช้งาน
+      {/* 🚀 Dual-Hero Main Showcase (Reimagined Layout) */}
+      <section className="relative overflow-hidden rounded-3xl border border-sky-200 bg-white/80 p-5 sm:p-8 lg:p-10 shadow-[0_10px_40px_rgba(2,132,199,0.08)] backdrop-blur-xl">
+        <div className="absolute inset-0 bg-gradient-to-br from-sky-100/40 via-transparent to-cyan-50/50 pointer-events-none" />
+
+        <div className="relative grid min-w-0 items-center gap-8 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,440px)] xl:gap-12">
+          {/* Left Column: Hero Headline & CTAs */}
+          <div className="space-y-5">
+            <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3.5 py-1.5 text-xs font-black text-sky-700 shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              ร้านค้าออนไลน์ระบบออโต้พร้อมใช้งาน
             </div>
 
-            <h1 className="font-display mt-5 max-w-4xl text-4xl font-black leading-[1.04] text-white sm:text-5xl lg:text-6xl xl:text-7xl">
-              <span className="bg-gradient-to-r from-white via-cyan-50 to-cyan-200 bg-clip-text text-transparent">{heroTitle}</span>
-            </h1>
-            <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-bold uppercase tracking-[0.16em] text-white/46">
-              <span>{heroSubtitle}</span>
-              <span className="hidden h-px w-10 bg-gradient-to-r from-cyan-300/35 to-transparent sm:block" />
-              <span className="text-cyan-100/55">Instant digital delivery</span>
-            </div>
-            <p className="mt-5 max-w-2xl text-sm leading-7 text-white/66 sm:text-[15px]">{heroDesc}</p>
+            <HeroSplitTitle title={heroTitle} />
 
-            <div className="mt-7 grid gap-3 sm:mt-8 sm:flex sm:flex-wrap">
-              <Link to={heroBtnLink} className="home-hero-action home-hero-action--primary ui-btn-primary w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
-                <span>{heroBtnText}</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-black uppercase tracking-wider text-sky-600">
+              <span className="bg-sky-100/80 px-2.5 py-1 rounded-lg">{heroSubtitle}</span>
+              <span>•</span>
+              <span className="text-slate-500">Instant Digital Delivery 24/7</span>
+            </div>
+
+            <p className="max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base font-normal">
+              {heroDesc}
+            </p>
+
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <Link
+                to={heroBtnLink}
+                className="ui-btn-primary h-12 px-7 text-sm font-black shadow-lg shadow-sky-500/20"
+              >
+                <span>⚡ {heroBtnText}</span>
               </Link>
               {!authChecked ? (
-                <span className="home-hero-action home-hero-action--secondary ui-btn pointer-events-none w-full px-7 py-2.5 text-sm font-bold opacity-70 sm:w-auto" aria-hidden>
-                  <span>กำลังตรวจสอบ</span>
+                <span className="ui-btn h-12 px-6 text-sm font-bold opacity-60 pointer-events-none">
+                  กำลังตรวจสอบ...
                 </span>
               ) : !hasToken ? (
-                <Link to="/register" className="home-hero-action home-hero-action--secondary ui-btn w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
-                  <span>สมัครสมาชิก</span>
+                <Link
+                  to="/register"
+                  className="ui-btn h-12 px-6 text-sm font-bold text-slate-700 hover:text-sky-600"
+                >
+                  สมัครสมาชิก
                 </Link>
               ) : (
-                <Link to="/topup/angpao" className="home-hero-action home-hero-action--secondary ui-btn w-full px-7 py-2.5 text-sm font-bold sm:w-auto">
-                  <span>เติมเงิน</span>
+                <Link
+                  to="/topup/angpao"
+                  className="ui-btn-primary h-12 px-7 text-sm font-black shadow-lg shadow-sky-500/20"
+                >
+                  💎 เติมเงินทันที
                 </Link>
               )}
             </div>
 
-            <div className="motion-stagger mt-7 grid max-w-md grid-cols-3 gap-2 sm:mt-8 sm:gap-3">
-              <div className="rounded-2xl border border-[#1b3470] bg-[#0d1c45] px-4 py-3">
-                <div className="text-2xl font-black text-cyan-200">{categories.length}</div>
-                <div className="mt-1 text-[10px] font-bold text-white/45">หมวดหมู่</div>
+            {/* Quick Stats Badges */}
+            <div className="grid grid-cols-3 gap-2.5 pt-4 sm:gap-4 border-t border-sky-100">
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-3 text-center sm:text-left sm:p-4">
+                <div className="text-xl sm:text-2xl font-black text-sky-600">{mainCategories.length}</div>
+                <div className="mt-0.5 text-[11px] font-bold text-slate-500">หมวดหมู่สินค้า</div>
               </div>
-              <div className="rounded-2xl border border-[#1b3470] bg-[#0d1c45] px-4 py-3">
-                <div className="text-2xl font-black text-emerald-300">24/7</div>
-                <div className="mt-1 text-[10px] font-bold text-white/45">อัตโนมัติ</div>
+              <div className="rounded-2xl border border-sky-100 bg-emerald-50/60 p-3 text-center sm:text-left sm:p-4">
+                <div className="text-xl sm:text-2xl font-black text-emerald-600">24/7</div>
+                <div className="mt-0.5 text-[11px] font-bold text-slate-500">ระบบอัตโนมัติ</div>
               </div>
-              <div className="rounded-2xl border border-[#1b3470] bg-[#0d1c45] px-4 py-3">
-                <div className="text-2xl font-black text-white">{featuredProducts.length + showcaseProducts.length}</div>
-                <div className="mt-1 text-[10px] font-bold text-white/45">แนะนำ</div>
+              <div className="rounded-2xl border border-sky-100 bg-amber-50/60 p-3 text-center sm:text-left sm:p-4">
+                <div className="text-xl sm:text-2xl font-black text-amber-600">{featuredProducts.length + showcaseProducts.length}</div>
+                <div className="mt-0.5 text-[11px] font-bold text-slate-500">สินค้าแนะนำ</div>
               </div>
             </div>
           </div>
 
-          <div className="fade-in-up fade-in-delay-1">
-            <div className="home-premium-panel motion-hover motion-soft-glow min-w-0 rounded-3xl border border-[#1b3470] bg-[#050d22] p-3">
-              <div className="mb-3 flex items-center justify-between px-2">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-red-400/75" />
-                  <span className="h-2 w-2 rounded-full bg-white/25" />
-                  <span className="h-2 w-2 rounded-full bg-white/15" />
+          {/* Right Column: Hot Featured Showcase Spotlight */}
+          <div className="relative">
+            <div className="rounded-3xl border border-sky-200 bg-white/90 p-4 sm:p-5 shadow-xl backdrop-blur-xl ring-1 ring-sky-500/10">
+              <div className="mb-3.5 flex items-center justify-between border-b border-sky-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🔥</span>
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-900">Featured Spotlight</span>
                 </div>
-                <span className="rounded-full border border-cyan-300/15 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100/75">Featured</span>
+                <span className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 text-[10px] font-black text-amber-700">
+                  HOT DEALS
+                </span>
               </div>
+
               {loading ? (
-                <div className="motion-stagger grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
-                  {[0, 1, 2, 3].map((item) => <div key={item} className="h-40 animate-pulse rounded-2xl border border-[#152b62] bg-[#091637]" />)}
+                <div className="grid grid-cols-2 gap-2.5">
+                  {[0, 1, 2, 3].map((item) => (
+                    <div key={item} className="h-40 animate-pulse rounded-2xl border border-sky-100 bg-sky-50" />
+                  ))}
                 </div>
               ) : featuredProducts.length > 0 ? (
-                <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2.5 min-[380px]:grid-cols-2">
                   {featuredProducts.slice(0, 4).map((product) => (
                     <ProductCard
                       key={product.id}
@@ -503,10 +677,10 @@ export default function Home() {
                   ))}
                 </div>
               ) : (
-                <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-[#1b3470] bg-[#091637] p-8 text-center">
+                <div className="grid min-h-56 place-items-center rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-6 text-center">
                   <div>
-                    <div className="text-sm font-bold text-white/80">ยังไม่มีสินค้าเด่น</div>
-                    <div className="mt-1 text-xs text-white/40">เพิ่มสินค้าเด่นได้จากหน้า Admin Settings</div>
+                    <div className="text-sm font-bold text-slate-700">ยังไม่มีสินค้าเด่น</div>
+                    <div className="mt-1 text-xs text-slate-400">เพิ่มสินค้าเด่นได้จากหน้า Admin Settings</div>
                   </div>
                 </div>
               )}
@@ -515,37 +689,88 @@ export default function Home() {
         </div>
       </section>
 
+      {/* 🏷️ Interactive Category Quick-Pills Bar */}
+      {mainCategories.length > 0 ? (
+        <section className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
+          <Link
+            to="/categories"
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-sky-300 bg-sky-500 text-white px-4 py-2.5 text-xs font-black shadow-md shadow-sky-500/20 transition-all hover:bg-sky-600"
+          >
+            <span>🎮</span>
+            <span>
+              สินค้าทั้งหมด
+              {mainCategories.reduce((sum, c) => sum + (Number(c.total_product_count ?? c.product_count) || 0), 0) > 0
+                ? ` (${mainCategories.reduce((sum, c) => sum + (Number(c.total_product_count ?? c.product_count) || 0), 0)})`
+                : ''}
+            </span>
+          </Link>
+          {mainCategories.map((cat) => (
+            <Link
+              key={cat.id}
+              to={`/category/${cat.slug}`}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-sky-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 shadow-sm transition-all hover:border-sky-400 hover:bg-sky-50 hover:text-sky-600"
+            >
+              <span>{cat.icon || '💎'}</span>
+              <span>{cat.name}</span>
+              {Number(cat.total_product_count ?? cat.product_count) > 0 ? (
+                <span className="rounded-md bg-sky-100/70 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">
+                  {cat.total_product_count ?? cat.product_count}
+                </span>
+              ) : null}
+            </Link>
+          ))}
+        </section>
+      ) : null}
+
+      {/* ⚡ Flash Deals & Growth Campaigns */}
       {growthCampaigns.length > 0 ? (
-        <section className="rounded-3xl border border-cyan-300/15 bg-cyan-500/10 p-5">
-          <div className="mb-4 flex items-end justify-between gap-4">
+        <section className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50/80 via-white to-amber-50/40 p-5 sm:p-6 shadow-md">
+          <div className="mb-4 flex items-end justify-between gap-4 border-b border-amber-100 pb-3">
             <div>
-              <h2 className="text-lg font-black text-white">Flash Deal</h2>
-              <div className="mt-1 text-xs font-semibold text-cyan-100/55">ดีลเวลาจำกัดและสินค้าจำนวนจำกัด</div>
+              <div className="flex items-center gap-2">
+                <span className="text-base">⚡</span>
+                <h2 className="text-lg font-black text-slate-900">Flash Deals & โปรโมชั่นพิเศษ</h2>
+              </div>
+              <div className="mt-0.5 text-xs font-semibold text-amber-800/70">ดีลจำกัดเวลาและสิทธิพิเศษสำหรับคุณ</div>
             </div>
-            <Link to="/categories" className="shrink-0 text-xs font-black text-cyan-100/75 hover:text-cyan-50">ดูสินค้า →</Link>
+            <Link to="/categories" className="shrink-0 text-xs font-black text-amber-700 hover:text-amber-900">
+              ดูดีลทั้งหมด →
+            </Link>
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {growthCampaigns.slice(0, 6).map((campaign) => (
-              <Link key={campaign.id} to={campaign.primaryLink || '/categories'} className="motion-card motion-hover rounded-2xl border border-white/10 bg-black/20 p-4 transition hover:border-cyan-300/25 hover:bg-black/30">
-                <div className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100/60">{campaign.badgeText}</div>
-                <div className="mt-2 text-base font-black text-white">{campaign.title}</div>
-                {campaign.description ? <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/50">{campaign.description}</div> : null}
+              <Link
+                key={campaign.id}
+                to={campaign.primaryLink || '/categories'}
+                className="g2a-card block p-4 transition-all hover:border-amber-300 bg-white"
+              >
+                <div className="text-[10px] font-black uppercase tracking-wider text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md inline-block">
+                  {campaign.badgeText}
+                </div>
+                <div className="mt-2 text-sm font-black text-slate-900">{campaign.title}</div>
+                {campaign.description ? (
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">{campaign.description}</div>
+                ) : null}
               </Link>
             ))}
           </div>
         </section>
       ) : null}
 
+      {/* 🌟 Showcase Scroller Section */}
       {showcaseEnabled && showcaseProducts.length > 0 ? (
-        <section className="fade-in-up">
-          <div className="mb-4 flex items-end justify-between gap-4">
+        <section className="space-y-4">
+          <div className="flex items-end justify-between gap-4 border-b border-sky-100 pb-3">
             <div>
-              <h2 className="font-display text-2xl font-black text-white">{showcaseTitle}</h2>
-              <div className="mt-1 text-xs font-semibold text-white/40">
-                {showcaseProducts.length > 4 ? 'เลื่อนดูสินค้าที่คัดไว้สำหรับคุณ' : `${showcaseProducts.length} รายการ`}
+              <div className="flex items-center gap-2">
+                <span className="text-base">✨</span>
+                <h2 className="font-display text-2xl font-black text-slate-900">{showcaseTitle}</h2>
+              </div>
+              <div className="mt-0.5 text-xs font-semibold text-slate-500">
+                {showcaseProducts.length > 4 ? 'เลื่อนดูสินค้าที่คัดสรรมาเพื่อคุณ' : `${showcaseProducts.length} รายการ`}
               </div>
             </div>
-            <Link to={heroBtnLink} className="shrink-0 text-xs font-bold text-cyan-200/80 transition hover:text-cyan-100">
+            <Link to={heroBtnLink} className="shrink-0 text-xs font-bold text-sky-600 hover:text-sky-800 transition-colors">
               ดูทั้งหมด →
             </Link>
           </div>
@@ -559,32 +784,36 @@ export default function Home() {
         </section>
       ) : null}
 
+      {/* 🎁 Value Bundles */}
       {visibleBundles.length > 0 ? (
-        <section className="fade-in-up">
-          <div className="mb-4">
-            <h2 className="font-display text-2xl font-black text-white">Bundle ราคาพิเศษ</h2>
-            <div className="mt-1 text-xs font-semibold text-white/40">ซื้อเป็นชุด ประหยัดกว่า และดูแลง่ายกว่า</div>
+        <section className="space-y-4">
+          <div className="border-b border-sky-100 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🎁</span>
+              <h2 className="font-display text-2xl font-black text-slate-900">Bundle ราคาพิเศษ</h2>
+            </div>
+            <div className="mt-0.5 text-xs font-semibold text-slate-500">ซื้อเป็นชุด ประหยัดกว่า และคุ้มค่ากว่า</div>
           </div>
-          <div className="motion-stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {visibleBundles.map((bundle) => (
               <Link
                 key={bundle.id}
                 to={`/bundle/${bundle.id}`}
-                className="home-offer-card group motion-card motion-hover motion-soft-glow motion-sweep overflow-hidden rounded-2xl border border-[#152b62] bg-[#091637] p-4 transition hover:border-violet-300/25 hover:bg-[#0d1c45]"
+                className="g2a-card block p-4 bg-white"
               >
                 {bundle.image_url ? (
-                  <div className="mb-3 overflow-hidden rounded-xl border border-white/[0.06]" style={{ aspectRatio: '16/7' }}>
-                    <img src={bundle.image_url} alt={bundle.name} className="motion-image h-full w-full object-cover transition duration-500 group-hover:scale-105" />
+                  <div className="mb-3 overflow-hidden rounded-xl border border-sky-100" style={{ aspectRatio: '16/7' }}>
+                    <img src={resolveImageUrl(bundle.image_url)} alt={bundle.name} className="h-full w-full object-cover transition-transform duration-500 hover:scale-105" />
                   </div>
                 ) : null}
                 <div className="mb-2 flex flex-wrap gap-1.5">
-                  <span className="rounded-full border border-violet-300/25 bg-violet-500/15 px-2 py-0.5 text-[10px] font-black text-violet-200">Bundle</span>
+                  <span className="rounded-md border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-black text-purple-700">Bundle</span>
                   {Number(bundle.item_count) > 0 ? (
-                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-bold text-white/50">{bundle.item_count} รายการ</span>
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600">{bundle.item_count} รายการ</span>
                   ) : null}
                 </div>
-                <div className="truncate text-sm font-bold text-white/90">{bundle.name}</div>
-                <div className="mt-1.5 text-sm font-black text-violet-200">{fmt(bundle.bundle_price)} <span className="text-xs font-semibold text-violet-300/60">พ้อยท์</span></div>
+                <div className="truncate text-sm font-extrabold text-slate-900">{bundle.name}</div>
+                <div className="mt-1.5 text-base font-black text-purple-700">{fmt(bundle.bundle_price)} <span className="text-xs font-semibold text-slate-500">พ้อยท์</span></div>
                 <CountdownPill endsAt={bundle.ends_at} tone="violet" />
               </Link>
             ))}
@@ -592,49 +821,60 @@ export default function Home() {
         </section>
       ) : null}
 
-      <section className="fade-in-up">
-        <div className="mb-5 flex items-end justify-between gap-4">
+      {/* 🗂️ Explore Categories Grid */}
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-4 border-b border-sky-100 pb-3">
           <div>
-            <h2 className="font-display text-2xl font-black text-white">หมวดหมู่สินค้า</h2>
-            <div className="mt-1 text-xs font-semibold text-white/40">เริ่มเลือกจากหมวดที่ต้องการ แล้วไปต่อได้เร็วขึ้น</div>
+            <div className="flex items-center gap-2">
+              <span className="text-base">🗂️</span>
+              <h2 className="font-display text-2xl font-black text-slate-900">หมวดหมู่สินค้า</h2>
+            </div>
+            <div className="mt-0.5 text-xs font-semibold text-slate-500">เลือกดูสินค้าตามหมวดหมู่ที่คุณสนใจ</div>
           </div>
-          <Link to="/categories" className="shrink-0 text-xs font-bold text-cyan-200/80 transition hover:text-cyan-100">
-            ดูทั้งหมด →
+          <Link to="/categories" className="shrink-0 text-xs font-bold text-sky-600 hover:text-sky-800 transition-colors">
+            ดูทั้งหมด ({mainCategories.length}) →
           </Link>
         </div>
 
         {loading ? (
           <HomeSkeleton />
-        ) : categories.length === 0 ? (
+        ) : mainCategories.length === 0 ? (
           <EmptyState title="No categories yet" description="Categories configured in admin will appear here." />
         ) : (
-          <div className="motion-stagger grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {categories.slice(0, 8).map((category) => (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {mainCategories.slice(0, 8).map((category) => (
               <Link
                 key={category.id}
                 to={`/category/${category.slug}`}
-                className="group motion-card motion-hover motion-soft-glow overflow-hidden rounded-2xl border border-[#152b62] bg-[#091637] transition hover:border-[#284a92] hover:bg-[#0d1c45]"
+                className="g2a-card group block bg-white"
               >
-                <div className="relative overflow-hidden" style={{ aspectRatio: uiImageSettings.home_categories_ratio }}>
+                <div className="relative overflow-hidden bg-sky-50" style={{ aspectRatio: uiImageSettings.home_categories_ratio }}>
                   {category.image_url ? (
                     <img
-                      src={category.image_url}
+                      src={resolveImageUrl(category.image_url)}
                       alt={category.name}
                       loading="lazy"
                       decoding="async"
-                      className={`motion-image absolute inset-0 h-full w-full ${uiImageSettings.home_categories_force_fit ? 'object-fill' : 'object-contain'} transition duration-500 group-hover:scale-105`}
+                      className={`motion-image absolute inset-0 h-full w-full ${uiImageSettings.home_categories_force_fit ? 'object-fill' : 'object-contain'} transition-transform duration-500 group-hover:scale-108`}
                     />
                   ) : (
-                    <div className="grid h-full place-items-center bg-cyan-500/5">
-                      <svg viewBox="0 0 24 24" className="h-8 w-8 text-white/15" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6A1.125 1.125 0 0 1 2.25 10.875v-3.75ZM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 0 1-1.125-1.125v-8.25ZM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 0 1-1.125-1.125v-2.25Z" />
-                      </svg>
+                    <div className="grid h-full place-items-center bg-sky-100/50">
+                      {category.icon ? (
+                        <span className="text-4xl">{category.icon}</span>
+                      ) : (
+                        <svg viewBox="0 0 24 24" className="h-8 w-8 text-sky-300" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6A1.125 1.125 0 0 1 2.25 10.875v-3.75ZM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 0 1-1.125-1.125v-8.25ZM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 0 1-1.125-1.125v-2.25Z" />
+                        </svg>
+                      )}
                     </div>
                   )}
                 </div>
                 <div className="p-4">
-                  <div className="truncate text-sm font-black text-white">{category.name}</div>
-                  <div className="mt-1 line-clamp-1 text-xs text-white/45">{String(category.description || '').trim() || `/${category.slug}`}</div>
+                  <div className="truncate text-sm font-black text-slate-900 group-hover:text-sky-600 transition-colors">
+                    {category.icon ? <span className="mr-1.5">{category.icon}</span> : null}
+                    {category.name}
+                  </div>
+                  <div className="mt-1 line-clamp-1 text-xs text-slate-500">{String(category.description || '').trim() || `/${category.slug}`}</div>
                 </div>
               </Link>
             ))}
@@ -642,38 +882,50 @@ export default function Home() {
         )}
       </section>
 
-      <section className="fade-in-up relative overflow-hidden rounded-3xl border border-[#152b62] bg-[#050d22] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] sm:p-6">
-        <div className="absolute inset-0 grid-pattern opacity-10" />
-        <div className={`motion-stagger relative grid gap-4 ${trustData.length <= 3 ? 'sm:grid-cols-3' : trustData.length === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
+      {/* 🛡️ Trust & Security 4-Card Section */}
+      <section className="rounded-3xl border border-sky-200 bg-white/90 p-6 sm:p-8 shadow-sm">
+        <div className="mb-6 text-center max-w-xl mx-auto">
+          <div className="text-xs font-black uppercase tracking-wider text-sky-600">จุดเด่นของเรา</div>
+          <h2 className="font-display text-2xl font-black text-slate-900 mt-1">ทำไมต้องเลือกซื้อกับเรา</h2>
+        </div>
+        <div className={`grid gap-4 ${trustData.length <= 3 ? 'sm:grid-cols-3' : trustData.length === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-2 lg:grid-cols-3'}`}>
           {trustData.map((item, idx) => (
-            <div key={`trust-${idx}`} className="motion-card motion-hover flex items-start gap-3 rounded-2xl border border-[#152b62] bg-[#091637] p-4 transition hover:border-[#284a92] hover:bg-[#0d1c45]">
+            <div key={`trust-${idx}`} className="flex items-start gap-3.5 rounded-2xl border border-sky-100 bg-sky-50/50 p-4 transition-all hover:bg-sky-50 hover:border-sky-200">
               {item.icon ? (
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-cyan-200/15 bg-cyan-400/[0.07]">
-                  <svg viewBox="0 0 24 24" className="h-5 w-5 text-cyan-200/85" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-sky-200 bg-white text-sky-600 shadow-sm">
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
                     <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
                   </svg>
                 </div>
               ) : null}
               <div>
-                <div className="text-sm font-black text-white/90">{item.title}</div>
-                {item.desc ? <div className="mt-1 text-xs leading-5 text-white/56">{item.desc}</div> : null}
+                <div className="text-sm font-black text-slate-900">{item.title}</div>
+                {item.desc ? <div className="mt-1 text-xs leading-relaxed text-slate-600">{item.desc}</div> : null}
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="fade-in-up">
-        <div className="rounded-3xl border border-[#152b62] bg-[#050d22] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)] sm:p-6">
-          <div className="mb-3">
-            <h2 className="font-display text-2xl font-black text-white/92">คำถามที่พบบ่อย</h2>
-            <div className="mt-1 text-xs font-semibold text-white/48">ข้อมูลสั้น ๆ ก่อนสั่งซื้อ</div>
+      {/* ❓ FAQ Accordion */}
+      <section className="space-y-4">
+        <div className="rounded-3xl border border-sky-200 bg-white/90 p-6 sm:p-8 shadow-sm">
+          <div className="mb-5">
+            <h2 className="font-display text-2xl font-black text-slate-900">คำถามที่พบบ่อย</h2>
+            <div className="mt-1 text-xs font-semibold text-slate-500">ข้อมูลและคำแนะนำก่อนการสั่งซื้อสินค้า</div>
           </div>
-          <Accordion type="single" collapsible className="rounded-2xl border border-[#152b62] bg-[#091637] px-3 sm:px-4">
+          <Accordion type="single" collapsible className="divide-y divide-sky-100 rounded-2xl border border-sky-100 bg-sky-50/50 px-5">
             {faqData.map((item, idx) => (
-              <AccordionItem key={`faq-${idx}`} value={`faq-${idx}`} className={`border-white/[0.055] ${idx === faqData.length - 1 ? 'border-b-0' : ''}`}>
-                <AccordionTrigger>{item.question}</AccordionTrigger>
-                <AccordionContent>{item.answer}</AccordionContent>
+              <AccordionItem key={`faq-${idx}`} value={`faq-${idx}`} className="border-sky-100 py-1">
+                <AccordionTrigger className="text-slate-900 font-bold hover:text-sky-600 text-sm py-3.5">
+                  <span className="flex items-center gap-2.5">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[11px] font-black text-sky-600">Q</span>
+                    <span>{item.question}</span>
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent className="text-slate-600 text-xs sm:text-sm leading-relaxed pb-4 pl-7.5">
+                  {item.answer}
+                </AccordionContent>
               </AccordionItem>
             ))}
           </Accordion>

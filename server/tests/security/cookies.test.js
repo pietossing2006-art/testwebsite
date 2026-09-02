@@ -31,3 +31,19 @@ test('cookieSameSite only uses None when explicitly enabled for cross-site cooki
     assert.equal(cookieSameSite({ headers: { host: 'api.vxpers.com' } }, true), 'none')
   })
 })
+
+test('normalizeConsentInput normalizes boolean preferences while keeping essential true', async () => {
+  const { normalizeConsentInput } = await import('../../lib/cookies.js')
+  assert.deepEqual(normalizeConsentInput(null), {
+    essential: true,
+    analytics: false,
+    marketing: false,
+    personalization: false,
+  })
+  assert.deepEqual(normalizeConsentInput({ analytics: true, marketing: false, personalization: true }), {
+    essential: true,
+    analytics: true,
+    marketing: false,
+    personalization: true,
+  })
+})

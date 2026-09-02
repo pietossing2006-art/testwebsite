@@ -41,7 +41,7 @@ test('resolveDiscountQuote applies promotion, campaign, VIP, and coupon in fixed
   assert.equal(quote.quantity, 2)
   assert.equal(quote.final_unit_price_points, 708)
   assert.equal(quote.final_total_points, 1416)
-  assert.deepEqual(quote.discounts_applied.map((d) => d.source_type), DISCOUNT_PRIORITY)
+  assert.deepEqual(quote.discounts_applied.map((d) => d.source_type), ['product_promotion', 'growth_campaign', 'vip', 'coupon'])
   assert.deepEqual(quote.discounts_applied.map((d) => d.amount_points), [100, 50, 42, 100])
 })
 
@@ -79,7 +79,7 @@ test('normalizeDiscountCandidate normalizes public discount fields', () => {
     discount_amount_points: 10,
     rejected_reason: null,
     metadata: {},
-    priority: 3,
+    priority: DISCOUNT_PRIORITY.indexOf('coupon'),
   })
 
   assert.equal(normalizeDiscountCandidate({ discount_amount_points: -1 }).discount_amount_points, null)

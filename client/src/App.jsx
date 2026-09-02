@@ -8,7 +8,6 @@ const Categories = lazy(() => import('./pages/Categories.jsx'))
 const Category = lazy(() => import('./pages/Category.jsx'))
 const Login = lazy(() => import('./pages/Login.jsx'))
 const ProductDetail = lazy(() => import('./pages/ProductDetail.jsx'))
-const AdminV2 = lazy(() => import('./pages/AdminV2.jsx'))
 const AdminV3 = lazy(() => import('./pages/AdminV3/index.jsx'))
 const AdminStorage = lazy(() => import('./pages/AdminStorage.jsx'))
 const Profile = lazy(() => import('./pages/Profile.jsx'))
@@ -25,7 +24,6 @@ const Support = lazy(() => import('./pages/Support.jsx'))
 const BundleDetail = lazy(() => import('./pages/BundleDetail.jsx'))
 const DiscordInvite = lazy(() => import('./pages/DiscordInvite.jsx'))
 const Tracker = lazy(() => import('./pages/Tracker.jsx'))
-const MangaOcr = lazy(() => import('./pages/MangaOcr.jsx'))
 
 function canUseDocumentNavigation(event, anchor) {
   if (!anchor || event.defaultPrevented || event.button !== 0) return false
@@ -104,11 +102,43 @@ function NavigationProgress() {
   )
 }
 
+function CrystalPageLoader() {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center py-16">
+      <div className="relative flex items-center justify-center">
+        <div className="absolute -inset-4 animate-ping rounded-full bg-sky-400/20 duration-1000" />
+        <div className="absolute -inset-2 rounded-full bg-gradient-to-tr from-sky-400/30 to-blue-500/20 blur-md" />
+        <div className="h-16 w-16 animate-spin rounded-full border-4 border-sky-100 border-t-sky-500 shadow-[0_0_20px_rgba(2,132,199,0.25)]" />
+        <div className="absolute grid h-8 w-8 place-items-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-600 text-white shadow-md">
+          <svg className="h-4 w-4 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+      </div>
+      
+      <div className="mt-5 flex flex-col items-center gap-1">
+        <span className="text-sm font-black text-slate-800 tracking-wide">กำลังโหลดหน้า...</span>
+        <span className="text-xs font-semibold text-sky-600/80">VxperS Store</span>
+      </div>
+
+      <div className="mt-6 w-full max-w-md space-y-3 px-4">
+        <div className="h-3.5 w-3/5 animate-pulse rounded-full bg-sky-100/80" />
+        <div className="h-10 w-full animate-pulse rounded-2xl bg-sky-100/60" />
+        <div className="grid grid-cols-3 gap-3">
+          <div className="h-14 animate-pulse rounded-2xl bg-sky-100/50" />
+          <div className="h-14 animate-pulse rounded-2xl bg-sky-100/50" />
+          <div className="h-14 animate-pulse rounded-2xl bg-sky-100/50" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   return (
     <>
       <NavigationProgress />
-      <Suspense fallback={null}>
+      <Suspense fallback={<CrystalPageLoader />}>
         <Routes>
           <Route path="/tracker/*" element={<Tracker />} />
           <Route path="/admin-v3" element={<AdminV3 />} />
@@ -116,6 +146,7 @@ export default function App() {
             <Route index element={<Home />} />
             <Route path="/categories" element={<Categories />} />
             <Route path="/category/:slug" element={<Category />} />
+            <Route path="/p/:id" element={<ProductDetail />} />
             <Route path="/product/:id" element={<ProductDetail />} />
             <Route path="/bundle/:id" element={<BundleDetail />} />
             <Route path="/profile" element={<Profile />} />
@@ -126,7 +157,6 @@ export default function App() {
             <Route path="/inbox" element={<Inbox />} />
             <Route path="/support" element={<Support />} />
             <Route path="/discord" element={<DiscordInvite />} />
-            <Route path="/mangaocr" element={<MangaOcr />} />
             <Route path="/tos" element={<Tos />} />
             <Route path="/topup" element={<Navigate to="/topup/angpao" replace />} />
             <Route path="/topup/:method" element={<Topup />} />

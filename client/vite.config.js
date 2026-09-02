@@ -15,6 +15,10 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      '/uploads': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
       '/socket.io': {
         target: 'http://localhost:3001',
         changeOrigin: true,
@@ -25,5 +29,20 @@ export default defineConfig({
   preview: {
     host: true,
     allowedHosts: true,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/socket.io': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
 })

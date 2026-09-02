@@ -1,11 +1,14 @@
 import { Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { spawn } from 'node:child_process'
+import { decodeDataUrlImage, sanitizeProductImage } from '../lib/image.js'
 import {
   adminGetAuditLogById,
   adminListAuditLogs,
+  adminGetAuditLogStats,
   adminGetDashboardOverview,
   adminGetOpsPulse,
   getUiSettings,
@@ -15,6 +18,8 @@ import {
   adminCreateSiteMessage,
   adminListSiteMessages,
   adminDeleteSiteMessage,
+  adminListDirectChatUsers,
+  adminGetDirectChatMessages,
   adminListAnnouncements,
   adminCreateAnnouncement,
   adminUpdateAnnouncement,
@@ -24,6 +29,8 @@ import {
   listWebhookLogs,
   pool,
 } from '../db.js'
+import multer from 'multer'
+import { ZipArchive } from 'archiver'
 import {
   getStorageBrowserRoot,
   STORAGE_THUMB_DEFAULT_WIDTH,
@@ -41,6 +48,7 @@ import {
   STORAGE_ACCESS_TOKEN_MAX_AGE_SECONDS,
   STORAGE_LIST_STAT_CONCURRENCY,
   STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES,
+  STORAGE_FFMPEG_MAX_CONCURRENCY,
   resolveStoragePath,
   getStorageMediaKindByPath,
   getStorageMimeByPath,
@@ -50,9 +58,16 @@ import {
   mapStorageItemsWithConcurrency,
   buildStorageThumbnailCacheKey,
   createStorageMemoryCache,
+  readStorageDiskCache,
+  writeStorageDiskCache,
+  createStorageConcurrencyLimiter,
   buildStorageFolderTree,
   createStorageAccessToken,
   verifyStorageAccessToken,
+  sanitizeStorageFileName,
+  createStorageFolder,
+  renameStorageItem,
+  deleteStorageItem,
 } from '../lib/storage.js'
 import {
   requireAuth,
@@ -67,6 +82,11 @@ import { redis, QUEUE_SLA_SECONDS, QUEUE_TICK_MS, lastQueueTick, queueTimer } fr
 
 const router = Router()
 const storageThumbCache = createStorageMemoryCache({ maxEntries: STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES })
+const storageFfmpegLimiter = createStorageConcurrencyLimiter(STORAGE_FFMPEG_MAX_CONCURRENCY)
+const storageUploadMulter = multer({
+  limits: { fileSize: 1024 * 1024 * 1024, files: 50 }, // 1GB per file, max 50 files per batch
+  storage: multer.memoryStorage(),
+})
 
 function sendStorageThumbnail(res, { etag, contentType, output }) {
   res.setHeader('ETag', etag)
@@ -82,8 +102,16 @@ function getStorageMediaToken(req) {
 }
 
 function getStorageRequestPath(req) {
-  if (typeof req.params?.[0] === 'string') return req.params[0]
-  return typeof req.query.path === 'string' ? req.query.path : ''
+  let raw = ''
+  if (typeof req.params?.[0] === 'string') raw = req.params[0]
+  else if (typeof req.query.path === 'string') raw = req.query.path
+  if (!raw) return ''
+  try {
+    if (raw.includes('%')) return decodeURIComponent(raw)
+  } catch {
+    // ignore
+  }
+  return raw
 }
 
 function requireStorageMediaAccess(req, res, next) {
@@ -110,6 +138,8 @@ function buildAuditReplay(log) {
       value: {
         user_id: log?.actor_user_id ?? null,
         username: log?.actor_username || null,
+        display_name: log?.actor_display_name || null,
+        role: log?.actor_role || null,
         email: log?.actor_email || null,
       },
     },
@@ -117,10 +147,22 @@ function buildAuditReplay(log) {
       key: 'action',
       label: 'Action',
       value: log?.action || null,
+      severity: log?.severity || 'info',
+      status: log?.status || 'success',
+    },
+    {
+      key: 'network',
+      label: 'Network & Client',
+      value: {
+        ip_address: log?.ip_address || null,
+        user_agent: log?.user_agent || null,
+        request_method: log?.request_method || null,
+        request_path: log?.request_path || null,
+      },
     },
     {
       key: 'entity',
-      label: 'Entity',
+      label: 'Entity Target',
       value: {
         entity_type: log?.entity_type || null,
         entity_id: log?.entity_id || null,
@@ -128,7 +170,7 @@ function buildAuditReplay(log) {
     },
     {
       key: 'detail',
-      label: 'Detail',
+      label: 'Detail Payload',
       value: detail,
     },
   ]
@@ -161,6 +203,60 @@ router.get('/api/admin/queue-health', requireAuth, requireAdmin, async (req, res
   }
 })
 
+router.get('/api/admin/audit-logs/stats', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const stats = await adminGetAuditLogStats()
+    res.json({ ok: true, stats })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/admin/audit-logs/export', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const format = req.query.format === 'csv' ? 'csv' : 'json'
+    const result = await adminListAuditLogs({
+      limit: 500,
+      offset: 0,
+      search: req.query.search,
+      action: req.query.action,
+      category: req.query.category,
+      severity: req.query.severity,
+      status: req.query.status,
+      actorUserId: req.query.actor_user_id ? Number(req.query.actor_user_id) : undefined,
+      dateFrom: req.query.date_from,
+      dateTo: req.query.date_to,
+    })
+
+    if (format === 'csv') {
+      const header = ['ID', 'Timestamp', 'Actor Username', 'Actor Email', 'Action', 'Severity', 'Status', 'Entity Type', 'Entity ID', 'IP Address', 'Detail JSON']
+      const rows = (result.logs || []).map((l) => [
+        l.id,
+        `"${new Date(l.created_at).toISOString()}"`,
+        `"${(l.actor_username || '').replace(/"/g, '""')}"`,
+        `"${(l.actor_email || '').replace(/"/g, '""')}"`,
+        `"${(l.action || '').replace(/"/g, '""')}"`,
+        `"${l.severity || 'info'}"`,
+        `"${l.status || 'success'}"`,
+        `"${(l.entity_type || '').replace(/"/g, '""')}"`,
+        `"${(l.entity_id || '').replace(/"/g, '""')}"`,
+        `"${(l.ip_address || '').replace(/"/g, '""')}"`,
+        `"${JSON.stringify(l.detail_json || {}).replace(/"/g, '""')}"`,
+      ])
+      const csv = [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n')
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${Date.now()}.csv"`)
+      return res.send(csv)
+    }
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${Date.now()}.json"`)
+    res.json({ ok: true, exported_at: new Date().toISOString(), total: result.total, logs: result.logs })
+  } catch {
+    res.status(500).json({ error: 'export_error' })
+  }
+})
+
 router.get('/api/admin/audit-logs/:id', requireAuth, requireOwner, async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
@@ -178,10 +274,31 @@ router.get('/api/admin/audit-logs/:id', requireAuth, requireOwner, async (req, r
 router.get('/api/admin/audit-logs', requireAuth, requireOwner, async (req, res) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : 50
-    const offset = req.query.offset ? Number(req.query.offset) : 0
+    const offset = req.query.offset != null ? Number(req.query.offset) : undefined
+    const page = req.query.page ? Number(req.query.page) : 1
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined
     const action = typeof req.query.action === 'string' ? req.query.action : undefined
-    const logs = await adminListAuditLogs({ limit, offset, action })
-    res.json({ ok: true, logs })
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined
+    const severity = typeof req.query.severity === 'string' ? req.query.severity : undefined
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined
+    const actorUserId = req.query.actor_user_id ? Number(req.query.actor_user_id) : undefined
+    const dateFrom = typeof req.query.date_from === 'string' ? req.query.date_from : undefined
+    const dateTo = typeof req.query.date_to === 'string' ? req.query.date_to : undefined
+
+    const result = await adminListAuditLogs({
+      limit,
+      offset,
+      page,
+      search,
+      action,
+      category,
+      severity,
+      status,
+      actorUserId,
+      dateFrom,
+      dateTo,
+    })
+    res.json({ ok: true, ...result })
   } catch (e) {
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_limit') return res.status(400).json({ error: 'invalid_limit' })
@@ -383,18 +500,30 @@ router.get(['/api/admin/storage/thumb', '/api/admin/storage/thumb/raw/*'], requi
       width,
       quality,
     })
-    const cachedOutput = storageThumbCache.get(cacheKey)
-    if (cachedOutput) {
-      return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output: cachedOutput })
+
+    // 1. Tier 1: In-memory LRU cache
+    const memoryCached = storageThumbCache.get(cacheKey)
+    if (memoryCached) {
+      return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output: memoryCached })
     }
 
+    // 2. Tier 2: Persistent disk cache
+    const diskCached = await readStorageDiskCache(cacheKey, 'webp')
+    if (diskCached) {
+      storageThumbCache.set(cacheKey, diskCached)
+      return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output: diskCached })
+    }
+
+    // 3. Tier 3: Sharp generation with lanczos3 downsampling and edge-sharpening
     const output = await sharp(target.absolute)
       .rotate()
-      .resize({ width, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality })
+      .resize({ width, fit: 'inside', withoutEnlargement: true, kernel: 'lanczos3' })
+      .sharpen({ sigma: 0.8, m1: 0.5, m2: 1.5 })
+      .webp({ quality, effort: 4 })
       .toBuffer()
 
     storageThumbCache.set(cacheKey, output)
+    writeStorageDiskCache(cacheKey, 'webp', output)
     return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output })
   } catch (e) {
     if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
@@ -434,64 +563,243 @@ router.get(['/api/admin/storage/video-thumb', '/api/admin/storage/video-thumb/ra
     if (req.headers['if-none-match'] === etag) return res.status(304).end()
 
     const cacheKey = buildStorageThumbnailCacheKey({
-      kind: 'video-jpeg',
+      kind: 'video-webp',
       absolutePath: target.absolute,
       stat,
       width,
       quality,
     })
-    const cachedOutput = storageThumbCache.get(cacheKey)
-    if (cachedOutput) {
-      return sendStorageThumbnail(res, { etag, contentType: 'image/jpeg', output: cachedOutput })
+
+    // 1. Tier 1: In-memory LRU cache
+    const memoryCached = storageThumbCache.get(cacheKey)
+    if (memoryCached) {
+      return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output: memoryCached })
     }
 
-    const args = buildStorageVideoThumbFfmpegArgs({ inputPath: target.absolute, width, ffmpegQ })
+    // 2. Tier 2: Persistent disk cache
+    const diskCached = await readStorageDiskCache(cacheKey, 'webp')
+    if (diskCached) {
+      storageThumbCache.set(cacheKey, diskCached)
+      return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output: diskCached })
+    }
 
-    const child = spawn('ffmpeg', args, { windowsHide: true })
-    const outChunks = []
-    const errChunks = []
+    // 3. Tier 3: Concurrency-limited FFmpeg extraction + Sharp WebP conversion & sharpening
+    const output = await storageFfmpegLimiter(async () => {
+      const args = buildStorageVideoThumbFfmpegArgs({ inputPath: target.absolute, width, ffmpegQ })
+      const child = spawn('ffmpeg', args, { windowsHide: true })
+      const outChunks = []
+      const errChunks = []
 
-    child.stdout.on('data', (chunk) => outChunks.push(Buffer.from(chunk)))
-    child.stderr.on('data', (chunk) => errChunks.push(Buffer.from(chunk)))
+      child.stdout.on('data', (chunk) => outChunks.push(Buffer.from(chunk)))
+      child.stderr.on('data', (chunk) => errChunks.push(Buffer.from(chunk)))
 
-    const aborted = new Promise((resolve) => {
-      req.on('close', () => {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // ignore
-        }
-        resolve({ aborted: true })
+      const aborted = new Promise((resolve) => {
+        req.on('close', () => {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // ignore
+          }
+          resolve({ aborted: true })
+        })
       })
+
+      const finished = new Promise((resolve) => {
+        child.on('error', (err) => resolve({ error: err }))
+        child.on('close', (code) => resolve({ code }))
+      })
+
+      const result = await Promise.race([aborted, finished])
+      if (result?.aborted) return null
+
+      if (result?.error) {
+        throw new Error(result.error.code === 'ENOENT' ? 'ffmpeg_not_found' : 'thumbnail_failed')
+      }
+
+      if (result?.code !== 0) {
+        const stderrText = Buffer.concat(errChunks).toString('utf8').trim().toLowerCase()
+        if (stderrText.includes('no such file') || stderrText.includes('cannot find')) {
+          throw new Error('not_found')
+        }
+        throw new Error('thumbnail_failed')
+      }
+
+      const rawFrame = Buffer.concat(outChunks)
+      if (!rawFrame.length) throw new Error('thumbnail_failed')
+
+      const webpOutput = await sharp(rawFrame)
+        .rotate()
+        .resize({ width, fit: 'inside', withoutEnlargement: true, kernel: 'lanczos3' })
+        .sharpen({ sigma: 0.8, m1: 0.5, m2: 1.5 })
+        .webp({ quality, effort: 4 })
+        .toBuffer()
+
+      return webpOutput
     })
 
-    const finished = new Promise((resolve) => {
-      child.on('error', (err) => resolve({ error: err }))
-      child.on('close', (code) => resolve({ code }))
-    })
-
-    const result = await Promise.race([aborted, finished])
-    if (result?.aborted) return
-
-    if (result?.error) {
-      if (result.error?.code === 'ENOENT') return res.status(500).json({ error: 'ffmpeg_not_found' })
-      return res.status(500).json({ error: 'thumbnail_failed' })
-    }
-
-    if (result?.code !== 0) {
-      const stderrText = Buffer.concat(errChunks).toString('utf8').trim().toLowerCase()
-      if (stderrText.includes('no such file') || stderrText.includes('cannot find')) return res.status(404).json({ error: 'not_found' })
-      return res.status(500).json({ error: 'thumbnail_failed' })
-    }
-
-    const output = Buffer.concat(outChunks)
-    if (!output.length) return res.status(500).json({ error: 'thumbnail_failed' })
+    if (!output) return
 
     storageThumbCache.set(cacheKey, output)
-    return sendStorageThumbnail(res, { etag, contentType: 'image/jpeg', output })
+    writeStorageDiskCache(cacheKey, 'webp', output)
+    return sendStorageThumbnail(res, { etag, contentType: 'image/webp', output })
   } catch (e) {
-    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+    const msg = String(e?.message || '')
+    if (msg === 'not_found' || e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+    if (msg === 'ffmpeg_not_found') return res.status(500).json({ error: 'ffmpeg_not_found' })
     return res.status(500).json({ error: 'thumbnail_failed' })
+  }
+})
+
+// -------------------------------------------------------------
+// 📁 File Operations Endpoints (Strictly requireAuth, requireOwner)
+// -------------------------------------------------------------
+
+router.post('/api/admin/storage/upload', requireAuth, requireOwner, storageUploadMulter.array('files', 50), async (req, res) => {
+    try {
+      const rawPath = typeof req.body?.path === 'string' ? req.body.path : ''
+      const targetDir = resolveStoragePath(rawPath)
+
+      const dirStat = await fs.promises.stat(targetDir.absolute)
+      if (!dirStat.isDirectory()) return res.status(400).json({ error: 'not_directory' })
+
+      const files = Array.isArray(req.files) ? req.files : []
+      if (!files.length) return res.status(400).json({ error: 'no_files' })
+
+      const uploaded = []
+      for (const file of files) {
+        const originalName = String(file.originalname || 'file')
+        const safeName = sanitizeStorageFileName(originalName)
+        let finalName = safeName
+        let targetFilePath = path.join(targetDir.absolute, finalName)
+
+        // If file already exists, generate a unique numbered name
+        if (fs.existsSync(targetFilePath)) {
+          const ext = path.extname(safeName)
+          const base = path.basename(safeName, ext)
+          finalName = `${base}-${Date.now().toString().slice(-4)}${ext}`
+          targetFilePath = path.join(targetDir.absolute, finalName)
+        }
+
+        await fs.promises.writeFile(targetFilePath, file.buffer)
+        const relPath = targetDir.rel ? `${targetDir.rel}/${finalName}` : finalName
+        const mediaKind = getStorageMediaKindByPath(targetFilePath)
+
+        uploaded.push({
+          name: finalName,
+          path: relPath,
+          size: file.size,
+          media_kind: mediaKind,
+        })
+      }
+
+      res.status(201).json({ ok: true, uploaded })
+    } catch (e) {
+      const msg = String(e?.message || '')
+      if (msg === 'invalid_path' || msg === 'invalid_name') return res.status(400).json({ error: msg })
+      if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+      res.status(500).json({ error: 'upload_failed' })
+    }
+  },
+)
+
+router.post('/api/admin/storage/folder', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const parentPath = typeof req.body?.path === 'string' ? req.body.path : ''
+    const folderName = typeof req.body?.name === 'string' ? req.body.name : ''
+    const result = await createStorageFolder(parentPath, folderName)
+    res.status(201).json({ ok: true, folder: result })
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg === 'already_exists') return res.status(409).json({ error: 'already_exists' })
+    if (msg === 'invalid_path' || msg === 'invalid_name') return res.status(400).json({ error: msg })
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+    res.status(500).json({ error: 'create_folder_failed' })
+  }
+})
+
+router.patch('/api/admin/storage/rename', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const sourcePath = typeof req.body?.path === 'string' ? req.body.path : ''
+    const newName = typeof req.body?.new_name === 'string' ? req.body.new_name : ''
+    const result = await renameStorageItem(sourcePath, newName)
+    res.json({ ok: true, renamed: result })
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg === 'already_exists') return res.status(409).json({ error: 'already_exists' })
+    if (msg === 'invalid_path' || msg === 'invalid_name' || msg === 'cannot_rename_root') {
+      return res.status(400).json({ error: msg })
+    }
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+    res.status(500).json({ error: 'rename_failed' })
+  }
+})
+
+router.delete('/api/admin/storage/delete', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const rawPaths = Array.isArray(req.body?.paths)
+      ? req.body.paths
+      : typeof req.body?.path === 'string'
+        ? [req.body.path]
+        : []
+
+    if (!rawPaths.length) return res.status(400).json({ error: 'no_paths_provided' })
+
+    const deleted = []
+    for (const p of rawPaths) {
+      const result = await deleteStorageItem(p)
+      deleted.push(result.deleted_path)
+    }
+
+    res.json({ ok: true, deleted })
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg === 'invalid_path' || msg === 'cannot_delete_root') return res.status(400).json({ error: msg })
+    if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
+    res.status(500).json({ error: 'delete_failed' })
+  }
+})
+
+router.post('/api/admin/storage/download-zip', requireAuth, requireOwner, async (req, res) => {
+  try {
+    const rawPaths = Array.isArray(req.body?.paths) ? req.body.paths : []
+    if (!rawPaths.length) return res.status(400).json({ error: 'no_paths_provided' })
+
+    const archive = new ZipArchive({ zlib: { level: 6 } })
+
+    archive.on('error', (err) => {
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'archive_failed' })
+      }
+    })
+
+    const zipFilename = `vxpers-storage-${Date.now().toString().slice(-6)}.zip`
+    res.setHeader('Content-Type', 'application/zip')
+    res.setHeader('Content-Disposition', `attachment; filename="${zipFilename}"`)
+
+    archive.pipe(res)
+
+    for (const raw of rawPaths) {
+      try {
+        const resolved = resolveStoragePath(raw)
+        if (!fs.existsSync(resolved.absolute)) continue
+
+        const stat = await fs.promises.stat(resolved.absolute)
+        const entryName = path.basename(resolved.absolute)
+        if (stat.isDirectory()) {
+          archive.directory(resolved.absolute, entryName)
+        } else if (stat.isFile()) {
+          archive.file(resolved.absolute, { name: entryName })
+        }
+      } catch {
+        // Skip invalid paths safely
+      }
+    }
+
+    await archive.finalize()
+  } catch (e) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'download_zip_failed' })
+    }
   }
 })
 
@@ -532,17 +840,37 @@ router.get('/api/admin/dashboard/ops-pulse', requireAuth, requireAnyRole(['admin
 router.get('/api/admin/ui-settings', requireAuth, requireAdmin, async (req, res) => {
   try {
     const settings = await getUiSettings()
-    res.json({ ok: true, image_settings: settings?.image_settings, branding_settings: settings?.branding_settings, homepage_settings: settings?.homepage_settings })
+    res.json({
+      ok: true,
+      image_settings: settings?.image_settings,
+      branding_settings: settings?.branding_settings,
+      homepage_settings: settings?.homepage_settings,
+      site_settings: settings?.site_settings,
+      topup_settings: settings?.topup_settings,
+    })
   } catch {
     res.status(500).json({ error: 'db_error' })
   }
 })
 
 router.put('/api/admin/ui-settings', requireAuth, requireAdmin, async (req, res) => {
-  const { image_settings, branding_settings, homepage_settings, site_settings } = req.body ?? {}
+  const { image_settings, branding_settings, homepage_settings, site_settings, topup_settings } = req.body ?? {}
   try {
-    const settings = await updateUiSettings({ imageSettings: image_settings, brandingSettings: branding_settings, homepageSettings: homepage_settings, siteSettings: site_settings })
-    res.json({ ok: true, image_settings: settings?.image_settings, branding_settings: settings?.branding_settings, homepage_settings: settings?.homepage_settings, site_settings: settings?.site_settings })
+    const settings = await updateUiSettings({
+      imageSettings: image_settings,
+      brandingSettings: branding_settings,
+      homepageSettings: homepage_settings,
+      siteSettings: site_settings,
+      topupSettings: topup_settings,
+    })
+    res.json({
+      ok: true,
+      image_settings: settings?.image_settings,
+      branding_settings: settings?.branding_settings,
+      homepage_settings: settings?.homepage_settings,
+      site_settings: settings?.site_settings,
+      topup_settings: settings?.topup_settings,
+    })
   } catch {
     res.status(500).json({ error: 'db_error' })
   }
@@ -600,6 +928,51 @@ router.delete('/api/admin/site-messages/:id', requireAuth, requireAdmin, async (
   } catch (e) {
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+// ── Admin Direct Chat & Dispatch ──
+
+router.get('/api/admin/direct-chat/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await adminListDirectChatUsers()
+    res.json({ ok: true, users })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/admin/direct-chat/:userId/messages', requireAuth, requireAdmin, async (req, res) => {
+  const userId = Number(req.params.userId)
+  if (!Number.isFinite(userId)) return res.status(400).json({ error: 'invalid_user_id' })
+  try {
+    const messages = await adminGetDirectChatMessages(userId)
+    res.json({ ok: true, messages })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_target_user') return res.status(400).json({ error: 'invalid_target_user' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/direct-chat/:userId/messages', requireAuth, requireAdmin, async (req, res) => {
+  const userId = Number(req.params.userId)
+  if (!Number.isFinite(userId)) return res.status(400).json({ error: 'invalid_user_id' })
+  const { title, body } = req.body ?? {}
+  try {
+    const row = await adminCreateSiteMessage({
+      senderId: req.user.id,
+      targetType: 'individual',
+      targetUserId: userId,
+      title: title || 'ข้อความตรงจากทีมงาน',
+      body,
+    })
+    res.json({ ok: true, id: row.id, created_at: row.created_at })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_title') return res.status(400).json({ error: 'invalid_title' })
+    if (msg === 'invalid_target_user') return res.status(400).json({ error: 'invalid_target_user' })
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -722,6 +1095,70 @@ router.get('/api/admin/webhooks', requireAuth, requireAdmin, async (req, res) =>
     res.json({ ok: true, webhooks: items })
   } catch {
     res.status(500).json({ error: 'db_error' })
+  }
+})
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const UPLOADS_ROOT = path.join(__dirname, '..', 'uploads')
+const PRODUCT_UPLOADS_ROOT = path.join(UPLOADS_ROOT, 'products')
+if (!fs.existsSync(PRODUCT_UPLOADS_ROOT)) {
+  fs.mkdirSync(PRODUCT_UPLOADS_ROOT, { recursive: true })
+}
+
+router.post('/api/admin/media/upload', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const rawImage = req.body?.image_data
+    if (!rawImage || typeof rawImage !== 'string') {
+      return res.status(400).json({ error: 'invalid_image_data' })
+    }
+    const decoded = decodeDataUrlImage(rawImage)
+    const maxBytes = 15 * 1024 * 1024
+    if (decoded.buffer.length > maxBytes) return res.status(413).json({ error: 'image_too_large' })
+    const { buffer, ext } = await sanitizeProductImage(decoded)
+    const filename = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}.${ext}`
+    const target = path.join(PRODUCT_UPLOADS_ROOT, filename)
+    await fs.promises.writeFile(target, buffer)
+    const url = `/uploads/products/${filename}`
+    res.status(201).json({ ok: true, url })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_image_data') return res.status(400).json({ error: 'invalid_image_data' })
+    if (msg === 'unsupported_image_type') return res.status(400).json({ error: 'unsupported_image_type' })
+    res.status(500).json({ error: 'upload_failed' })
+  }
+})
+router.post('/api/admin/media/fetch-remote', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const rawUrl = String(req.body?.url || '').trim()
+    if (!rawUrl) return res.status(400).json({ error: 'invalid_url' })
+
+    let buffer
+    let mimeType = 'image/jpeg'
+
+    if (rawUrl.startsWith('/uploads/')) {
+      const filePath = path.join(process.cwd(), 'server', rawUrl)
+      buffer = await fs.promises.readFile(filePath)
+    } else if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 10000)
+      const resp = await fetch(rawUrl, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      })
+      clearTimeout(timeout)
+      if (!resp.ok) return res.status(400).json({ error: 'fetch_failed' })
+      const arrayBuf = await resp.arrayBuffer()
+      buffer = Buffer.from(arrayBuf)
+      mimeType = resp.headers.get('content-type') || 'image/jpeg'
+    } else {
+      return res.status(400).json({ error: 'invalid_url' })
+    }
+
+    const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+    res.json({ ok: true, data_url: dataUrl })
+  } catch (err) {
+    res.status(500).json({ error: 'fetch_failed' })
   }
 })
 

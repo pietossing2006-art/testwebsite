@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { fetchJson, getAuthToken, setAuthToken } from '../api.js'
 import UserAvatar from './UserAvatar.jsx'
+import GlobalSearchModal from './GlobalSearchModal.jsx'
 import { DEFAULT_UI_BRANDING_SETTINGS, normalizeUiBrandingSettings } from '../uiBrandingSettings.js'
 
 function NavItem({ to, children }) {
@@ -36,6 +37,7 @@ export default function Navbar() {
   const [branding, setBranding] = useState(DEFAULT_UI_BRANDING_SETTINGS)
   const [open, setOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const [unreadMsgCount, setUnreadMsgCount] = useState(0)
   const menuRef = useRef(null)
   const mobileRef = useRef(null)
@@ -43,6 +45,14 @@ export default function Navbar() {
   const user = me?.user
   const wallet = me?.wallet
   const isAuthed = Boolean(user)
+
+  useEffect(() => {
+    function onOpenSearch() {
+      setSearchOpen(true)
+    }
+    window.addEventListener('open_global_search', onOpenSearch)
+    return () => window.removeEventListener('open_global_search', onOpenSearch)
+  }, [])
 
   useEffect(() => {
     const onChange = () => {
@@ -231,16 +241,16 @@ export default function Navbar() {
   const [logoHover, setLogoHover] = useState(false)
 
   return (
-    <header className="glass sticky top-0 z-50 border-b border-[#152b62] px-3 py-3 sm:px-4 md:px-12 md:py-4">
+    <header className="glass-crystal sticky top-0 z-50 border-b border-sky-200/80 bg-white/90 backdrop-blur-xl px-3 py-3 sm:px-4 md:px-12 md:py-3.5 shadow-[0_4px_20px_rgba(2,132,199,0.05)]">
       <div className="mx-auto flex w-full max-w-[80rem] items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-4 lg:gap-12">
-          <Link to="/" className="flex min-w-0 items-center gap-2 lg:min-w-max" onMouseEnter={() => setLogoHover(true)} onMouseLeave={() => setLogoHover(false)}>
-            <div className="shrink-0" style={{ width: 'clamp(1.55rem, 7vw, 2rem)', height: 'clamp(1.55rem, 7vw, 2rem)', background: '#06b6d4', borderRadius: '0.125rem', transform: logoHover ? 'rotate(180deg)' : 'rotate(45deg)', transition: 'transform 0.7s' }} />
-            <span className="block max-w-[calc(100vw-6rem)] overflow-hidden pr-1 text-base font-black uppercase italic tracking-tight text-ellipsis whitespace-nowrap neon-text sm:max-w-[58vw] sm:text-xl lg:max-w-none lg:overflow-visible">
-              {siteNameFirst} <span style={{ color: '#22d3ee' }}>{siteNameRest}</span>
+        <div className="flex min-w-0 items-center gap-4 lg:gap-10">
+          <Link to="/" className="flex min-w-0 items-center gap-2.5 lg:min-w-max" onMouseEnter={() => setLogoHover(true)} onMouseLeave={() => setLogoHover(false)}>
+            <div className="shrink-0 shadow-md shadow-sky-500/20" style={{ width: 'clamp(1.6rem, 7vw, 2.1rem)', height: 'clamp(1.6rem, 7vw, 2.1rem)', background: 'linear-gradient(135deg, #0284c7 0%, #00b4d8 100%)', borderRadius: '0.375rem', transform: logoHover ? 'rotate(180deg)' : 'rotate(45deg)', transition: 'transform 0.7s cubic-bezier(0.34, 1.56, 0.64, 1)' }} />
+            <span className="block max-w-[calc(100vw-6rem)] overflow-hidden pr-1 text-base font-black uppercase italic tracking-tight text-ellipsis whitespace-nowrap text-slate-900 sm:max-w-[58vw] sm:text-xl lg:max-w-none lg:overflow-visible">
+              {siteNameFirst} <span className="bg-gradient-to-r from-sky-600 to-cyan-500 bg-clip-text text-transparent">{siteNameRest}</span>
             </span>
           </Link>
-          <nav className="hidden items-center gap-8 lg:flex">
+          <nav className="hidden items-center gap-6 lg:flex">
             {navLinks.map((item) => (
               isExternalUrl(item.to) ? (
                 <a
@@ -248,150 +258,186 @@ export default function Navbar() {
                   href={item.to}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-sm font-medium uppercase text-gray-400 hover:text-cyan-400 transition-colors"
+                  className="text-sm font-bold text-slate-600 hover:text-sky-600 transition-colors"
                 >
                   {item.label}
                 </a>
               ) : (
-                <NavItem key={`${item.to}:${item.label}`} to={item.to}>
+                <NavLink
+                  key={`${item.to}:${item.label}`}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `text-sm font-bold transition-all px-3 py-1.5 rounded-xl ${
+                      isActive
+                        ? 'bg-sky-50 text-sky-600 shadow-sm border border-sky-200'
+                        : 'text-slate-600 hover:text-sky-600 hover:bg-sky-50/50'
+                    }`
+                  }
+                >
                   {item.label}
-                </NavItem>
+                </NavLink>
               )
             ))}
-            <NavItem to="/mangaocr">MANGA OCR</NavItem>
           </nav>
         </div>
 
-        {/* Search bar - user said to keep as is */}
+        <div className="flex items-center gap-2">
+          {/* Mobile Search Button */}
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-white text-slate-700 hover:bg-sky-50 lg:hidden shadow-sm"
+            title="ค้นหาสินค้า"
+          >
+            <svg className="h-5 w-5 text-sky-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </button>
 
-        <button
-          type="button"
-          aria-expanded={mobileOpen}
-          className="ml-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#1b3470] bg-[#091637] text-white/85 lg:hidden"
-          onClick={() => setMobileOpen((v) => !v)}
-          ref={toggleRef}
-        >
-          <span className="sr-only">Toggle menu</span>
-          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h16" />
-          </svg>
-        </button>
+          <button
+            type="button"
+            aria-expanded={mobileOpen}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-sky-200 bg-white text-slate-700 hover:bg-sky-50 lg:hidden shadow-sm"
+            onClick={() => setMobileOpen((v) => !v)}
+            ref={toggleRef}
+          >
+            <span className="sr-only">Toggle menu</span>
+            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+        </div>
 
-        <div className="ml-auto hidden items-center gap-6 lg:flex" ref={menuRef}>
+        <div className="ml-auto hidden items-center gap-4 lg:flex" ref={menuRef}>
+          {/* Desktop Search Button */}
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            className="inline-flex items-center gap-2 rounded-2xl border border-sky-200 bg-sky-50/50 hover:bg-sky-50 px-3 py-2 text-xs font-bold text-slate-600 hover:text-sky-600 transition shadow-sm"
+            title="ค้นหาสินค้า (Ctrl+K)"
+          >
+            <svg className="h-4 w-4 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <span>ค้นหาสินค้า...</span>
+            <kbd className="rounded bg-white border border-sky-200 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-slate-400">Ctrl K</kbd>
+          </button>
           {isAuthed ? (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="relative inline-flex h-10 items-center justify-center gap-3 rounded-xl border border-[#1b3470] bg-[#091637] px-3 text-sm font-medium text-white/90 hover:border-[#284a92] hover:bg-[#112455]"
-              >
-                {unreadMsgCount > 0 ? (
-                  <span className="absolute -top-1.5 -right-1.5 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow-lg">{unreadMsgCount > 99 ? '99+' : unreadMsgCount}</span>
-                ) : null}
-                <UserAvatar user={user} size={32} rounded="md" />
-                <div className="hidden text-left md:block">
-                  <div className="text-xs font-bold leading-tight text-white">{displayName}</div>
-                  <div className="text-[11px] leading-tight text-white/50">ยอดคงเหลือ: {wallet?.balance ?? 0}</div>
-                </div>
-              </button>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setOpen((v) => !v)}
+                  className="relative inline-flex h-10 items-center justify-center gap-2.5 rounded-2xl border border-sky-200 bg-white px-3 text-sm font-semibold text-slate-800 hover:border-sky-400 hover:bg-sky-50 shadow-sm transition-all"
+                >
+                  {unreadMsgCount > 0 ? (
+                    <span className="absolute -top-1.5 -right-1.5 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-md">{unreadMsgCount > 99 ? '99+' : unreadMsgCount}</span>
+                  ) : null}
+                  <UserAvatar user={user} size={30} rounded="md" />
+                  <div className="hidden text-left md:block">
+                    <div className="text-xs font-bold leading-tight text-slate-900">{displayName}</div>
+                    <div className="text-[11px] font-bold leading-tight text-sky-600">{wallet?.balance ?? 0} พ้อยท์</div>
+                  </div>
+                </button>
 
-              {open ? (
-                <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-2xl border border-[#1b3470] bg-[#050d22] shadow-[0_26px_90px_rgba(0,0,0,0.78)]">
-                  <div className="border-b border-white/10 p-3">
-                    <div className="text-xs font-extrabold text-white">ยอดคงเหลือ</div>
-                    <div className="mt-1 text-sm font-black tracking-wide text-cyan-300">{wallet?.balance ?? 0} พ้อย</div>
-                  </div>
-                  <div className="p-2">
-                    <Link
-                      to="/profile"
-                      onClick={() => setOpen(false)}
-                      className="block rounded-xl px-3 py-2 text-sm text-white/85 hover:bg-white/10"
-                    >
-                      โปรไฟล์ผู้ใช้
-                    </Link>
-                    <Link
-                      to="/inbox"
-                      onClick={() => setOpen(false)}
-                      className="relative block rounded-xl px-3 py-2 text-sm text-white/85 hover:bg-white/10"
-                    >
-                      กล่องรับของ
-                      {unreadMsgCount > 0 ? (
-                        <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{unreadMsgCount > 99 ? '99+' : unreadMsgCount}</span>
+                {open ? (
+                  <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-[0_20px_50px_rgba(2,132,199,0.15)] z-50">
+                    <div className="border-b border-sky-100 bg-sky-50/70 p-3.5">
+                      <div className="text-xs font-semibold text-slate-500">ยอดคงเหลือ</div>
+                      <div className="mt-0.5 text-base font-black tracking-wide text-sky-600">{wallet?.balance ?? 0} พ้อยท์</div>
+                    </div>
+                    <div className="p-2 space-y-0.5">
+                      <Link
+                        to="/profile"
+                        onClick={() => setOpen(false)}
+                        className="block rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600 transition-colors"
+                      >
+                        โปรไฟล์ผู้ใช้
+                      </Link>
+                      <Link
+                        to="/inbox"
+                        onClick={() => setOpen(false)}
+                        className="relative flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600 transition-colors"
+                      >
+                        <span>กล่องรับของ</span>
+                        {unreadMsgCount > 0 ? (
+                          <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{unreadMsgCount > 99 ? '99+' : unreadMsgCount}</span>
+                        ) : null}
+                      </Link>
+                      <Link
+                        to="/history/topups"
+                        onClick={() => setOpen(false)}
+                        className="block rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600 transition-colors"
+                      >
+                        ประวัติการเติมเงิน
+                      </Link>
+                      <Link
+                        to="/history/purchases"
+                        onClick={() => setOpen(false)}
+                        className="block rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600 transition-colors"
+                      >
+                        ประวัติการซื้อของ
+                      </Link>
+                      <Link
+                        to="/support"
+                        onClick={() => setOpen(false)}
+                        className="block rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600 transition-colors"
+                      >
+                        แจ้งปัญหา
+                      </Link>
+                      {(canAccessAdmin || isOwner) ? (
+                        <div className="mt-1 border-t border-sky-100 pt-1">
+                          <div className="px-3 pb-1 pt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Admin</div>
+                          {canAccessAdmin ? (
+                            <Link
+                              to="/admin-v3"
+                              onClick={() => setOpen(false)}
+                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600"
+                            >
+                              <svg className="h-3.5 w-3.5 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                              หลังบ้าน
+                            </Link>
+                          ) : null}
+                          {isOwner ? (
+                            <Link
+                              to="/admin/storage"
+                              onClick={() => setOpen(false)}
+                              className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50 hover:text-sky-600"
+                            >
+                              <svg className="h-3.5 w-3.5 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+                              จัดการไฟล์
+                            </Link>
+                          ) : null}
+                        </div>
                       ) : null}
-                    </Link>
-                    <Link
-                      to="/history/topups"
-                      onClick={() => setOpen(false)}
-                      className="block rounded-xl px-3 py-2 text-sm text-white/85 hover:bg-white/10"
-                    >
-                      ประวัติการเติมเงิน
-                    </Link>
-                    <Link
-                      to="/history/purchases"
-                      onClick={() => setOpen(false)}
-                      className="block rounded-xl px-3 py-2 text-sm text-white/85 hover:bg-white/10"
-                    >
-                      ประวัติการซื้อของ
-                    </Link>
-                    <Link
-                      to="/support"
-                      onClick={() => setOpen(false)}
-                      className="block rounded-xl px-3 py-2 text-sm text-white/85 hover:bg-white/10"
-                    >
-                      แจ้งปัญหา
-                    </Link>
-                    {(canAccessAdmin || isOwner) ? (
-                      <div className="mt-1 border-t border-white/[0.07] pt-1">
-                        <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-widest text-white/30">Admin</div>
-                        {canAccessAdmin ? (
-                          <Link
-                            to="/admin-v2"
-                            onClick={() => setOpen(false)}
-                            className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
-                          >
-                            <svg className="h-3.5 w-3.5 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-                            หลังบ้าน
-                          </Link>
-                        ) : null}
-                        {isOwner ? (
-                          <Link
-                            to="/admin/storage"
-                            onClick={() => setOpen(false)}
-                            className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
-                          >
-                            <svg className="h-3.5 w-3.5 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
-                            จัดการไฟล์
-                          </Link>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpen(false)
-                        ;(async () => {
-                          try {
-                            await fetchJson('/api/auth/logout', { method: 'POST' })
-                          } catch {
-                            // ignore
-                          }
-                          setAuthToken(null)
-                          window.location.assign('/')
-                        })()
-                      }}
-                      className="mt-1 block w-full rounded-xl px-3 py-2 text-left text-sm text-white/60 hover:bg-white/10 hover:text-white"
-                    >
-                      ออกจากระบบ
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpen(false)
+                          ;(async () => {
+                            try {
+                              await fetchJson('/api/auth/logout', { method: 'POST' })
+                            } catch {
+                              // ignore
+                            }
+                            setAuthToken(null)
+                            window.location.assign('/')
+                          })()
+                        }}
+                        className="mt-1 block w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
+                      >
+                        ออกจากระบบ
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           ) : sessionChecked ? (
             <>
               <Link
                 to="/login"
-                className="ui-btn"
+                className="ui-btn shadow-sm"
               >
                 เข้าสู่ระบบ
               </Link>
@@ -418,28 +464,28 @@ export default function Navbar() {
         <div className="absolute inset-0 z-10" aria-hidden />
         <div
           onClick={(e) => e.stopPropagation()}
-          className="relative z-20 mx-3 mt-1 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-2xl border border-[#1b3470] bg-[#050d22] shadow-[0_24px_80px_rgba(0,0,0,0.74)] sm:mx-5"
+          className="relative z-20 mx-3 mt-1 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-2xl border border-sky-200 bg-white shadow-[0_24px_80px_rgba(2,132,199,0.18)] sm:mx-5"
         >
-          <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
-            <span className="text-xs font-semibold text-white/50">เมนู</span>
+          <div className="flex items-center justify-between border-b border-sky-100 bg-sky-50/50 px-4 py-3">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">เมนูนำทาง</span>
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-[#1b3470] bg-[#091637] text-white/70 hover:bg-[#112455]"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-sky-200 bg-white text-slate-700 hover:bg-sky-50 shadow-sm"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M18 6 6 18m0-12 12 12" />
               </svg>
             </button>
           </div>
-          <div className="flex flex-col divide-y divide-white/10">
+          <div className="flex flex-col divide-y divide-sky-100">
             {isAuthed ? (
               <div className="px-4 py-3">
-                <div className="flex items-center gap-3 rounded-2xl border border-[#1b3470] bg-[#091637] p-3">
+                <div className="flex items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50/80 p-3 shadow-sm">
                   <UserAvatar user={user} size={40} rounded="md" />
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-black text-white">{displayName}</div>
-                    <div className="mt-0.5 text-xs font-bold text-cyan-100/70">ยอดคงเหลือ: {wallet?.balance ?? 0}</div>
+                    <div className="truncate text-sm font-black text-slate-900">{displayName}</div>
+                    <div className="mt-0.5 text-xs font-bold text-sky-600">ยอดคงเหลือ: {wallet?.balance ?? 0} พ้อยท์</div>
                   </div>
                 </div>
               </div>
@@ -451,7 +497,7 @@ export default function Navbar() {
                   href={item.to}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-4 py-3 text-sm font-semibold text-white/80 transition hover:bg-white/5"
+                  className="px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-sky-50 hover:text-sky-600"
                   onClick={() => setMobileOpen(false)}
                 >
                   {item.label}
@@ -461,8 +507,8 @@ export default function Navbar() {
                   key={`${item.to}:${item.label}`}
                   to={item.to}
                   className={({ isActive }) =>
-                    `px-4 py-3 text-sm font-semibold transition ${
-                      isActive ? 'bg-white/10 text-white' : 'text-white/80 hover:bg-white/5'
+                    `px-4 py-3 text-sm font-bold transition ${
+                      isActive ? 'bg-sky-100/70 text-sky-700 font-black' : 'text-slate-700 hover:bg-sky-50 hover:text-sky-600'
                     }`
                   }
                   onClick={() => setMobileOpen(false)}
@@ -479,16 +525,15 @@ export default function Navbar() {
                     กล่องรับของ
                     {unreadMsgCount > 0 ? <span className="ml-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{unreadMsgCount > 99 ? '99+' : unreadMsgCount}</span> : null}
                   </Link>
-                  <Link to="/topup/angpao" onClick={() => setMobileOpen(false)} className="ui-btn-primary h-11 justify-center">เติมเงิน</Link>
+                  <Link to="/topup/angpao" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center">เติมเงิน</Link>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <Link to="/mangaocr" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center text-cyan-300 text-xs">📖 Manga OCR</Link>
+                <div className="grid grid-cols-2 gap-2">
                   <Link to="/history/purchases" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center text-xs">ประวัติซื้อ</Link>
                   <Link to="/history/topups" onClick={() => setMobileOpen(false)} className="ui-btn h-11 justify-center text-xs">ประวัติเติม</Link>
                 </div>
                 {(canAccessAdmin || isOwner) ? (
-                  <div className="grid gap-2 border-t border-white/[0.07] pt-3">
-                    <div className="px-1 text-[10px] font-semibold uppercase tracking-widest text-white/35">Admin</div>
+                  <div className="grid gap-2 border-t border-sky-100 pt-3">
+                    <div className="px-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">Admin</div>
                     {canAccessAdmin ? (
                       <Link to="/admin-v3" onClick={() => setMobileOpen(false)} className="ui-btn-primary h-11 w-full justify-center">
                         หลังบ้าน
@@ -501,7 +546,7 @@ export default function Navbar() {
                     ) : null}
                   </div>
                 ) : null}
-                <div className="grid gap-2 border-t border-white/[0.07] pt-2">
+                <div className="grid gap-2 border-t border-slate-100 pt-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -516,7 +561,7 @@ export default function Navbar() {
                         window.location.assign('/')
                       })()
                     }}
-                    className="ui-btn h-11 w-full justify-center text-white/70 hover:bg-white/10 hover:text-white"
+                    className="ui-btn h-11 w-full justify-center text-rose-600 hover:bg-rose-50"
                   >
                     ออกจากระบบ
                   </button>
@@ -544,6 +589,7 @@ export default function Navbar() {
           </div>
         </div>
       </div>
+      <GlobalSearchModal isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
     </header>
   )
 }

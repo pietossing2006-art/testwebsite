@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { fetchJson, resolveApiUrl, setAuthToken } from '../../api.js'
 import { connectSocket, disconnectSocket } from '../../socket.js'
-import UserAvatar from '../../components/UserAvatar.jsx'
 import { DEFAULT_UI_IMAGE_SETTINGS, normalizeUiImageSettings } from '../../uiImageSettings.js'
 import { DEFAULT_UI_BRANDING_SETTINGS, normalizeUiBrandingSettings } from '../../uiBrandingSettings.js'
 import {
@@ -47,6 +46,8 @@ import MessagesModule from './modules/MessagesModule.jsx'
 import OwnerModule from './modules/OwnerModule.jsx'
 import TimesheetModule from './modules/TimesheetModule.jsx'
 import OrdersModule from './modules/OrdersModule.jsx'
+import LedgerShell from './shell/LedgerShell.jsx'
+import PageBar from './shell/PageBar.jsx'
 import './AdminV3.css'
 
 // Inject AdminLTE CSS & JS + Bootstrap Icons into <head> once
@@ -115,11 +116,6 @@ function getModuleDescription(moduleOrId) {
   return MODULE_DESCRIPTIONS[id] || 'จัดการข้อมูลและการทำงานของ backend'
 }
 
-function getSectionLabel(section) {
-  const id = typeof section === 'string' ? section : section?.id
-  return SECTION_LABELS[id] || section?.label || id || ''
-}
-
 function formatClockRemain(seconds) {
   const n = Math.max(0, Number(seconds) || 0)
   const h = Math.floor(n / 3600)
@@ -128,15 +124,15 @@ function formatClockRemain(seconds) {
   return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-function AdminState({ icon, title, detail, tone = 'primary' }) {
+function AdminState({ icon, title, detail, tone = 'accent' }) {
   return (
-    <div className="admin-state">
-      <div className="admin-state-panel">
-        <div className={`mx-auto mb-3 d-grid place-items-center rounded-circle text-bg-${tone}`} style={{ width: 52, height: 52, display: 'grid', placeItems: 'center' }}>
-          <i className={`bi ${icon} fs-4`} />
+    <div className="lgx-root lgx-fullstate">
+      <div className="lgx-fullstate-panel">
+        <div className={`lgx-fullstate-icon tone-${tone}`}>
+          <i className={`bi ${icon}`} />
         </div>
-        <h4 className="fw-bold mb-1">{title}</h4>
-        {detail ? <div className="text-secondary small">{detail}</div> : null}
+        <div className="lgx-fullstate-title">{title}</div>
+        {detail ? <div className="lgx-fullstate-detail">{detail}</div> : null}
       </div>
     </div>
   )
@@ -144,29 +140,24 @@ function AdminState({ icon, title, detail, tone = 'primary' }) {
 
 function ModuleLoadingState() {
   return (
-    <div className="p-4">
-      <div className="row g-3 mb-4">
+    <>
+      <div className="lgx-skeleton-strip">
         {[0, 1, 2, 3].map((idx) => (
-          <div className="col-6 col-lg-3" key={idx}>
-            <div className="card border-0">
-              <div className="card-body">
-                <div className="admin-skeleton-line mb-3" style={{ width: '42%' }} />
-                <div className="admin-skeleton-line mb-2" style={{ width: '78%', height: 24 }} />
-                <div className="admin-skeleton-line" style={{ width: '56%' }} />
-              </div>
-            </div>
+          <div className="lgx-skeleton-cell" key={idx}>
+            <div className="lgx-skeleton-line" style={{ width: '42%' }} />
+            <div className="lgx-skeleton-line" style={{ width: '68%', height: 20 }} />
           </div>
         ))}
       </div>
-      <div className="card border-0">
-        <div className="card-body">
-          <div className="admin-skeleton-line mb-3" style={{ width: '30%' }} />
-          <div className="admin-skeleton-line mb-2" />
-          <div className="admin-skeleton-line mb-2" style={{ width: '92%' }} />
-          <div className="admin-skeleton-line" style={{ width: '72%' }} />
+      <div className="lgx-panel">
+        <div className="lgx-panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="lgx-skeleton-line" style={{ width: '30%' }} />
+          <div className="lgx-skeleton-line" />
+          <div className="lgx-skeleton-line" style={{ width: '92%' }} />
+          <div className="lgx-skeleton-line" style={{ width: '72%' }} />
         </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -212,35 +203,6 @@ function useAdminLTEAssets() {
   }, [])
 }
 
-function isMobileViewport() {
-  return typeof window !== 'undefined' && window.innerWidth < 992
-}
-
-function useSidebar() {
-  const [isMobile, setIsMobile] = useState(() => isMobileViewport())
-  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileViewport())
-
-  useEffect(() => {
-    const onResize = () => {
-      const nextIsMobile = isMobileViewport()
-      setIsMobile(nextIsMobile)
-      setSidebarOpen(!nextIsMobile)
-    }
-    onResize()
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  function toggleSidebar() {
-    setSidebarOpen((v) => !v)
-  }
-
-  function closeSidebarOnMobile() {
-    if (isMobileViewport()) setSidebarOpen(false)
-  }
-
-  return { sidebarOpen, setSidebarOpen, toggleSidebar, closeSidebarOnMobile, isMobile }
-}
 
 export default function AdminV3() {
   useAdminLTEAssets()
@@ -250,7 +212,6 @@ export default function AdminV3() {
   const [rbacState, setRbacState] = useState({ status: 'idle', data: null, error: '' })
   const [moduleStore, setModuleStore] = useState({})
   const [moduleSearch, setModuleSearch] = useState('')
-  const { sidebarOpen, toggleSidebar, closeSidebarOnMobile, isMobile } = useSidebar()
 
   // ── query states ──
   const [usersQuery, setUsersQuery] = useState(DEFAULT_USERS_QUERY)
@@ -556,7 +517,6 @@ export default function AdminV3() {
     const next = new URLSearchParams(params)
     next.set('module', id)
     setParams(next)
-    closeSidebarOnMobile()
   }
 
   function logout() {
@@ -575,27 +535,15 @@ export default function AdminV3() {
 
   // ── loading / error / forbidden states ──
   if (session.status === 'loading') {
-    return (
-      <div className="admin-v3-shell">
-        <AdminState icon="bi-lightning-charge" title="กำลังเปิด Backend" detail="กำลังตรวจ session และสิทธิ์การเข้าถึง" />
-      </div>
-    )
+    return <AdminState icon="bi-lightning-charge" title="กำลังเปิด Backend" detail="กำลังตรวจ session และสิทธิ์การเข้าถึง" />
   }
 
   if (session.status === 'forbidden') {
-    return (
-      <div className="admin-v3-shell">
-        <AdminState icon="bi-shield-exclamation" title="ไม่มีสิทธิ์เข้า Backend" detail="บัญชีนี้ยังไม่ได้รับสิทธิ์ staff/admin" tone="danger" />
-      </div>
-    )
+    return <AdminState icon="bi-shield-exclamation" title="ไม่มีสิทธิ์เข้า Backend" detail="บัญชีนี้ยังไม่ได้รับสิทธิ์ staff/admin" tone="crit" />
   }
 
   if (session.status === 'error') {
-    return (
-      <div className="admin-v3-shell">
-        <AdminState icon="bi-exclamation-triangle" title="โหลด Backend ไม่สำเร็จ" detail={session.error} tone="danger" />
-      </div>
-    )
+    return <AdminState icon="bi-exclamation-triangle" title="โหลด Backend ไม่สำเร็จ" detail={session.error} tone="crit" />
   }
 
   const me = session.me
@@ -633,10 +581,10 @@ export default function AdminV3() {
     }
     if (activeModuleState.status === 'error') {
       return (
-        <div className="p-4">
-          <div className="alert alert-danger mb-0">
-            <div className="fw-bold"><i className="bi bi-exclamation-triangle me-2" />โหลดโมดูลไม่สำเร็จ</div>
-            <div className="small mt-1">{activeModuleState.error}</div>
+        <div className="lgx-panel" style={{ borderColor: 'var(--lgx-crit)' }}>
+          <div className="lgx-panel-body">
+            <div style={{ fontWeight: 700, color: 'var(--lgx-crit)' }}><i className="bi bi-exclamation-triangle" style={{ marginRight: 6 }} />โหลดโมดูลไม่สำเร็จ</div>
+            <div style={{ fontSize: 12.5, marginTop: 4, color: 'var(--lgx-text-muted)' }}>{activeModuleState.error}</div>
           </div>
         </div>
       )
@@ -671,266 +619,69 @@ export default function AdminV3() {
     }
   }
 
+  function onNotifItemLink(link) {
+    const match = String(link || '').match(/module=(\w+)/)
+    if (match) { setParams({ module: match[1] }); setNotifOpen(false) }
+  }
+
   return (
-    <div className="admin-v3-shell layout-fixed" style={{ minHeight: '100vh' }}>
-      <div className={`app-wrapper ${sidebarOpen ? 'sidebar-open' : 'sidebar-collapse'}`}>
-        {/* ── Topbar ── */}
-        <nav className="app-header navbar navbar-expand admin-topbar">
-          <div className="container-fluid">
-            <ul className="navbar-nav">
-              <li className="nav-item">
-                <button
-                  className="admin-icon-btn"
-                  onClick={toggleSidebar}
-                  aria-label="Toggle sidebar"
-                >
-                  <i className="bi bi-list"></i>
-                </button>
-              </li>
-              <li className="nav-item d-none d-md-block">
-                <span className="nav-link fw-bold text-dark">{getModuleLabel(currentModuleMeta)}</span>
-              </li>
-            </ul>
-            <ul className="navbar-nav ms-auto">
-              {isStaff && (
-                <li className="nav-item" ref={clockMenuRef} style={{ position: 'relative' }}>
-                  {clockedIn ? (
-                    <button
-                      className="nav-link btn btn-link text-success"
-                      onClick={doClockOut}
-                      disabled={clockLoading}
-                      title="ออกงาน (Clock Out)"
-                    >
-                      <i className="bi bi-clock-fill"></i>
-                      <span className="d-none d-md-inline ms-1" style={{ fontSize: '0.75rem' }}>
-                        {clockLoading ? '...' : autoRemain != null && autoRemain > 0 ? formatClockRemain(autoRemain) : 'ออกงาน'}
-                      </span>
-                    </button>
-                  ) : (
-                    <button
-                      className="nav-link btn btn-link text-secondary"
-                      onClick={() => setClockMenuOpen(p => !p)}
-                      disabled={clockLoading}
-                      title="เข้างาน (Clock In)"
-                    >
-                      <i className="bi bi-clock"></i>
-                      <span className="d-none d-md-inline ms-1" style={{ fontSize: '0.75rem' }}>
-                        {clockLoading ? '...' : 'เข้างาน'}
-                      </span>
-                    </button>
-                  )}
-                  {clockMenuOpen && !clockedIn && (
-                    <div className="dropdown-menu show shadow" style={{ position: 'absolute', right: 0, top: '100%', width: 220, zIndex: 1050 }}>
-                      <div className="px-3 py-2 border-bottom"><strong style={{ fontSize: '0.85rem' }}>เลือกระยะเวลาเข้างาน</strong></div>
-                      <button className="dropdown-item py-2" onClick={() => doClockIn(null)}>
-                        <i className="bi bi-infinity me-2"></i>ไม่กำหนด (ออกเอง)
-                      </button>
-                      {[1, 2, 3, 4, 5, 6, 8, 10, 12].map(h => (
-                        <button key={h} className="dropdown-item py-2" onClick={() => doClockIn(h * 60)}>
-                          <i className="bi bi-alarm me-2"></i>{h} ชั่วโมง
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </li>
-              )}
-              {isStaff && (
-                <li className="nav-item" ref={notifRef} style={{ position: 'relative' }}>
-                  <button className="admin-icon-btn position-relative" onClick={() => { setNotifOpen(p => !p); if (!notifOpen) refreshNotifications() }} title="แจ้งเตือน">
-                    <i className="bi bi-bell"></i>
-                    {notifUnread > 0 && (
-                      <span className="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style={{ fontSize: '0.6rem' }}>
-                        {notifUnread > 99 ? '99+' : notifUnread}
-                      </span>
-                    )}
-                  </button>
-                  {notifOpen && (
-                    <div className="dropdown-menu dropdown-menu-end show shadow" style={{ position: 'absolute', right: 0, top: '100%', width: 340, maxHeight: 420, overflowY: 'auto', zIndex: 1050 }}>
-                      <div className="px-3 py-2 d-flex justify-content-between align-items-center border-bottom">
-                        <strong>แจ้งเตือน</strong>
-                        {notifUnread > 0 && <button className="btn btn-link btn-sm p-0" onClick={markAllRead}>อ่านทั้งหมด</button>}
-                      </div>
-                      {notifItems.length === 0 ? (
-                        <div className="px-3 py-4 text-center text-secondary" style={{ fontSize: '0.85rem' }}>ไม่มีแจ้งเตือน</div>
-                      ) : notifItems.map(n => (
-                        <div
-                          key={n.id}
-                          className={`dropdown-item d-flex flex-column px-3 py-2 ${!n.is_read ? 'bg-light' : ''}`}
-                          style={{ cursor: 'pointer', whiteSpace: 'normal', borderBottom: '1px solid #eee' }}
-                          onClick={() => {
-                            if (!n.is_read) markOneRead(n.id)
-                            if (n.link) {
-                              const match = n.link.match(/module=(\w+)/)
-                              if (match) { setParams({ module: match[1] }); setNotifOpen(false) }
-                            }
-                          }}
-                        >
-                          <div className="d-flex justify-content-between">
-                            <strong style={{ fontSize: '0.8rem' }}>{n.title}</strong>
-                            {!n.is_read && <span className="badge bg-primary" style={{ fontSize: '0.55rem' }}>ใหม่</span>}
-                          </div>
-                          <small className="text-secondary" style={{ fontSize: '0.75rem' }}>{n.body}</small>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </li>
-              )}
-              <li className="nav-item dropdown user-menu">
-                <a href="#" className="nav-link dropdown-toggle d-flex align-items-center gap-2" data-bs-toggle="dropdown">
-                  <UserAvatar user={me?.user} size={28} rounded="full" />
-                  <span className="d-none d-md-inline">{displayName}</span>
-                </a>
-                <ul className="dropdown-menu dropdown-menu-end">
-                  <li className="px-3 py-2">
-                    <div className="fw-bold">{displayName}</div>
-                    <small className="text-secondary">{role}</small>
-                  </li>
-                  <li><hr className="dropdown-divider" /></li>
-                  <li><Link to="/" className="dropdown-item"><i className="bi bi-house me-2"></i>กลับหน้าเว็บ</Link></li>
-                  <li><button className="dropdown-item text-danger" onClick={logout}><i className="bi bi-box-arrow-right me-2"></i>ออกจากระบบ</button></li>
-                </ul>
-              </li>
-            </ul>
+    <LedgerShell
+      footer={<><span><strong>VXPERS</strong> operations</span><span>Backend console</span></>}
+      topBarProps={{
+        onBrandClick: () => selectModule('dashboard'),
+        search: moduleSearch,
+        onSearchChange: setModuleSearch,
+        isStaff,
+        clockedIn,
+        clockLoading,
+        clockMenuOpen,
+        setClockMenuOpen,
+        clockMenuRef,
+        autoRemain,
+        formatClockRemain,
+        onClockIn: doClockIn,
+        onClockOut: doClockOut,
+        notifItems,
+        notifUnread,
+        notifOpen,
+        setNotifOpen,
+        notifRef,
+        onNotifOpen: refreshNotifications,
+        onMarkAllRead: markAllRead,
+        onMarkOneRead: markOneRead,
+        onNotifItemLink,
+        displayName,
+        role,
+        meUser: me?.user,
+        onLogout: logout,
+      }}
+      tabNavProps={{
+        sections: visibleModuleSections,
+        activeModule,
+        onSelectModule: selectModule,
+        getModuleLabel,
+        getModuleDescription,
+      }}
+    >
+      <PageBar
+        title={getModuleLabel(currentModuleMeta)}
+        subtitle={getModuleDescription(currentModuleMeta)}
+        quickModules={quickModules}
+        activeModule={activeModule}
+        onSelectModule={selectModule}
+        getModuleLabel={getModuleLabel}
+        showStorageLink={role === 'owner'}
+        onRefresh={() => loadModuleData(activeModule)}
+        updatedAt={activeLoadedAt}
+      />
+      <div className="lgx-content">
+        {rbacState.status === 'error' ? (
+          <div className="lgx-pill warn" style={{ width: 'fit-content' }}>
+            <i className="bi bi-exclamation-triangle" />RBAC fallback mode
           </div>
-        </nav>
-
-        {/* ── Mobile overlay backdrop ── */}
-        {sidebarOpen && isMobile && (
-          <div
-            onClick={toggleSidebar}
-            style={{
-              position: 'fixed', inset: 0, zIndex: 1029,
-              background: 'rgba(0,0,0,0.5)',
-            }}
-          />
-        )}
-
-        {/* ── Sidebar ── */}
-        <aside
-          className="app-sidebar admin-sidebar"
-          data-bs-theme="dark"
-          style={isMobile ? {
-            position: 'fixed', top: 0, left: 0, height: '100vh', zIndex: 1030,
-            transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)',
-            transition: 'transform 0.25s ease',
-            width: '282px',
-          } : {
-            display: sidebarOpen ? '' : 'none',
-          }}
-        >
-          <div className="sidebar-brand">
-            <a href="#" className="brand-link" onClick={(e) => { e.preventDefault(); selectModule('dashboard') }}>
-              <span className="brand-mark"><i className="bi bi-command" /></span>
-              <span>
-                <span className="brand-title d-block">VXPERS Backend</span>
-                <span className="brand-subtitle d-block">Operations console</span>
-              </span>
-            </a>
-          </div>
-          <div className="admin-sidebar-search">
-            <input
-              type="search"
-              className="form-control"
-              placeholder="ค้นหาเมนู..."
-              value={moduleSearch}
-              onChange={(e) => setModuleSearch(e.target.value)}
-            />
-          </div>
-          <div className="sidebar-wrapper" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 116px)' }}>
-            <nav className="mt-2">
-              <ul className="nav sidebar-menu flex-column" role="navigation">
-                {visibleModuleSections.map((section) => (
-                  <li className="nav-section" key={section.id}>
-                    <div className="nav-header">{getSectionLabel(section).toUpperCase()}</div>
-                    {section.modules.map((mod) => (
-                      <div className="nav-item" key={mod.id}>
-                        <a
-                          href="#"
-                          className={`nav-link ${activeModule === mod.id ? 'active' : ''}`}
-                          onClick={(e) => { e.preventDefault(); selectModule(mod.id) }}
-                          title={getModuleDescription(mod)}
-                        >
-                          <i className={`nav-icon bi ${mod.icon}`}></i>
-                          <p>{getModuleLabel(mod)}</p>
-                        </a>
-                      </div>
-                    ))}
-                  </li>
-                ))}
-                {!visibleModuleSections.length ? (
-                  <li className="px-3 py-4 text-center text-white-50 small">ไม่พบเมนูที่ค้นหา</li>
-                ) : null}
-              </ul>
-            </nav>
-
-            {rbacState.status === 'error' && (
-              <div className="mx-2 mb-2">
-                <div className="alert alert-warning py-1 px-2 mb-0" style={{ fontSize: '11px' }}>
-                  <i className="bi bi-exclamation-triangle me-1"></i>RBAC fallback mode
-                </div>
-              </div>
-            )}
-          </div>
-        </aside>
-
-        {/* ── Main Content ── */}
-        <main className="app-main" style={!isMobile && !sidebarOpen ? { marginLeft: 0 } : {}}>
-          <div className="app-content-header">
-            <div className="container-fluid">
-              <div className="row g-3 align-items-end">
-                <div className="col-lg-7">
-                  <div className="admin-chip mb-2">
-                    <i className={`bi ${currentModuleMeta?.icon || 'bi-speedometer'}`} />
-                    {role}
-                  </div>
-                  <h1 className="admin-page-title">{getModuleLabel(currentModuleMeta)}</h1>
-                  <div className="admin-page-subtitle">{getModuleDescription(currentModuleMeta)}</div>
-                </div>
-                <div className="col-lg-5">
-                  <div className="d-flex flex-wrap justify-content-lg-end gap-2">
-                    {quickModules.map((mod) => (
-                      <button
-                        type="button"
-                        className={`admin-chip ${activeModule === mod.id ? 'border-info text-info' : ''}`}
-                        key={mod.id}
-                        onClick={() => selectModule(mod.id)}
-                      >
-                        <i className={`bi ${mod.icon}`} />
-                        {getModuleLabel(mod)}
-                      </button>
-                    ))}
-                    {role === 'owner' ? (
-                      <Link to="/admin/storage" className="admin-chip">
-                        <i className="bi bi-hdd-stack" />
-                        Storage
-                      </Link>
-                    ) : null}
-                    <button type="button" className="admin-chip" onClick={() => loadModuleData(activeModule)}>
-                      <i className="bi bi-arrow-clockwise" />
-                      รีเฟรช
-                    </button>
-                  </div>
-                  {activeLoadedAt ? <div className="mt-2 text-lg-end text-secondary small">อัปเดตล่าสุด {activeLoadedAt}</div> : null}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="app-content">
-            <div className="container-fluid">
-              <div className="admin-module-body">
-                {renderModule()}
-              </div>
-            </div>
-          </div>
-        </main>
-
-        {/* ── Footer ── */}
-        <footer className="app-footer">
-          <div className="float-end d-none d-sm-inline">Backend console</div>
-          <strong>VXPERS</strong> operations
-        </footer>
+        ) : null}
+        {renderModule()}
       </div>
-    </div>
+    </LedgerShell>
   )
 }

@@ -12,6 +12,7 @@ export function buildCommandPayload() {
           .setRequired(true),
       ),
     new SlashCommandBuilder().setName("unlink").setDescription("Unlink this Discord account from the website"),
+    new SlashCommandBuilder().setName("profile").setDescription("ดูโปรไฟล์ ยอดคงเหลือ และบัญชีที่ลิงก์"),
     new SlashCommandBuilder()
       .setName("globalpanel")
       .setDescription("Admin: setup the global command panel in this channel")

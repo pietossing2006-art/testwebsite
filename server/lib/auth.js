@@ -47,6 +47,27 @@ export async function requireAuth(req, res, next) {
   }
 }
 
+export async function optionalAuth(req, res, next) {
+  const token = getBearerToken(req) || getCookieToken(req)
+  if (!token) return next()
+
+  try {
+    const session = await getSession(token)
+    if (!session) return next()
+    const u = await getUserById(Number(session.user_id))
+    if (!u || Boolean(u?.is_banned)) return next()
+    req.user = {
+      id: Number(session.user_id),
+      email: session.email,
+      token: session.token,
+      role: typeof u?.role === 'string' && u.role.trim() ? u.role.trim().toLowerCase() : 'user',
+    }
+    next()
+  } catch {
+    next()
+  }
+}
+
 export function requireRole(role) {
   const expected = typeof role === 'string' ? role.trim().toLowerCase() : ''
   return function requireRoleMiddleware(req, res, next) {

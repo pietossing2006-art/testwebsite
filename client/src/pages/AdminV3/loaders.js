@@ -4,7 +4,7 @@
 import { fetchJson } from '../../api.js'
 import { normalizeUiImageSettings } from '../../uiImageSettings.js'
 import { normalizeUiBrandingSettings } from '../../uiBrandingSettings.js'
-import { pickNumber, normalizeHomepageSettings, normalizeSiteSettings } from './helpers.js'
+import { pickNumber, normalizeHomepageSettings, normalizeSiteSettings, normalizeTopupSettings } from './helpers.js'
 
 // ── Dashboard ──
 function normalizeDashboardData(results) {
@@ -179,12 +179,43 @@ export async function loadOrderDetail(orderId) {
 }
 
 // ── Logs ──
-export async function loadLogsModule(query) {
-  const qs = new URLSearchParams({ limit: String(Math.max(1, pickNumber(query.limit) || 50)), offset: '0' })
+export async function loadLogsModule(query = {}) {
+  const limit = Math.max(1, pickNumber(query.limit) || 50)
+  const page = Math.max(1, pickNumber(query.page) || 1)
+  const qs = new URLSearchParams({ limit: String(limit), page: String(page) })
+  if (String(query.search || '').trim()) qs.set('search', String(query.search).trim())
   if (String(query.action || '').trim()) qs.set('action', String(query.action).trim())
-  if (String(query.entity_type || '').trim()) qs.set('entity_type', String(query.entity_type).trim())
-  const data = await fetchJson(`/api/admin/audit-logs?${qs.toString()}`, { method: 'GET' })
-  return { logs: Array.isArray(data?.logs) ? data.logs : [] }
+  if (String(query.category || '').trim() && String(query.category).trim() !== 'all') qs.set('category', String(query.category).trim())
+  if (String(query.severity || '').trim() && String(query.severity).trim() !== 'all') qs.set('severity', String(query.severity).trim())
+  if (String(query.status || '').trim() && String(query.status).trim() !== 'all') qs.set('status', String(query.status).trim())
+  if (String(query.actorUserId || '').trim()) qs.set('actor_user_id', String(query.actorUserId).trim())
+  if (String(query.dateFrom || '').trim()) qs.set('date_from', String(query.dateFrom).trim())
+  if (String(query.dateTo || '').trim()) qs.set('date_to', String(query.dateTo).trim())
+
+  const [logsRes, statsRes] = await Promise.allSettled([
+    fetchJson(`/api/admin/audit-logs?${qs.toString()}`, { method: 'GET' }),
+    fetchJson('/api/admin/audit-logs/stats', { method: 'GET' }),
+  ])
+
+  const data = logsRes.status === 'fulfilled' ? logsRes.value : {}
+  const statsData = statsRes.status === 'fulfilled' ? statsRes.value?.stats : null
+
+  return {
+    logs: Array.isArray(data?.logs) ? data.logs : [],
+    total: pickNumber(data?.total) || 0,
+    page: pickNumber(data?.page) || page,
+    limit: pickNumber(data?.limit) || limit,
+    totalPages: pickNumber(data?.totalPages) || 1,
+    summary: data?.summary || {
+      total_count: 0,
+      critical_count: 0,
+      warning_count: 0,
+      security_count: 0,
+      unique_actors: 0,
+      unique_ips: 0,
+    },
+    stats: statsData || null,
+  }
 }
 
 // ── Settings ──
@@ -195,6 +226,7 @@ export async function loadSettingsModule() {
     branding_settings: normalizeUiBrandingSettings(data?.branding_settings),
     homepage_settings: normalizeHomepageSettings(data?.homepage_settings),
     site_settings: normalizeSiteSettings(data?.site_settings),
+    topup_settings: normalizeTopupSettings(data?.topup_settings),
   }
 }
 
@@ -212,17 +244,19 @@ export async function loadCatalogModule() {
 
 // ── Promotions ──
 export async function loadPromotionsModule() {
-  const [couponsRes, promotionsRes, discountCouponsRes, productsRes] = await Promise.all([
+  const [couponsRes, promotionsRes, discountCouponsRes, productsRes, categoriesRes] = await Promise.all([
     fetchJson('/api/admin/coupons'),
     fetchJson('/api/admin/promotions'),
     fetchJson('/api/admin/discount-coupons'),
     fetchJson('/api/admin/products'),
+    fetchJson('/api/admin/categories'),
   ])
   return {
     coupons: Array.isArray(couponsRes?.coupons) ? couponsRes.coupons : [],
     promotions: Array.isArray(promotionsRes?.promotions) ? promotionsRes.promotions : [],
     discountCoupons: Array.isArray(discountCouponsRes?.coupons) ? discountCouponsRes.coupons : [],
     products: Array.isArray(productsRes?.products) ? productsRes.products : [],
+    categories: Array.isArray(categoriesRes?.categories) ? categoriesRes.categories : [],
   }
 }
 
@@ -246,12 +280,14 @@ export async function loadGrowthModule() {
 
 // ── Stock ──
 export async function loadStockModule() {
-  const [productsRes, poolsRes] = await Promise.all([
+  const [productsRes, categoriesRes, poolsRes] = await Promise.all([
     fetchJson('/api/admin/products'),
-    fetchJson('/api/admin/stock-pools?limit=200&offset=0'),
+    fetchJson('/api/admin/categories').catch(() => ({ categories: [] })),
+    fetchJson('/api/admin/stock-pools?limit=200&offset=0').catch(() => ({ pools: [] })),
   ])
   return {
     products: Array.isArray(productsRes?.products) ? productsRes.products : [],
+    categories: Array.isArray(categoriesRes?.categories) ? categoriesRes.categories : [],
     pools: Array.isArray(poolsRes?.pools) ? poolsRes.pools : [],
     stockItems: [], stockSummary: null, poolItems: [], poolSummary: null, poolBindings: [],
   }

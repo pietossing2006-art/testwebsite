@@ -7,6 +7,7 @@ import {
   adminFulfillFarmRequest,
   adminCancelFarmRequest,
   adminStartFarmRequest,
+  adminAddFarmRequestNote,
   adminListBoosterFarmRequests,
   adminListAvailableBoosterFarmRequests,
   boosterFulfillFarmRequest,
@@ -29,6 +30,7 @@ import {
   adminRemoveUserAccount,
   adminRevokeUserSessions,
   adminUpdateUserAccount,
+  adminSetUserVipTier,
   creditPointsForTopup,
   listTopups,
   listTopupLogs,
@@ -367,6 +369,38 @@ router.post('/api/admin/farm-requests/:id/cancel', requireAuth, requireStaff, as
   }
 })
 
+router.post('/api/admin/farm-requests/:id/claim', requireAuth, requireStaff, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  try {
+    const row = await assignFarmRequestToBooster({ requestId: id, boosterId: req.user.id })
+    publishFulfillmentEvent({ kind: 'assigned', request_id: id, at: new Date().toISOString() })
+    res.json({ ok: true, assigned: row })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_request_id' || msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
+    if (msg === 'not_found_or_locked') return res.status(409).json({ error: 'not_found_or_locked' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/farm-requests/:id/notes', requireAuth, requireStaff, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  const { note } = req.body ?? {}
+  if (!note || !String(note).trim()) return res.status(400).json({ error: 'invalid_note' })
+  try {
+    const createdNote = await adminAddFarmRequestNote({ id, staffId: req.user.id, note: String(note).trim() })
+    publishFulfillmentEvent({ kind: 'note_added', request_id: id, at: new Date().toISOString() })
+    res.json({ ok: true, note: createdNote })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_request_id') return res.status(400).json({ error: 'invalid_id' })
+    if (msg === 'invalid_note') return res.status(400).json({ error: 'invalid_note' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
 // ── Admin Support Tickets ──
 
 router.get('/api/admin/support-agents', requireAuth, requireSupportStaff, async (req, res) => {
@@ -427,14 +461,21 @@ router.get('/api/admin/support-tickets/:id(\\d+)', requireAuth, requireSupportSt
 router.post('/api/admin/support-tickets/:id(\\d+)/reply', requireAuth, requireSupportStaff, async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
-  const { message, attachments } = req.body ?? {}
+  const { message, attachments, is_internal } = req.body ?? {}
   try {
-    await adminReplySupportTicket({ ticketId: id, staffUserId: req.user.id, staffRole: req.user.role, message, attachments })
+    await adminReplySupportTicket({
+      ticketId: id,
+      staffUserId: req.user.id,
+      staffRole: req.user.role,
+      message,
+      attachments,
+      isInternal: is_internal,
+    })
     const bundle = await adminGetSupportTicket({ ticketId: id })
     publishSupportEvent({
-      kind: 'ticket_replied_staff',
+      kind: is_internal ? 'ticket_internal_note' : 'ticket_replied_staff',
       ticket_id: id,
-      user_id: Number(bundle?.ticket?.user_id) || null,
+      user_id: is_internal ? null : (Number(bundle?.ticket?.user_id) || null),
       at: new Date().toISOString(),
     })
     res.json({ ok: true })
@@ -650,7 +691,9 @@ router.post('/api/admin/users/:id/points', requireAuth, requireFinance, async (r
   const actorRole = typeof req.user?.role === 'string' ? req.user.role.trim().toLowerCase() : 'user'
   const absAmount = Math.abs(amount)
 
-  if (absAmount > 100000) {
+  // Hard limit for owner is 100M; for staff is 100k
+  const hardLimit = actorRole === 'owner' ? 100000000 : 100000
+  if (absAmount > hardLimit) {
     try {
       await logAuditEvent({
         actorUserId: req.user?.id,
@@ -663,7 +706,7 @@ router.post('/api/admin/users/:id/points', requireAuth, requireFinance, async (r
     } catch {
       // ignore audit failure
     }
-    return res.status(400).json({ error: 'points_over_hard_limit' })
+    return res.status(400).json({ error: 'points_over_hard_limit', message: `จำนวนแต้มเกินขีดจำกัดสูงสุด (${hardLimit.toLocaleString()} แต้ม)` })
   }
 
   if (absAmount >= 50000 && actorRole !== 'owner') {
@@ -679,7 +722,7 @@ router.post('/api/admin/users/:id/points', requireAuth, requireFinance, async (r
     } catch {
       // ignore audit failure
     }
-    return res.status(403).json({ error: 'owner_approval_required_for_large_adjustment' })
+    return res.status(403).json({ error: 'owner_approval_required_for_large_adjustment', message: 'การปรับแต้ม 50,000 ขึ้นไปต้องดำเนินการโดย Owner เท่านั้น' })
   }
 
   if (absAmount >= 10000 && rs.length < 12 && actorRole !== 'owner') {
@@ -795,6 +838,30 @@ router.put('/api/admin/users/:id/profile', requireAuth, requireAdmin, async (req
     if (msg === 'invalid_username_charset') return res.status(400).json({ error: 'invalid_username_charset' })
     if (msg === 'invalid_display_name') return res.status(400).json({ error: 'invalid_display_name' })
     if (e?.code === '23505') return res.status(409).json({ error: 'email_or_username_taken' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.put('/api/admin/users/:id/vip-tier', requireAuth, requireAdmin, async (req, res) => {
+  const userId = Number(req.params.id)
+  if (!Number.isFinite(userId) || userId <= 0) return res.status(400).json({ error: 'invalid_id' })
+  const { tier_id } = req.body ?? {}
+  try {
+    const vip = await adminSetUserVipTier({ userId, tierId: tier_id })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'user.vip_tier_update',
+        entityType: 'user',
+        entityId: String(userId),
+        detail: { tier_id: tier_id ?? null },
+      })
+    } catch {}
+    res.json({ ok: true, vip })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_user_id') return res.status(400).json({ error: 'invalid_user_id' })
     res.status(500).json({ error: 'db_error' })
   }
 })

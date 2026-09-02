@@ -8,6 +8,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js'
+import { isTopupMethodEnabled, topupMethodDisabledMessage } from '../../topupSettings.js'
 
 export const commandName = "topups"
 
@@ -19,58 +20,79 @@ function withOptionEmoji(option, emoji) {
   return emoji ? { ...option, emoji } : option
 }
 
-export function buildTopupPanelRows(ctx, emoji) {
-  const arrowEmoji = ctx.topupArrowOptionEmoji(emoji)
+const TOPUP_SELECT_OPTIONS = {
+  promptpay: {
+    label: 'PromptPay',
+    description: 'Enter a custom amount and create a QR',
+    value: 'promptpay',
+  },
+  angpao: {
+    label: 'TrueMoney Angpao',
+    description: 'Enter a TrueMoney gift link in Discord',
+    value: 'angpao',
+  },
+  coupon: {
+    label: 'Coupon',
+    description: 'Redeem a coupon code in Discord',
+    value: 'coupon',
+  },
+}
 
-  return [
-    new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId('vx_topups_promptpay_amount')
-        .setPlaceholder('PromptPay / Angpao / Coupon')
-        .addOptions([
-          withOptionEmoji(
-            {
-              label: 'PromptPay',
-              description: 'Enter a custom amount and create a QR',
-              value: 'promptpay',
-            },
-            arrowEmoji,
-          ),
-          withOptionEmoji(
-            {
-              label: 'TrueMoney Angpao',
-              description: 'Enter a TrueMoney gift link in Discord',
-              value: 'angpao',
-            },
-            arrowEmoji,
-          ),
-          withOptionEmoji(
-            {
-              label: 'Coupon',
-              description: 'Redeem a coupon code in Discord',
-              value: 'coupon',
-            },
-            arrowEmoji,
-          ),
-        ]),
-    ),
+export async function buildTopupPanelRows(ctx, emoji, topupSettings = null) {
+  const settings = topupSettings || await ctx.getTopupSettings()
+  const arrowEmoji = ctx.topupArrowOptionEmoji(emoji)
+  const enabledOptions = Object.entries(TOPUP_SELECT_OPTIONS)
+    .filter(([method]) => isTopupMethodEnabled(settings, method))
+    .map(([, option]) => withOptionEmoji(option, arrowEmoji))
+
+  const rows = []
+  if (enabledOptions.length > 0) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('vx_topups_promptpay_amount')
+          .setPlaceholder('PromptPay / Angpao / Coupon')
+          .addOptions(enabledOptions),
+      ),
+    )
+  }
+
+  rows.push(
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setLabel('Open Top Up Page').setURL(ctx.makeSiteUrl('/topup')).setStyle(ButtonStyle.Link),
     ),
-  ]
+  )
+  return rows
 }
 
-export function buildTopupsPanelEmbed(ctx, profile, emoji) {
+export function buildTopupsPanelEmbed(ctx, profile, emoji, topupSettings = null) {
   const arrow = ctx.topupArrow(emoji)
+  const settings = topupSettings || null
+  const promptpayEnabled = settings ? isTopupMethodEnabled(settings, 'promptpay') : true
+  const fields = [{ name: 'บัญชี', value: ctx.profileName(profile), inline: true }]
+
+  if (promptpayEnabled) {
+    fields.push({ name: 'PromptPay QR', value: `${arrow} QR มีอายุการใช้งาน 10 นาที`, inline: false })
+    fields.push({
+      name: 'ยืนยันสลิป',
+      value: `${arrow} หลังชำระเงิน ให้ใช้ \`/topup verify-slip\` พร้อมรูปสลิป`,
+      inline: false,
+    })
+  }
+
+  if (settings && !Object.keys(TOPUP_SELECT_OPTIONS).some((method) => isTopupMethodEnabled(settings, method))) {
+    fields.push({
+      name: 'สถานะ',
+      value: `${arrow} ช่องทางเติมเงินถูกปิดชั่วคราว กรุณาใช้เว็บไซต์หรือติดต่อแอดมิน`,
+      inline: false,
+    })
+  }
+
   const embed = ctx.panelEmbed(
     'VxperS Top Up',
     'เลือกวิธีการเติมเงิน',
-    [
-      { name: 'บัญชี', value: ctx.profileName(profile), inline: true },
-      { name: 'PromptPay QR', value: `${arrow} QR มีอายุการใช้งาน 10 นาที`, inline: false },
-      { name: 'ยืนยันสลิป', value: `${arrow} หลังชำระเงิน ให้ใช้ \`/topup verify-slip\` พร้อมรูปสลิป`, inline: false },
-    ],
-    ctx.promptpayPanelImageUrl(),
+    fields,
+    promptpayEnabled ? ctx.promptpayPanelImageUrl() : undefined,
   )
   const icon = ctx.storeIconUrl()
   if (/^https?:\/\//i.test(icon)) embed.setThumbnail(icon)
@@ -90,16 +112,18 @@ export async function openTopupsPanel(ctx, interaction, profile = null) {
   const linkedProfile = profile || await resolveLinkedProfile(ctx, interaction)
   if (!linkedProfile) return
 
+  const topupSettings = await ctx.getTopupSettings()
   const topupEmoji = await ctx.getTopupEmoji(interaction.guild)
   await interaction.reply({
-    embeds: [buildTopupsPanelEmbed(ctx, linkedProfile, topupEmoji)],
-    components: buildTopupPanelRows(ctx, topupEmoji),
+    embeds: [buildTopupsPanelEmbed(ctx, linkedProfile, topupEmoji, topupSettings)],
+    components: await buildTopupPanelRows(ctx, topupEmoji, topupSettings),
     flags: ctx.EPHEMERAL,
   })
 }
 
 function friendlyCouponError(err) {
   const msg = String(err?.message || '')
+  if (msg === 'topup_method_disabled') return topupMethodDisabledMessage('coupon')
   if (msg === 'coupon_not_found') return 'ไม่พบโค้ดคูปอง'
   if (msg === 'coupon_inactive') return 'คูปองนี้ไม่ทำงาน'
   if (msg === 'coupon_expired') return 'คูปองนี้หมดอายุแล้ว'
@@ -110,6 +134,7 @@ function friendlyCouponError(err) {
 
 function friendlyAngpaoError(err) {
   const msg = String(err?.message || '')
+  if (msg === 'topup_method_disabled') return topupMethodDisabledMessage('angpao')
   if (msg === 'invalid_reference') return 'Invalid gift link. Please send the full TrueMoney gift URL.'
   if (msg === 'invalid_voucher') return 'This gift link is invalid, redeemed, or unavailable.'
   if (msg === 'duplicate_reference') return 'This gift link has already been used.'
@@ -119,6 +144,7 @@ function friendlyAngpaoError(err) {
 
 function friendlyPromptpayError(err) {
   const msg = String(err?.message || '')
+  if (msg === 'topup_method_disabled') return topupMethodDisabledMessage('promptpay')
   if (msg === 'invalid_points') return 'Invalid topup amount.'
   if (msg === 'missing_promptpay_config') return 'PromptPay topup is not configured yet.'
   if (msg === 'invalid_slip_image') return 'The slip image is invalid.'
@@ -134,8 +160,23 @@ function friendlyPromptpayError(err) {
   return 'Could not process this PromptPay topup. Please try again.'
 }
 
+async function ensureTopupMethodAvailable(ctx, interaction, method) {
+  const settings = await ctx.getTopupSettings()
+  if (isTopupMethodEnabled(settings, method)) return true
+
+  await interaction.reply({
+    embeds: [ctx.errorEmbed('Top Up Unavailable', topupMethodDisabledMessage(method))],
+    flags: ctx.EPHEMERAL,
+  })
+  return false
+}
+
 async function redeemCouponForInteraction(ctx, profile, code) {
   try {
+    const settings = await ctx.getTopupSettings()
+    if (!isTopupMethodEnabled(settings, 'coupon')) {
+      throw new Error('topup_method_disabled')
+    }
     const result = await ctx.redeemCoupon({ userId: profile.user_id, code })
     const wallet = await ctx.getWallet(profile.user_id)
     return {
@@ -211,6 +252,9 @@ export function createTopupsHandlers(ctx) {
     if (!profile) return
 
     const value = String(interaction.values?.[0] || '')
+    if (!['promptpay', 'coupon', 'angpao'].includes(value)) return
+    if (!(await ensureTopupMethodAvailable(ctx, interaction, value))) return
+
     if (value === 'promptpay') {
       const modal = new ModalBuilder().setCustomId('vx_topups_promptpay_modal').setTitle('PromptPay Topup')
       const pointsInput = new TextInputBuilder()
@@ -262,6 +306,14 @@ export function createTopupsHandlers(ctx) {
     const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
     if (!profile) return
 
+    const settings = await ctx.getTopupSettings()
+    if (!isTopupMethodEnabled(settings, 'promptpay')) {
+      await interaction.editReply({
+        embeds: [ctx.errorEmbed('PromptPay Failed', topupMethodDisabledMessage('promptpay'))],
+      })
+      return
+    }
+
     const rawPoints = interaction.fields.getTextInputValue('points').trim()
     const points = Number(rawPoints.replace(/,/g, ''))
     const payload = await createPromptpayForInteraction(ctx, profile, points)
@@ -272,6 +324,14 @@ export function createTopupsHandlers(ctx) {
     await interaction.deferReply({ flags: ctx.EPHEMERAL })
     const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
     if (!profile) return
+
+    const settings = await ctx.getTopupSettings()
+    if (!isTopupMethodEnabled(settings, 'angpao')) {
+      await interaction.editReply({
+        embeds: [ctx.errorEmbed('Angpao Topup Failed', topupMethodDisabledMessage('angpao'))],
+      })
+      return
+    }
 
     const link = interaction.fields.getTextInputValue('link').trim()
     try {
@@ -295,6 +355,14 @@ export function createTopupsHandlers(ctx) {
     const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
     if (!profile) return
 
+    const settings = await ctx.getTopupSettings()
+    if (!isTopupMethodEnabled(settings, 'coupon')) {
+      await interaction.editReply({
+        embeds: [ctx.errorEmbed('Coupon Failed', topupMethodDisabledMessage('coupon'))],
+      })
+      return
+    }
+
     const code = interaction.fields.getTextInputValue('code').trim()
     const payload = await redeemCouponForInteraction(ctx, profile, code)
     await interaction.editReply(payload)
@@ -313,6 +381,14 @@ export function createTopupsHandlers(ctx) {
     await interaction.deferReply({ flags: ctx.EPHEMERAL })
     const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
     if (!profile) return
+
+    const settings = await ctx.getTopupSettings()
+    if (!isTopupMethodEnabled(settings, 'promptpay')) {
+      await interaction.editReply({
+        embeds: [ctx.errorEmbed('PromptPay Verify Failed', topupMethodDisabledMessage('promptpay'))],
+      })
+      return
+    }
 
     const topupId = interaction.options.getInteger('topup_id', true)
     const attachment = interaction.options.getAttachment('slip', true)

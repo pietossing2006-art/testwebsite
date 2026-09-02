@@ -50,7 +50,7 @@ export default function AnnIcon({ icon, className = 'h-4 w-4 flex-shrink-0' }) {
 
   if (!rendered) {
     return (
-      <svg viewBox="0 0 24 24" className={className + ' text-white/70'} fill="none" stroke="currentColor" strokeWidth="1.5">
+      <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d={DEFAULT_PATH} />
       </svg>
     )
@@ -61,7 +61,7 @@ export default function AnnIcon({ icon, className = 'h-4 w-4 flex-shrink-0' }) {
   }
 
   return (
-    <svg viewBox="0 0 24 24" className={className + ' text-white/70'} fill="none" stroke="currentColor" strokeWidth="1.5">
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2">
       <path strokeLinecap="round" strokeLinejoin="round" d={rendered.d} />
     </svg>
   )

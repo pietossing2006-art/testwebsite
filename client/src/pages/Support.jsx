@@ -13,35 +13,88 @@ const SUPPORT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
 const QUICK_TOPICS = [
   {
     id: 'topup',
+    category: 'topup',
+    priority: 'urgent',
+    icon: '💳',
     title: 'เติมเงินไม่เข้า',
-    subject: 'เติมเงินไม่เข้า',
-    message: 'ยอดเติมเงินยังไม่เข้าในบัญชี\nเลขอ้างอิง/สลิป:\nเวลาที่โอนโดยประมาณ:',
+    subject: 'เติมเงินไม่เข้า / ปัญหาการโอนเงิน',
+    message: 'ยอดเงินยังไม่เข้าในกระเป๋าเงิน\n- เลขอ้างอิง/สลิปโอน:\n- เวลาที่โอนโดยประมาณ:\n- ยอดเงิน (บาท):',
   },
   {
     id: 'order',
+    category: 'order',
+    priority: 'urgent',
+    icon: '📦',
     title: 'ไม่ได้รับสินค้า',
-    subject: 'ไม่ได้รับสินค้า',
-    message: 'ยังไม่ได้รับสินค้าหลังสั่งซื้อ\nOrder ID:\nชื่อสินค้า:\nรายละเอียดเพิ่มเติม:',
+    subject: 'ไม่ได้รับสินค้าหลังสั่งซื้อ',
+    message: 'ยังไม่ได้รับสินค้าในกล่องรับของหลังชำระเงิน\n- เลขที่ Order / Ref:\n- ชื่อสินค้า:\n- รายละเอียดเพิ่มเติม:',
+  },
+  {
+    id: 'service',
+    category: 'service',
+    priority: 'normal',
+    icon: '🎮',
+    title: 'งานบริการ / ฟาร์ม',
+    subject: 'สอบถามสถานะงานบริการ / บูสต์ฟาร์ม',
+    message: 'ต้องการติดต่อเจ้าหน้าที่เกี่ยวกับงานบริการ\n- Order Ref:\n- รายละเอียดงาน:',
   },
   {
     id: 'account',
-    title: 'ปัญหาบัญชี',
-    subject: 'ปัญหาบัญชี',
-    message: 'ต้องการความช่วยเหลือเกี่ยวกับบัญชี\nอีเมลบัญชี:\nรายละเอียดปัญหา:',
+    category: 'account',
+    priority: 'normal',
+    icon: '🔑',
+    title: 'ปัญหาบัญชี / รหัสผ่าน',
+    subject: 'ต้องการความช่วยเหลือเกี่ยวกับบัญชี',
+    message: 'พบปัญหาเกี่ยวกับบัญชีผู้ใช้\n- อีเมลบัญชี:\n- รายละเอียดปัญหาที่พบ:',
+  },
+  {
+    id: 'general',
+    category: 'general',
+    priority: 'low',
+    icon: '💬',
+    title: 'สอบถามทั่วไป',
+    subject: 'สอบถามข้อมูลเพิ่มเติมเกี่ยวกับสินค้าและบริการ',
+    message: 'ต้องการสอบถามเรื่อง:\n',
   },
 ]
 
-function Card({ children, className = '' }) {
-  return <section className={`ui-panel ${className}`}>{children}</section>
+const CATEGORY_META = {
+  topup: { label: 'เติมเงิน', icon: '💳', color: 'bg-amber-50 text-amber-700 border-amber-200' },
+  order: { label: 'คำสั่งซื้อ', icon: '📦', color: 'bg-sky-50 text-sky-700 border-sky-200' },
+  service: { label: 'งานบริการ', icon: '🎮', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  account: { label: 'บัญชี', icon: '🔑', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  general: { label: 'ทั่วไป', icon: '💬', color: 'bg-slate-50 text-slate-700 border-slate-200' },
 }
+
+const FAQS = [
+  {
+    q: 'เติมเงินผ่าน PromptPay / ทรูมันนี่ ยอดจะเข้าเมื่อไหร่?',
+    a: 'ระบบเติมเงินอัตโนมัติจะตรวจสอบและเพิ่มยอดเงินเข้ากระเป๋าของคุณภายใน 5-30 วินาที หากยอดไม่เข้าเกิน 5 นาที สามารถกดเปิดตั๋วเลือกหัวข้อ "เติมเงินไม่เข้า" พร้อมแนบสลิปได้ทันที',
+  },
+  {
+    q: 'หลังจากสั่งซื้อสินค้าแล้ว สามารถดูสินค้าได้ที่ไหน?',
+    a: 'สามารถเข้าดูสินค้าได้ที่เมนู "กล่องรับของ (Inbox)" หรือ "ประวัติการสั่งซื้อ" ระบบจะส่งมอบรหัส/คีย์/ข้อมูลให้ทันทีสำหรับสินค้าดิจิทัลอัตโนมัติ',
+  },
+  {
+    q: 'ตั๋วแจ้งปัญหามีทีมงานตอบกลับช่วงเวลาใดบ้าง?',
+    a: 'ทีมงานฝ่ายบริการลูกค้าพร้อมตอบกลับและดูแลทุกเคสทุกวันตลอด 24 ชั่วโมง โดยมี SLA เวลาตอบกลับเฉลี่ยไม่เกิน 5-15 นาที',
+  },
+]
 
 function statusMeta(status) {
   const value = String(status || '').toLowerCase()
-  if (value === 'open') return { label: 'เปิดอยู่', className: 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100' }
-  if (value === 'pending') return { label: 'รอทีมงาน', className: 'border-amber-300/30 bg-amber-400/10 text-amber-100' }
-  if (value === 'resolved') return { label: 'แก้ไขแล้ว', className: 'border-sky-300/30 bg-sky-400/10 text-sky-100' }
-  if (value === 'closed') return { label: 'ปิดแล้ว', className: 'border-white/15 bg-white/5 text-white/55' }
-  return { label: status || '-', className: 'border-white/15 bg-white/5 text-white/60' }
+  if (value === 'open') return { label: 'เปิดอยู่', className: 'border-emerald-200 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500/20' }
+  if (value === 'pending') return { label: 'รอทีมงาน', className: 'border-amber-200 bg-amber-50 text-amber-700 ring-1 ring-amber-500/20' }
+  if (value === 'resolved') return { label: 'แก้ไขแล้ว', className: 'border-sky-200 bg-sky-50 text-sky-700 ring-1 ring-sky-500/20' }
+  if (value === 'closed') return { label: 'ปิดแล้ว', className: 'border-slate-200 bg-slate-100 text-slate-600' }
+  return { label: status || '-', className: 'border-slate-200 bg-slate-100 text-slate-600' }
+}
+
+function priorityMeta(priority) {
+  const p = String(priority || '').toLowerCase()
+  if (p === 'urgent') return { label: 'ด่วนมาก', className: 'border-rose-200 bg-rose-50 text-rose-700' }
+  if (p === 'low') return { label: 'ต่ำ', className: 'border-slate-200 bg-slate-50 text-slate-500' }
+  return { label: 'ปกติ', className: 'border-slate-200 bg-slate-50 text-slate-600' }
 }
 
 function formatDateTime(value) {
@@ -59,51 +112,46 @@ function formatRelative(value, nowMs) {
   if (min < 1) return 'เมื่อสักครู่'
   if (min < 60) return `${min} นาทีที่แล้ว`
   const hour = Math.floor(min / 60)
-  if (hour < 24) return `${hour} ชั่วโมงที่แล้ว`
+  if (hour < 24) return `${hour} ชม. ที่แล้ว`
   return `${Math.floor(hour / 24)} วันที่แล้ว`
 }
 
 function TicketBadge({ status }) {
   const meta = statusMeta(status)
-  return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${meta.className}`}>{meta.label}</span>
+  return <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-extrabold ${meta.className}`}>{meta.label}</span>
 }
 
 function CharacterCount({ value, max }) {
   const length = String(value || '').length
   const nearLimit = length > max * 0.9
-  return <span className={`text-[11px] ${nearLimit ? 'text-amber-200' : 'text-white/35'}`}>{length}/{max}</span>
+  return <span className={`text-[11px] ${nearLimit ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>{length}/{max}</span>
 }
 
 function AttachmentStrip({ items, onRemove, onPreview }) {
-  if (!items.length) return null
+  if (!items || !items.length) return null
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2 pt-1">
       {items.map((item, index) => (
         <div key={`${item.name || 'attachment'}-${index}`} className="group relative">
-          <button type="button" onClick={() => onPreview?.(item.data)} className="block rounded-xl outline-none transition hover:opacity-85">
-            <img src={item.data} alt={item.name || `attachment-${index + 1}`} className="h-16 w-16 rounded-xl border border-white/15 object-cover" />
+          <button
+            type="button"
+            onClick={() => onPreview?.(item.data)}
+            className="block overflow-hidden rounded-xl border border-slate-200 bg-slate-50 outline-none transition hover:opacity-90 hover:ring-2 hover:ring-sky-400"
+          >
+            <img src={item.data} alt={item.name || `attachment-${index + 1}`} className="h-16 w-16 object-cover" />
           </button>
           {onRemove ? (
             <button
               type="button"
               onClick={() => onRemove(index)}
-              className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-white/20 bg-black/85 text-[10px] font-black text-white/80 hover:text-white"
+              className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-white bg-slate-900 text-[10px] font-black text-white shadow-xs hover:bg-rose-600"
               aria-label="ลบรูปแนบ"
             >
-              x
+              ✕
             </button>
           ) : null}
         </div>
       ))}
-    </div>
-  )
-}
-
-function HelpItem({ title, body }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4">
-      <div className="text-xs font-extrabold text-white">{title}</div>
-      <div className="mt-1 text-[11px] leading-5 text-white/50">{body}</div>
     </div>
   )
 }
@@ -114,17 +162,33 @@ export default function Support() {
   const [tickets, setTickets] = useState([])
   const [ticketLoading, setTicketLoading] = useState(false)
   const [ticketError, setTicketError] = useState('')
-  const [ticketForm, setTicketForm] = useState({ subject: '', message: '' })
+  const [ticketSuccess, setTicketSuccess] = useState('')
   const [ticketSelectedId, setTicketSelectedId] = useState(null)
   const [ticketSelected, setTicketSelected] = useState(null)
   const [ticketMessages, setTicketMessages] = useState([])
   const [ticketReply, setTicketReply] = useState('')
   const [replyAttachments, setReplyAttachments] = useState([])
-  const [createAttachments, setCreateAttachments] = useState([])
   const [previewImage, setPreviewImage] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // New Ticket Modal State
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [createForm, setCreateForm] = useState({
+    subject: '',
+    message: '',
+    category: 'general',
+    priority: 'normal',
+    orderId: '',
+  })
+  const [createAttachments, setCreateAttachments] = useState([])
+  const [recentOrders, setRecentOrders] = useState([])
+  const [loadingOrders, setLoadingOrders] = useState(false)
+
+  // FAQ Expanded State
+  const [expandedFaq, setExpandedFaq] = useState(null)
+
   const replyFileRef = useRef(null)
   const createFileRef = useRef(null)
   const chatScrollRef = useRef(null)
@@ -132,16 +196,17 @@ export default function Support() {
   const ticketSelectedIdRef = useRef(null)
 
   const user = me?.user
-  const displayName = useMemo(() => user?.display_name || user?.email?.split('@')?.[0] || 'user', [user])
+  const displayName = useMemo(() => user?.display_name || user?.username || user?.email?.split('@')?.[0] || 'ผู้ใช้', [user])
   const isClosed = String(ticketSelected?.status || '').toLowerCase() === 'closed'
 
   const summary = useMemo(() => {
-    const result = { all: tickets.length, open: 0, pending: 0, closed: 0 }
+    const result = { all: tickets.length, open: 0, pending: 0, resolved: 0, closed: 0 }
     tickets.forEach((ticket) => {
       const status = String(ticket?.status || '').toLowerCase()
       if (status === 'open') result.open += 1
-      if (status === 'pending') result.pending += 1
-      if (status === 'closed') result.closed += 1
+      else if (status === 'pending') result.pending += 1
+      else if (status === 'resolved') result.resolved += 1
+      else if (status === 'closed') result.closed += 1
     })
     return result
   }, [tickets])
@@ -152,7 +217,11 @@ export default function Support() {
       const status = String(ticket?.status || '').toLowerCase()
       if (statusFilter !== 'all' && status !== statusFilter) return false
       if (!q) return true
-      return String(ticket?.subject || '').toLowerCase().includes(q) || String(ticket?.id || '').includes(q)
+      return (
+        String(ticket?.subject || '').toLowerCase().includes(q) ||
+        String(ticket?.id || '').includes(q) ||
+        String(ticket?.order_ref || '').toLowerCase().includes(q)
+      )
     })
   }, [tickets, query, statusFilter])
 
@@ -162,12 +231,20 @@ export default function Support() {
   }, [])
 
   useEffect(() => {
+    ticketSelectedIdRef.current = ticketSelectedId
+  }, [ticketSelectedId])
+
+  // Load User and Tickets
+  useEffect(() => {
     let cancelled = false
     async function load() {
       setTicketLoading(true)
       setTicketError('')
       try {
-        const [meRes, ticketsRes] = await Promise.all([fetchJson('/api/me'), fetchJson('/api/me/support-tickets?limit=50')])
+        const [meRes, ticketsRes] = await Promise.all([
+          fetchJson('/api/me'),
+          fetchJson('/api/me/support-tickets?limit=100'),
+        ])
         if (!cancelled) {
           setMe(meRes)
           setTickets(ticketsRes.tickets || [])
@@ -190,10 +267,7 @@ export default function Support() {
     }
   }, [nav])
 
-  useEffect(() => {
-    ticketSelectedIdRef.current = ticketSelectedId
-  }, [ticketSelectedId])
-
+  // Socket.io Real-time connection
   useEffect(() => {
     const uid = Number(user?.id)
     if (!Number.isFinite(uid)) return undefined
@@ -203,10 +277,10 @@ export default function Support() {
 
     async function silentRefresh(ticketId) {
       try {
-        const ticketsRes = await fetchJson('/api/me/support-tickets?limit=50')
+        const ticketsRes = await fetchJson('/api/me/support-tickets?limit=100')
         if (!closed) setTickets(ticketsRes.tickets || [])
       } catch {
-        // Real-time refresh is best effort; the manual refresh button remains available.
+        // silent
       }
       const selected = Number(ticketSelectedIdRef.current)
       const incoming = Number(ticketId)
@@ -219,7 +293,7 @@ export default function Support() {
           setTicketMessages(messages)
           lastMessageKeyRef.current = `${selected}:${messages.length ? messages[messages.length - 1]?.id : ''}:${messages.length}`
         } catch {
-          // Ignore transient detail refresh failures.
+          // silent
         }
       }
     }
@@ -245,12 +319,14 @@ export default function Support() {
     }
   }, [user?.id])
 
+  // Auto-scroll chat to bottom
   useEffect(() => {
     const node = chatScrollRef.current
     if (!node) return
     node.scrollTo({ top: node.scrollHeight, behavior: 'smooth' })
   }, [ticketMessages, ticketSelectedId])
 
+  // Lightbox escape key
   useEffect(() => {
     if (!previewImage) return undefined
     const onKeyDown = (event) => {
@@ -260,46 +336,11 @@ export default function Support() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [previewImage])
 
-  useEffect(() => {
-    const tid = Number(ticketSelectedId)
-    if (!Number.isFinite(tid)) return undefined
-
-    let cancelled = false
-    async function sync() {
-      if (cancelled || document.visibilityState === 'hidden') return
-      try {
-        const data = await fetchJson(`/api/me/support-tickets/${tid}`)
-        const messages = Array.isArray(data.messages) ? data.messages : []
-        const lastId = messages.length ? messages[messages.length - 1]?.id : ''
-        const nextKey = `${tid}:${String(lastId ?? '')}:${messages.length}`
-        if (nextKey === lastMessageKeyRef.current) return
-        lastMessageKeyRef.current = nextKey
-        setTicketSelected(data.ticket || null)
-        setTicketMessages(messages)
-        setTickets((prev) => {
-          const list = Array.isArray(prev) ? prev : []
-          return list.map((item) => (item?.id === tid ? { ...item, last_message_at: data?.ticket?.last_message_at ?? item.last_message_at, status: data?.ticket?.status ?? item.status } : item))
-        })
-      } catch (error) {
-        if (error?.status === 401) {
-          setAuthToken(null)
-          nav('/login', { replace: true })
-        }
-      }
-    }
-
-    const id = setInterval(sync, 12000)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [ticketSelectedId, nav])
-
   async function reloadTickets() {
     setTicketLoading(true)
     setTicketError('')
     try {
-      const ticketsRes = await fetchJson('/api/me/support-tickets?limit=50')
+      const ticketsRes = await fetchJson('/api/me/support-tickets?limit=100')
       setTickets(ticketsRes.tickets || [])
     } catch (error) {
       if (error?.status === 401) {
@@ -371,17 +412,56 @@ export default function Support() {
     setter((prev) => [...prev, ...results].slice(0, SUPPORT_ATTACHMENT_MAX_COUNT))
   }
 
-  function mapAttachmentError(code) {
-    if (code === 'too_many_attachments') return 'แนบรูปได้สูงสุด 3 รูปต่อข้อความ'
-    if (code === 'attachment_too_large') return 'รูปภาพต้องมีขนาดไม่เกิน 20MB'
-    if (code === 'invalid_attachment_type') return 'รองรับเฉพาะไฟล์รูปภาพ (jpg, png, gif, webp)'
-    return null
+  // Handle paste image from clipboard in textarea
+  function handlePasteImage(e, setter, currentAttachments) {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const imageFiles = []
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const blob = items[i].getAsFile()
+        if (blob) imageFiles.push(blob)
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      pickAttachments(imageFiles, currentAttachments, setter)
+    }
   }
 
-  async function createTicket() {
-    const subject = String(ticketForm.subject || '').trim()
-    const message = String(ticketForm.message || '').trim()
-    if (!subject || !message) return
+  async function openCreateModalWithTopic(topic) {
+    setCreateForm({
+      subject: topic?.subject || '',
+      message: topic?.message || '',
+      category: topic?.category || 'general',
+      priority: topic?.priority || 'normal',
+      orderId: '',
+    })
+    setCreateAttachments([])
+    setShowCreateModal(true)
+
+    // Load recent orders if not loaded
+    if (recentOrders.length === 0) {
+      setLoadingOrders(true)
+      try {
+        const res = await fetchJson('/api/me/purchases?limit=10')
+        setRecentOrders(res.items || res.orders || [])
+      } catch {
+        // silent
+      } finally {
+        setLoadingOrders(false)
+      }
+    }
+  }
+
+  async function submitCreateTicket(e) {
+    if (e) e.preventDefault()
+    const subject = String(createForm.subject || '').trim()
+    const message = String(createForm.message || '').trim()
+    if (!subject || !message) {
+      setTicketError('กรุณากรอกหัวข้อและรายละเอียดให้ครบถ้วน')
+      return
+    }
     if (subject.length > SUPPORT_SUBJECT_MAX_LENGTH) {
       setTicketError('หัวข้อยาวเกินกำหนด (สูงสุด 120 ตัวอักษร)')
       return
@@ -390,31 +470,35 @@ export default function Support() {
       setTicketError('รายละเอียดยาวเกินกำหนด (สูงสุด 4000 ตัวอักษร)')
       return
     }
-    if (ticketLoading) return
+
     setTicketLoading(true)
     setTicketError('')
     try {
       const result = await fetchJson('/api/me/support-tickets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subject, message, attachments: createAttachments.length > 0 ? createAttachments : undefined }),
+        body: JSON.stringify({
+          subject,
+          message,
+          category: createForm.category,
+          priority: createForm.priority,
+          order_id: createForm.orderId ? Number(createForm.orderId) : undefined,
+          attachments: createAttachments.length > 0 ? createAttachments : undefined,
+        }),
       })
-      setTicketForm({ subject: '', message: '' })
+
+      setShowCreateModal(false)
+      setCreateForm({ subject: '', message: '', category: 'general', priority: 'normal', orderId: '' })
       setCreateAttachments([])
+      setTicketSuccess('เปิดตั๋วปัญหาเรียบร้อยแล้ว ทีมงานจะตอบกลับโดยเร็วที่สุด')
+      setTimeout(() => setTicketSuccess(''), 4000)
+
       await reloadTickets()
-      if (result?.ticket?.id) await openTicket(result.ticket.id)
-    } catch (error) {
-      if (error?.status === 401) {
-        setAuthToken(null)
-        nav('/login', { replace: true })
-        return
+      if (result?.ticket?.id) {
+        await openTicket(result.ticket.id)
       }
-      const code = String(error?.data?.error || '')
-      if (code === 'invalid_subject') setTicketError('กรุณากรอกหัวข้อเคส')
-      else if (code === 'invalid_subject_too_long') setTicketError('หัวข้อยาวเกินกำหนด (สูงสุด 120 ตัวอักษร)')
-      else if (code === 'invalid_message') setTicketError('กรุณากรอกรายละเอียดปัญหา')
-      else if (code === 'invalid_message_too_long') setTicketError('รายละเอียดยาวเกินกำหนด (สูงสุด 4000 ตัวอักษร)')
-      else setTicketError(mapAttachmentError(code) || 'สร้างเคสไม่สำเร็จ')
+    } catch (error) {
+      setTicketError(error?.message || 'สร้างตั๋วปัญหาไม่สำเร็จ')
     } finally {
       setTicketLoading(false)
     }
@@ -443,361 +527,613 @@ export default function Support() {
       await openTicket(tid)
       await reloadTickets()
     } catch (error) {
-      if (error?.status === 401) {
-        setAuthToken(null)
-        nav('/login', { replace: true })
-        return
-      }
-      const code = String(error?.data?.error || '')
-      if (code === 'closed') setTicketError('Ticket นี้ถูกปิดแล้ว')
-      else if (code === 'invalid_message_too_long') setTicketError('ข้อความยาวเกินกำหนด (สูงสุด 4000 ตัวอักษร)')
-      else setTicketError(mapAttachmentError(code) || 'ส่งข้อความไม่สำเร็จ')
+      setTicketError(error?.message || 'ส่งข้อความไม่สำเร็จ')
     } finally {
       setTicketLoading(false)
     }
   }
 
-  function applyQuickTopic(topic) {
-    setTicketForm({ subject: topic.subject, message: topic.message })
-  }
-
   return (
     <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] glass-strong px-6 py-8 md:px-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_90%_at_8%_0%,rgba(34,211,238,0.14),transparent_62%),radial-gradient(45%_70%_at_100%_8%,rgba(14,165,233,0.1),transparent_60%)]" />
-        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+      {/* ── Top Hero & KPI Header ── */}
+      <section className="relative overflow-hidden rounded-3xl border border-sky-200/80 bg-white p-6 shadow-sm sm:p-8">
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="inline-flex items-center rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-extrabold text-cyan-100">
-              ศูนย์ช่วยเหลือ
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              ศูนย์บริการลูกค้า & ความช่วยเหลือ (Helpdesk 24/7)
             </div>
-            <h1 className="mt-4 text-3xl font-black tracking-tight text-white md:text-4xl">Support</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-7 text-white/58">
-              สวัสดี {displayName} เปิดเคส แนบรูป และติดตามคำตอบจากทีมงานได้ในที่เดียว
+            <h1 className="mt-3 text-3xl font-black tracking-tight text-slate-900 md:text-4xl">Support Desk</h1>
+            <p className="mt-2 max-w-2xl text-xs text-slate-500">
+              สวัสดีคุณ <strong className="text-slate-800 font-bold">{displayName}</strong> สามารถเปิดตั๋วปัญหา แนบหลักฐานสลิป หรือรูปภาพ เพื่อรับความช่วยเหลือจากทีมงานได้แบบ Real-time ตลอด 24 ชั่วโมง
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2 sm:min-w-[360px]">
-            {[
-              { label: 'ทั้งหมด', value: summary.all },
-              { label: 'เปิดอยู่', value: summary.open },
-              { label: 'รอทีมงาน', value: summary.pending },
-            ].map((item) => (
-              <div key={item.label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-center">
-                <div className="text-2xl font-black text-white">{item.value}</div>
-                <div className="mt-1 text-[11px] font-bold text-white/45">{item.label}</div>
-              </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => openCreateModalWithTopic(QUICK_TOPICS[0])}
+              className="inline-flex items-center gap-2 rounded-2xl bg-sky-600 px-5 py-3 text-xs font-black text-white shadow-md transition hover:bg-sky-700 active:scale-95"
+            >
+              <span className="text-base font-bold">+</span> เปิดตั๋วปัญหาใหม่
+            </button>
+            <button
+              type="button"
+              onClick={reloadTickets}
+              disabled={ticketLoading}
+              className="inline-flex items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700 shadow-xs transition hover:bg-slate-50"
+            >
+              🔄 รีเฟรช
+            </button>
+          </div>
+        </div>
+
+        {/* Quick Topic Chips */}
+        <div className="mt-6 border-t border-slate-100 pt-5">
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">เลือกหัวข้อด่วน:</div>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {QUICK_TOPICS.map((topic) => (
+              <button
+                key={topic.id}
+                type="button"
+                onClick={() => openCreateModalWithTopic(topic)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-sky-300 hover:bg-sky-100/80 active:scale-95"
+              >
+                <span>{topic.icon}</span>
+                <span>{topic.title}</span>
+              </button>
             ))}
           </div>
         </div>
       </section>
 
+      {/* Alerts */}
       {ticketError ? (
-        <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 px-4 py-3 text-sm font-semibold text-cyan-50">
-          ทำรายการไม่สำเร็จ: {ticketError}
+        <div className="flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">
+          <span>⚠️ {ticketError}</span>
+          <button type="button" onClick={() => setTicketError('')} className="text-rose-500 hover:text-rose-800">✕</button>
         </div>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <div className="space-y-5">
-          <Card className="p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-extrabold text-white">เปิดเคสใหม่</h2>
-                <p className="mt-1 text-xs leading-5 text-white/45">เลือกหัวข้อด่วนหรือกรอกรายละเอียดเองได้เลย</p>
-              </div>
-              <button type="button" onClick={reloadTickets} disabled={ticketLoading} className="ui-btn h-9 px-3 text-xs">
-                รีเฟรช
-              </button>
+      {ticketSuccess ? (
+        <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-700">
+          <span>✅ {ticketSuccess}</span>
+          <button type="button" onClick={() => setTicketSuccess('')} className="text-emerald-500 hover:text-emerald-800">✕</button>
+        </div>
+      ) : null}
+
+      {/* ── Main Workspace: Tickets List & Live Chat Stream ── */}
+      <div className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+        {/* Left Column: Tickets Queue */}
+        <div className="flex flex-col rounded-3xl border border-sky-200/80 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+              <h2 className="text-sm font-black text-slate-900">ตั๋วปัญหาของฉัน</h2>
+              <div className="text-[11px] text-slate-400">ทั้งหมด {tickets.length} รายการ</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => openCreateModalWithTopic(QUICK_TOPICS[0])}
+              className="rounded-xl border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-black text-sky-700 transition hover:bg-sky-100"
+            >
+              + สร้าง
+            </button>
+          </div>
+
+          {/* Search & Filter Tabs */}
+          <div className="mt-3.5 space-y-2.5">
+            <div className="relative">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="ค้นหาตามหัวข้อ, เลขเคส, Ref..."
+                className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 pl-8 text-xs outline-none transition focus:border-sky-400 focus:bg-white"
+              />
+              <span className="absolute left-2.5 top-2.5 text-xs text-slate-400">🔍</span>
+              {query ? (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  className="absolute right-2.5 top-2.5 text-xs text-slate-400 hover:text-slate-600"
+                >
+                  ✕
+                </button>
+              ) : null}
             </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-              {QUICK_TOPICS.map((topic) => (
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: 'all', label: 'ทั้งหมด', count: summary.all },
+                { id: 'open', label: 'เปิดอยู่', count: summary.open },
+                { id: 'pending', label: 'รอทีมงาน', count: summary.pending },
+                { id: 'closed', label: 'ปิดแล้ว', count: summary.closed },
+              ].map((tab) => (
                 <button
-                  key={topic.id}
+                  key={tab.id}
                   type="button"
-                  onClick={() => applyQuickTopic(topic)}
-                  className="rounded-2xl border border-white/10 bg-white/[0.025] px-3 py-2 text-left text-xs font-extrabold text-white/75 transition hover:border-cyan-300/30 hover:bg-cyan-400/10 hover:text-white"
+                  onClick={() => setStatusFilter(tab.id)}
+                  className={`rounded-xl border px-2.5 py-1 text-[11px] font-extrabold transition ${
+                    statusFilter === tab.id
+                      ? 'border-sky-300 bg-sky-50 text-sky-700 ring-1 ring-sky-400/30'
+                      : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                  }`}
                 >
-                  {topic.title}
+                  {tab.label} {tab.count > 0 ? `(${tab.count})` : ''}
                 </button>
               ))}
             </div>
+          </div>
 
-            <div className="mt-4 space-y-3">
-              <label className="block">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-bold text-white/65">หัวข้อ</span>
-                  <CharacterCount value={ticketForm.subject} max={SUPPORT_SUBJECT_MAX_LENGTH} />
-                </div>
-                <input
-                  value={ticketForm.subject}
-                  onChange={(event) => setTicketForm((state) => ({ ...state, subject: event.target.value }))}
-                  className="ui-field h-11 px-3 text-sm"
-                  placeholder="เช่น เติมเงินไม่เข้า / รับของไม่ได้"
-                  maxLength={SUPPORT_SUBJECT_MAX_LENGTH}
-                />
-              </label>
-              <label className="block">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-bold text-white/65">รายละเอียด</span>
-                  <CharacterCount value={ticketForm.message} max={SUPPORT_MESSAGE_MAX_LENGTH} />
-                </div>
-                <textarea
-                  value={ticketForm.message}
-                  onChange={(event) => setTicketForm((state) => ({ ...state, message: event.target.value }))}
-                  className="ui-field h-32 rounded-2xl p-3 text-sm"
-                  placeholder="อธิบายปัญหา พร้อมแนบข้อมูล เช่น Order ID, เวลาโอน, หรือสกรีนช็อต"
-                  maxLength={SUPPORT_MESSAGE_MAX_LENGTH}
-                />
-              </label>
-              <AttachmentStrip
-                items={createAttachments}
-                onPreview={setPreviewImage}
-                onRemove={(index) => setCreateAttachments((prev) => prev.filter((_, i) => i !== index))}
-              />
-              <input
-                ref={createFileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(event) => { pickAttachments(event.target.files, createAttachments, setCreateAttachments); event.target.value = '' }}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => createFileRef.current?.click()}
-                  disabled={ticketLoading || createAttachments.length >= SUPPORT_ATTACHMENT_MAX_COUNT}
-                  className="ui-btn h-10 px-3 text-xs disabled:opacity-50"
-                >
-                  แนบรูป {createAttachments.length > 0 ? `(${createAttachments.length}/3)` : ''}
-                </button>
-                <button
-                  type="button"
-                  onClick={createTicket}
-                  disabled={ticketLoading || !String(ticketForm.subject || '').trim() || !String(ticketForm.message || '').trim()}
-                  className="ui-btn-primary h-10 px-5 text-xs"
-                >
-                  เปิดเคส
-                </button>
+          {/* Ticket Cards Stream */}
+          <div className="mt-4 flex-1 space-y-2 overflow-y-auto pr-1" style={{ maxHeight: '600px' }}>
+            {visibleTickets.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-xs text-slate-400">
+                {query ? 'ไม่พบตั๋วปัญหาที่ตรงกับคำค้นหา' : 'ยังไม่มีตั๋วปัญหาในสถานะนี้'}
               </div>
-            </div>
-          </Card>
+            ) : null}
 
-          <Card className="p-5">
-            <h2 className="text-sm font-extrabold text-white">ช่วยให้ทีมงานตอบไวขึ้น</h2>
-            <div className="mt-3 grid gap-3">
-              <HelpItem title="แนบหลักฐานให้ครบ" body="สลิป, Order ID, ชื่อสินค้า หรือภาพหน้าจอช่วยให้ทีมงานตรวจสอบได้เร็วขึ้น" />
-              <HelpItem title="ตอบกลับในเคสเดิม" body="ถ้าเป็นเรื่องเดียวกัน แนะนำคุยต่อในเคสเดิมเพื่อให้ประวัติครบ" />
-            </div>
-          </Card>
+            {visibleTickets.map((ticket) => {
+              const isSelected = ticketSelectedId === ticket.id
+              const catMeta = CATEGORY_META[ticket.category] || CATEGORY_META.general
+              const prio = priorityMeta(ticket.priority)
+
+              return (
+                <button
+                  key={ticket.id}
+                  type="button"
+                  onClick={() => openTicket(ticket.id)}
+                  className={`w-full rounded-2xl border p-3.5 text-left transition ${
+                    isSelected
+                      ? 'border-sky-400 bg-sky-50/70 shadow-sm ring-1 ring-sky-300'
+                      : 'border-slate-200/80 bg-white hover:border-sky-200 hover:bg-sky-50/30'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${catMeta.color}`}>
+                        {catMeta.icon} {catMeta.label}
+                      </span>
+                      {ticket.priority === 'urgent' ? (
+                        <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-extrabold ${prio.className}`}>
+                          🔥 ด่วน
+                        </span>
+                      ) : null}
+                    </div>
+                    <TicketBadge status={ticket.status} />
+                  </div>
+
+                  <div className="mt-2 font-bold text-xs text-slate-900 line-clamp-1">
+                    #{ticket.id} {ticket.subject}
+                  </div>
+
+                  {ticket.order_ref ? (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
+                      🔗 {ticket.order_ref}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                    <span>อัปเดต: {formatRelative(ticket.last_message_at || ticket.created_at, nowMs)}</span>
+                    <span className="font-mono text-[10px]">#{ticket.id}</span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
         </div>
 
-        <Card className={`${ticketSelected ? 'h-[calc(100dvh-104px)] min-h-[560px]' : 'min-h-[560px]'} overflow-hidden p-0 lg:h-[min(760px,calc(100vh-150px))] lg:min-h-[620px]`}>
-          <div className="grid h-full min-h-0 lg:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className={`${ticketSelected ? 'hidden lg:flex' : 'flex'} min-h-0 flex-col border-b border-white/10 p-4 lg:border-b-0 lg:border-r`}>
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-extrabold text-white">เคสของฉัน</h2>
-                {ticketLoading ? <span className="text-[11px] text-cyan-100">กำลังโหลด...</span> : null}
-              </div>
-              <div className="mt-4 space-y-3">
-                <input value={query} onChange={(event) => setQuery(event.target.value)} className="ui-field h-10 px-3 text-xs" placeholder="ค้นหาหัวข้อหรือเลขเคส" />
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: 'all', label: 'ทั้งหมด', count: summary.all },
-                    { id: 'open', label: 'เปิด', count: summary.open },
-                    { id: 'pending', label: 'รอทีมงาน', count: summary.pending },
-                    { id: 'closed', label: 'ปิด', count: summary.closed },
-                  ].map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setStatusFilter(tab.id)}
-                      className={`rounded-full border px-3 py-1.5 text-[11px] font-extrabold transition ${
-                        statusFilter === tab.id ? 'border-cyan-300/40 bg-cyan-400/15 text-cyan-50' : 'border-white/10 bg-white/[0.025] text-white/50 hover:text-white'
-                      }`}
-                    >
-                      {tab.label} {tab.count}
-                    </button>
-                  ))}
+        {/* Right Column: Live Chat & Thread Inspector */}
+        <div className="flex min-h-[580px] flex-col rounded-3xl border border-sky-200/80 bg-white shadow-sm overflow-hidden">
+          {!ticketSelected ? (
+            <div className="grid flex-1 place-items-center p-8 text-center">
+              <div className="max-w-md">
+                <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl border border-sky-200 bg-sky-50 text-2xl">
+                  💬
                 </div>
-              </div>
-
-              <div className="mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {visibleTickets.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-white/12 p-5 text-center text-xs text-white/45">ยังไม่มีเคสในรายการนี้</div>
-                ) : null}
-                {visibleTickets.map((ticket) => (
+                <h3 className="mt-4 text-base font-black text-slate-900">เลือกตั๋วปัญหาเพื่อดูข้อความ</h3>
+                <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                  คลิกเลือกรายการด้านซ้าย หรือกดปุ่ม <strong>"+ เปิดตั๋วปัญหาใหม่"</strong> ด้านบนเพื่อส่งคำถามถึงทีมงานทันที
+                </p>
+                <div className="mt-6 flex justify-center gap-3">
                   <button
-                    key={ticket.id}
                     type="button"
-                    onClick={() => openTicket(ticket.id)}
-                    className={`w-full rounded-2xl border p-4 text-left transition ${
-                      ticketSelectedId === ticket.id ? 'border-cyan-300/35 bg-cyan-400/10' : 'border-white/10 bg-white/[0.025] hover:border-white/18 hover:bg-white/[0.045]'
-                    }`}
+                    onClick={() => openCreateModalWithTopic(QUICK_TOPICS[0])}
+                    className="rounded-2xl bg-sky-600 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-sky-700"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-xs font-extrabold text-white">#{ticket.id} {ticket.subject}</div>
-                        <div className="mt-1 text-[11px] text-white/40">{formatRelative(ticket.last_message_at || ticket.created_at, nowMs)}</div>
-                      </div>
-                      <TicketBadge status={ticket.status} />
-                    </div>
+                    เปิดตั๋วปัญหาใหม่
                   </button>
-                ))}
+                </div>
               </div>
-            </aside>
+            </div>
+          ) : (
+            <>
+              {/* Ticket Details Header */}
+              <div className="border-b border-slate-100 bg-slate-50/50 p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-sky-700">Ticket #{ticketSelected.id}</span>
+                      <TicketBadge status={ticketSelected.status} />
+                      {ticketSelected.priority === 'urgent' ? (
+                        <span className="rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-extrabold text-rose-700">
+                          🔥 ด่วนมาก
+                        </span>
+                      ) : null}
+                    </div>
+                    <h2 className="mt-1 text-sm sm:text-base font-black text-slate-900 truncate">
+                      {ticketSelected.subject}
+                    </h2>
 
-            <section className={`${ticketSelected ? 'flex' : 'hidden lg:flex'} min-h-0 flex-col`}>
-              {!ticketSelected ? (
-                <div className="grid min-h-0 flex-1 place-items-center p-8 text-center">
-                  <div>
-                    <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-cyan-300/20 bg-cyan-400/10 text-xl font-black text-cyan-100">?</div>
-                    <div className="mt-4 text-sm font-extrabold text-white">เลือกเคสเพื่อดูข้อความ</div>
-                    <div className="mt-2 max-w-sm text-xs leading-6 text-white/45">หรือเปิดเคสใหม่ด้านซ้าย ทีมงานจะตอบกลับในช่องสนทนานี้</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+                      <span>สร้างเมื่อ: {formatDateTime(ticketSelected.created_at)}</span>
+                      {ticketSelected.order_ref ? (
+                        <span className="inline-flex items-center gap-1 font-mono text-slate-600 font-bold">
+                          📦 Ref: {ticketSelected.order_ref}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <>
-                  <div className="border-b border-white/10 p-3 sm:p-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTicketSelectedId(null)
-                            setTicketSelected(null)
-                            setTicketMessages([])
-                          }}
-                          className="ui-btn mt-0.5 h-9 shrink-0 px-3 text-xs lg:hidden"
-                        >
-                          กลับ
-                        </button>
-                        <div className="min-w-0">
-                        <div className="text-xs font-extrabold text-white">Ticket #{ticketSelected.id}</div>
-                        <div className="mt-1 truncate text-sm font-bold text-white/82">{ticketSelected.subject}</div>
-                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-white/42">
-                          <span>ตอบครั้งแรก: {formatDateTime(ticketSelected.first_response_at)}</span>
-                          <span>แก้ไขเมื่อ: {formatDateTime(ticketSelected.resolved_at)}</span>
+              </div>
+
+              {/* Chat Message Stream */}
+              <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50/30" style={{ minHeight: '380px' }}>
+                {ticketMessages.length === 0 ? (
+                  <div className="text-center text-xs text-slate-400 py-8">ไม่มีประวัติข้อความ</div>
+                ) : null}
+
+                {ticketMessages.map((msg) => {
+                  const isUser = String(msg.sender_role || '').toLowerCase() === 'user'
+                  const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
+                  const senderUser = {
+                    display_name: msg.sender_display_name,
+                    email: msg.sender_email,
+                    avatar_url: msg.sender_avatar_url,
+                    role: msg.sender_role,
+                  }
+
+                  return (
+                    <div key={msg.id} className={`flex items-start gap-2.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
+                      {!isUser ? (
+                        <UserAvatar user={senderUser} size={34} rounded="full" />
+                      ) : null}
+
+                      <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl p-4 shadow-xs ${
+                        isUser
+                          ? 'bg-sky-600 text-white rounded-tr-xs'
+                          : 'bg-white border border-slate-200 text-slate-800 rounded-tl-xs'
+                      }`}>
+                        {/* Header in bubble */}
+                        <div className={`flex items-center justify-between gap-3 text-[11px] pb-1 border-b ${
+                          isUser ? 'border-sky-500/50 text-sky-100' : 'border-slate-100 text-slate-400'
+                        }`}>
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <span>{isUser ? 'คุณ' : (msg.sender_display_name || 'เจ้าหน้าที่ฝ่ายบริการ')}</span>
+                            {!isUser ? (
+                              <span className="rounded-md bg-emerald-100 px-1 py-0.2 text-[9px] font-extrabold text-emerald-800">
+                                STAFF
+                              </span>
+                            ) : null}
+                          </div>
+                          <span className="text-[10px]">{formatDateTime(msg.created_at)}</span>
                         </div>
-                        </div>
+
+                        {/* Content */}
+                        {msg.message ? (
+                          <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed">
+                            {msg.message}
+                          </div>
+                        ) : null}
+
+                        {/* Attachments */}
+                        {attachments.length > 0 ? (
+                          <div className="mt-2.5">
+                            <AttachmentStrip items={attachments} onPreview={setPreviewImage} />
+                          </div>
+                        ) : null}
                       </div>
-                      <TicketBadge status={ticketSelected.status} />
+
+                      {isUser ? (
+                        <UserAvatar user={{ display_name: displayName, avatar_url: user?.avatar_url }} size={34} rounded="full" />
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Chat Composer */}
+              <div className="border-t border-slate-200 bg-white p-4">
+                {isClosed ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-xs text-slate-500">
+                    🔒 ตั๋วปัญหานี้ถูกปิดแล้ว หากยังพบปัญหาหรือต้องการความช่วยเหลือเพิ่มเติม สามารถกด <strong>"+ เปิดตั๋วปัญหาใหม่"</strong> ได้เสมอครับ
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">ตอบกลับข้อความ</span>
+                      <CharacterCount value={ticketReply} max={SUPPORT_MESSAGE_MAX_LENGTH} />
+                    </div>
+
+                    <textarea
+                      value={ticketReply}
+                      onChange={(e) => setTicketReply(e.target.value)}
+                      onPaste={(e) => handlePasteImage(e, setReplyAttachments, replyAttachments)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          if (!ticketLoading && (ticketReply.trim() || replyAttachments.length > 0)) {
+                            sendTicketReply()
+                          }
+                        }
+                      }}
+                      placeholder="พิมพ์ข้อความตอบกลับ... (กด Enter เพื่อส่ง, Shift+Enter เพื่อขึ้นบรรทัดใหม่, หรือวางรูปจากคลิปบอร์ด)"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 p-3 text-xs outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-100"
+                      rows={3}
+                      maxLength={SUPPORT_MESSAGE_MAX_LENGTH}
+                    />
+
+                    <AttachmentStrip
+                      items={replyAttachments}
+                      onPreview={setPreviewImage}
+                      onRemove={(index) => setReplyAttachments((prev) => prev.filter((_, i) => i !== index))}
+                    />
+
+                    <input
+                      ref={replyFileRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        pickAttachments(e.target.files, replyAttachments, setReplyAttachments)
+                        e.target.value = ''
+                      }}
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => replyFileRef.current?.click()}
+                        disabled={replyAttachments.length >= SUPPORT_ATTACHMENT_MAX_COUNT}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        📷 แนบรูปภาพ {replyAttachments.length > 0 ? `(${replyAttachments.length}/3)` : ''}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={sendTicketReply}
+                        disabled={ticketLoading || (!ticketReply.trim() && replyAttachments.length === 0)}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-5 py-2 text-xs font-black text-white shadow-sm hover:bg-sky-700 active:scale-95 disabled:opacity-50"
+                      >
+                        <span>ส่งข้อความ</span> ✈️
+                      </button>
                     </div>
                   </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
-                  <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-                    {ticketMessages.length === 0 ? <div className="text-xs text-white/45">ไม่มีข้อความ</div> : null}
-                    <div className="space-y-3">
-                      {ticketMessages.map((message) => {
-                        const isUser = String(message.sender_role || '').toLowerCase() === 'user'
-                        const attachments = Array.isArray(message.attachments) ? message.attachments : []
-                        const senderUser = {
-                          display_name: message.sender_display_name,
-                          email: message.sender_email,
-                          avatar_url: message.sender_avatar_url,
-                          role: message.sender_role,
-                        }
+      {/* ── FAQs Section ── */}
+      <section className="rounded-3xl border border-sky-200/80 bg-white p-6 shadow-sm">
+        <h2 className="text-base font-black text-slate-900">คำถามที่พบบ่อย (FAQs)</h2>
+        <p className="mt-0.5 text-xs text-slate-500">รวมข้อสงสัยและคำแนะนำเบื้องต้นสำหรับการใช้งาน</p>
+
+        <div className="mt-4 space-y-2.5">
+          {FAQS.map((faq, i) => {
+            const isOpen = expandedFaq === i
+            return (
+              <div key={i} className="rounded-2xl border border-slate-200/80 bg-slate-50/50 overflow-hidden transition">
+                <button
+                  type="button"
+                  onClick={() => setExpandedFaq(isOpen ? null : i)}
+                  className="flex w-full items-center justify-between p-4 text-left font-bold text-xs text-slate-800 hover:bg-slate-100/60"
+                >
+                  <span>{faq.q}</span>
+                  <span className="text-slate-400 font-bold">{isOpen ? '−' : '+'}</span>
+                </button>
+                {isOpen ? (
+                  <div className="border-t border-slate-200/60 bg-white p-4 text-xs leading-relaxed text-slate-600">
+                    {faq.a}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
+      {/* ── Modal: Create New Ticket Wizard ── */}
+      {showCreateModal && typeof document !== 'undefined'
+        ? createPortal(
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+              <div className="relative w-full max-w-xl rounded-3xl border border-slate-100 bg-white p-6 shadow-2xl animate-scaleIn">
+                <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900">เปิดตั๋วปัญหาใหม่</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">กรอกข้อมูลปัญหาเพื่อให้เจ้าหน้าที่ช่วยเหลือได้อย่างรวดเร็ว</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateModal(false)}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={submitCreateTicket} className="mt-4 space-y-4">
+                  {/* Category Selection */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">หมวดหมู่ปัญหา</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {Object.entries(CATEGORY_META).map(([key, meta]) => {
+                        const isSelected = createForm.category === key
                         return (
-                          <div key={message.id} className={`flex items-start gap-2 ${isUser ? 'justify-end' : 'justify-start'}`}>
-                            {!isUser ? <UserAvatar user={senderUser} size={30} rounded="full" /> : null}
-                            <div className={`min-w-0 max-w-[calc(100%-2.75rem)] rounded-2xl border p-3 sm:max-w-[min(620px,92%)] ${
-                              isUser ? 'border-cyan-300/18 bg-cyan-500/10' : 'border-white/10 bg-white/[0.045]'
-                            }`}>
-                              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                                <span className="text-[11px] font-extrabold text-white/80">{isUser ? (message.sender_display_name || message.sender_email || 'คุณ') : 'Supporter'}</span>
-                                <span className="text-[10px] text-white/35">{formatDateTime(message.created_at)}</span>
-                              </div>
-                              {message.message ? <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/78">{message.message}</div> : null}
-                              <div className="mt-2">
-                                <AttachmentStrip items={attachments} onPreview={setPreviewImage} />
-                              </div>
-                            </div>
-                            {isUser ? <UserAvatar user={senderUser} size={30} rounded="full" /> : null}
-                          </div>
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setCreateForm((prev) => ({ ...prev, category: key }))}
+                            className={`flex items-center gap-2 rounded-xl border p-2.5 text-left text-xs font-bold transition ${
+                              isSelected
+                                ? 'border-sky-400 bg-sky-50 text-sky-700 ring-2 ring-sky-300'
+                                : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                            }`}
+                          >
+                            <span>{meta.icon}</span>
+                            <span>{meta.label}</span>
+                          </button>
                         )
                       })}
                     </div>
                   </div>
 
-                  <div className="border-t border-white/10 p-3 sm:p-4">
-                    {isClosed ? (
-                      <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 text-xs text-white/50">Ticket นี้ถูกปิดแล้ว หากยังต้องการความช่วยเหลือ กรุณาเปิดเคสใหม่</div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-white/65">ตอบกลับ</span>
-                          <CharacterCount value={ticketReply} max={SUPPORT_MESSAGE_MAX_LENGTH} />
-                        </div>
-                        <textarea
-                          value={ticketReply}
-                          onChange={(event) => setTicketReply(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' && !event.shiftKey) {
-                              event.preventDefault()
-                              if (!ticketLoading && (ticketReply.trim() || replyAttachments.length > 0)) sendTicketReply()
-                            }
-                          }}
-                          placeholder="พิมพ์ข้อความ... กด Enter เพื่อส่ง หรือ Shift+Enter เพื่อขึ้นบรรทัดใหม่"
-                          className="ui-field h-24 rounded-2xl p-3 text-sm"
-                          maxLength={SUPPORT_MESSAGE_MAX_LENGTH}
-                        />
-                        <AttachmentStrip
-                          items={replyAttachments}
-                          onPreview={setPreviewImage}
-                          onRemove={(index) => setReplyAttachments((prev) => prev.filter((_, i) => i !== index))}
-                        />
-                        <input
-                          ref={replyFileRef}
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          className="hidden"
-                          onChange={(event) => { pickAttachments(event.target.files, replyAttachments, setReplyAttachments); event.target.value = '' }}
-                        />
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => replyFileRef.current?.click()}
-                            disabled={replyAttachments.length >= SUPPORT_ATTACHMENT_MAX_COUNT}
-                            className="ui-btn h-10 px-3 text-xs disabled:opacity-50"
-                          >
-                            แนบรูป {replyAttachments.length > 0 ? `(${replyAttachments.length}/3)` : ''}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={sendTicketReply}
-                            disabled={ticketLoading || (!ticketReply.trim() && replyAttachments.length === 0)}
-                            className="ui-btn-primary h-10 px-5 text-xs"
-                          >
-                            ส่งข้อความ
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </section>
-          </div>
-        </Card>
-      </div>
+                  {/* Priority & Linked Order */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1.5">ความสำคัญ</label>
+                      <select
+                        value={createForm.priority}
+                        onChange={(e) => setCreateForm((prev) => ({ ...prev, priority: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs outline-none focus:border-sky-400 focus:bg-white"
+                      >
+                        <option value="low">ปกติ / ทั่วไป (Normal)</option>
+                        <option value="normal">ปานกลาง (Medium)</option>
+                        <option value="urgent">🔥 ด่วนมาก (Urgent)</option>
+                      </select>
+                    </div>
 
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1.5">ผูกกับคำสั่งซื้อ (ถ้ามี)</label>
+                      <select
+                        value={createForm.orderId}
+                        onChange={(e) => setCreateForm((prev) => ({ ...prev, orderId: e.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs outline-none focus:border-sky-400 focus:bg-white"
+                      >
+                        <option value="">-- ไม่ระบุคำสั่งซื้อ --</option>
+                        {recentOrders.map((ord) => (
+                          <option key={ord.id} value={ord.id}>
+                            Order #{ord.id} - {ord.ref || `${ord.total_points} P`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Subject */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-slate-700">หัวข้อปัญหา</label>
+                      <CharacterCount value={createForm.subject} max={SUPPORT_SUBJECT_MAX_LENGTH} />
+                    </div>
+                    <input
+                      value={createForm.subject}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, subject: e.target.value }))}
+                      placeholder="เช่น เติมเงินไม่เข้า / ออเดอร์ไม่ส่งรหัส"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs outline-none focus:border-sky-400 focus:bg-white"
+                      maxLength={SUPPORT_SUBJECT_MAX_LENGTH}
+                      required
+                    />
+                  </div>
+
+                  {/* Message */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-bold text-slate-700">รายละเอียดปัญหา</label>
+                      <CharacterCount value={createForm.message} max={SUPPORT_MESSAGE_MAX_LENGTH} />
+                    </div>
+                    <textarea
+                      value={createForm.message}
+                      onChange={(e) => setCreateForm((prev) => ({ ...prev, message: e.target.value }))}
+                      onPaste={(e) => handlePasteImage(e, setCreateAttachments, createAttachments)}
+                      placeholder="อธิบายรายละเอียดปัญหา พร้อมข้อมูลที่เกี่ยวข้อง (สามารถวางรูปภาพสกรีนช็อตได้โดยตรง)"
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs outline-none focus:border-sky-400 focus:bg-white"
+                      rows={4}
+                      maxLength={SUPPORT_MESSAGE_MAX_LENGTH}
+                      required
+                    />
+                  </div>
+
+                  {/* Attachments */}
+                  <div>
+                    <AttachmentStrip
+                      items={createAttachments}
+                      onPreview={setPreviewImage}
+                      onRemove={(index) => setCreateAttachments((prev) => prev.filter((_, i) => i !== index))}
+                    />
+
+                    <input
+                      ref={createFileRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        pickAttachments(e.target.files, createAttachments, setCreateAttachments)
+                        e.target.value = ''
+                      }}
+                    />
+
+                    <div className="mt-2 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => createFileRef.current?.click()}
+                        disabled={createAttachments.length >= SUPPORT_ATTACHMENT_MAX_COUNT}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                      >
+                        📷 แนบรูปภาพสลิป/หลักฐาน {createAttachments.length > 0 ? `(${createAttachments.length}/3)` : ''}
+                      </button>
+                      <span className="text-[11px] text-slate-400">สูงสุด 3 รูป (รูปละไม่เกิน 20MB)</span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateModal(false)}
+                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={ticketLoading || !createForm.subject.trim() || !createForm.message.trim()}
+                      className="rounded-xl bg-sky-600 px-6 py-2.5 text-xs font-black text-white shadow-md hover:bg-sky-700 disabled:opacity-50"
+                    >
+                      {ticketLoading ? 'กำลังส่ง...' : 'ยืนยันเปิดตั๋วปัญหา'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {/* ── Lightbox Image Modal ── */}
       {previewImage && typeof document !== 'undefined'
         ? createPortal(
-            <div className="popup-overlay-animate fixed inset-0 z-[110] flex items-center justify-center bg-black/85 p-4" onClick={() => setPreviewImage('')}>
+            <div
+              className="fixed inset-0 z-[110] flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
+              onClick={() => setPreviewImage('')}
+            >
               <button
                 type="button"
                 onClick={() => setPreviewImage('')}
-                className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/50 text-lg font-bold text-white hover:bg-black/70"
+                className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/20 bg-black/60 text-lg font-bold text-white hover:bg-black"
                 aria-label="ปิดรูปตัวอย่าง"
               >
-                x
+                ✕
               </button>
               <img
                 src={previewImage}
                 alt="attachment-preview"
-                onClick={(event) => event.stopPropagation()}
-                className="popup-media-animate max-h-[90vh] max-w-[95vw] rounded-2xl border border-white/20 bg-black object-contain shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+                className="max-h-[90vh] max-w-[95vw] rounded-2xl border border-white/20 bg-black object-contain shadow-2xl"
               />
             </div>,
             document.body,

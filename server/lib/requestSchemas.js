@@ -121,6 +121,16 @@ export const CategoryBodySchema = z
     slug: trimmedStringWithCode('invalid_slug').pipe(z.string().min(1, { message: 'invalid_slug' })),
     image_url: z.unknown().optional(),
     description: optionalTrimmedString.transform((value) => value || ''),
+    parent_id: z.unknown().optional().transform((val) => {
+      if (val === null || val === undefined || val === '' || val === 'none' || val === 0 || val === '0') return null
+      const n = Number(val)
+      return Number.isFinite(n) && n > 0 ? n : null
+    }),
+    sort_order: z.unknown().optional().transform((val) => {
+      const n = Number(val)
+      return Number.isFinite(n) ? n : 0
+    }),
+    icon: z.unknown().optional().transform((val) => (typeof val === 'string' ? val.trim() : null)),
   })
   .passthrough()
 
@@ -236,6 +246,14 @@ export const ProductBodySchema = z
       .transform((value) => (value == null ? 0 : value)),
     is_featured: z.unknown().optional(),
     is_unlimited_stock: z.unknown().optional(),
+    gallery_images: z.unknown().optional(),
+    badge: z.unknown().optional(),
+    tags: z.unknown().optional(),
+    sku: z.unknown().optional(),
+    admin_notes: z.unknown().optional(),
+    volume_pricing: z.unknown().optional(),
+    min_order_qty: z.unknown().optional(),
+    max_order_qty: z.unknown().optional(),
   })
   .passthrough()
 

@@ -16,6 +16,11 @@ trap {
 
 Set-Location -Path $PSScriptRoot
 
+$stateDir = Join-Path (Split-Path $PSScriptRoot -Parent) '.script-state'
+if (Test-Path $stateDir) {
+  $PID | Out-File -FilePath (Join-Path $stateDir 'server.pid') -Encoding utf8 -Force
+}
+
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 if (-not $nodeCommand) {
   Write-Host "ERROR: Node.js is required to start the server." -ForegroundColor Red

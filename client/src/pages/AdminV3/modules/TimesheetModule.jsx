@@ -40,6 +40,34 @@ const DURATION_OPTIONS = [
   { label: '12 ชั่วโมง', value: 720 },
 ]
 
+function SessionRow({ s, index, total, showStaff }) {
+  return (
+    <tr className={s.clock_out ? undefined : 'st-ok'}>
+      <td className="mono">{showStaff ? s.id : total - index}</td>
+      {showStaff && (
+        <>
+          <td>
+            <div style={{ fontWeight: 600 }}>{s.display_name || s.email}</div>
+            {s.display_name ? <div style={{ fontSize: 11, color: 'var(--lgx-text-muted)' }}>{s.email}</div> : null}
+          </td>
+          <td><span className="lgx-pill neutral">{s.role}</span></td>
+        </>
+      )}
+      <td className="mono">{formatDateTime(s.clock_in)}</td>
+      <td className="mono">{s.clock_out ? formatDateTime(s.clock_out) : '-'}</td>
+      <td style={{ fontWeight: 600 }}>{formatDuration(s.duration_seconds)}</td>
+      <td>
+        {s.auto_clock_out_at ? (
+          <span className="lgx-pill warn" title={`ออกอัตโนมัติเวลา ${formatDateTime(s.auto_clock_out_at)}`}>อัตโนมัติ</span>
+        ) : (
+          <span style={{ fontSize: 11, color: 'var(--lgx-text-muted)' }}>ออกเอง</span>
+        )}
+      </td>
+      <td>{s.clock_out ? <span className="lgx-pill neutral">เสร็จสิ้น</span> : <span className="lgx-pill ok">กำลังทำงาน</span>}</td>
+    </tr>
+  )
+}
+
 export default function TimesheetModule({ data, ctx }) {
   const [tab, setTab] = useState('my')
   const [clockedIn, setClockedIn] = useState(data?.clockedIn || false)
@@ -97,7 +125,7 @@ export default function TimesheetModule({ data, ctx }) {
           setClockedIn(false)
           setClockIn(null)
           setAutoClockOutAt(null)
-          fetchJson('/api/staff/clock-sessions?limit=100').then(r => { if (r?.items) setMySessions(r.items) }).catch(() => {})
+          fetchJson('/api/staff/clock-sessions?limit=100').then((r) => { if (r?.items) setMySessions(r.items) }).catch(() => {})
         }
       } else {
         setAutoRemain(null)
@@ -111,187 +139,100 @@ export default function TimesheetModule({ data, ctx }) {
   const todayTotal = sumDurationToday(mySessions) + (clockedIn ? elapsed : 0)
 
   return (
-    <div>
-      <h5 className="mb-3"><i className="bi bi-clock-history me-2"></i>ลงเวลางาน</h5>
+    <>
+      <div className="lgx-strip">
+        <div className="lgx-stat">
+          <div className="l">สถานะกะทำงาน</div>
+          <div className={`v${clockedIn ? '' : ' warn'}`}>{clockedIn ? 'กำลังทำงาน' : 'ไม่ได้ลงเวลา'}</div>
+          <div className="d">{clockedIn ? `เข้างานเมื่อ ${formatDateTime(clockIn)}` : 'กดลงเวลาเพื่อเริ่มกะ'}</div>
+        </div>
+        <div className="lgx-stat">
+          <div className="l">เวลาสะสมวันนี้</div>
+          <div className="v">{formatDuration(todayTotal)}</div>
+          <div className="d">รวมทุกช่วงเวลาในวันนี้</div>
+        </div>
+        <div className="lgx-stat">
+          <div className="l">บันทึกทั้งหมด</div>
+          <div className="v">{mySessions.length}</div>
+          <div className="d">รอบการลงเวลาที่ผ่านมา</div>
+        </div>
+      </div>
 
-      {/* Clock status card */}
-      <div className="row mb-4">
-        <div className="col-md-6">
-          <div className={`card border-0 shadow-sm ${clockedIn ? 'border-start border-success border-4' : ''}`}>
-            <div className="card-body d-flex align-items-center justify-content-between">
-              <div>
-                <div className="text-secondary" style={{ fontSize: '0.8rem' }}>สถานะปัจจุบัน</div>
-                <div className="fw-bold fs-5">
-                  {clockedIn ? (
-                    <span className="text-success"><i className="bi bi-circle-fill me-2" style={{ fontSize: '0.6rem' }}></i>กำลังทำงาน</span>
-                  ) : (
-                    <span className="text-secondary"><i className="bi bi-circle me-2" style={{ fontSize: '0.6rem' }}></i>ไม่ได้ลงเวลา</span>
-                  )}
-                </div>
-                {clockedIn && (
-                  <div className="text-secondary mt-1" style={{ fontSize: '0.85rem' }}>
-                    เข้างานตั้งแต่ {formatDateTime(clockIn)} — <strong>{formatDuration(elapsed)}</strong>
-                    {autoRemain != null && autoRemain > 0 && (
-                      <span className="ms-2 badge bg-info text-dark">ออกอัตโนมัติใน {formatDuration(autoRemain)}</span>
-                    )}
-                  </div>
+      <div className="lgx-panel">
+        <div className="lgx-panel-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 11.5, color: 'var(--lgx-text-muted)' }}>สถานะปัจจุบัน</div>
+            <div style={{ fontWeight: 700, fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: clockedIn ? 'var(--lgx-ok)' : 'var(--lgx-text-muted)' }} />
+              {clockedIn ? 'กำลังทำงาน' : 'ไม่ได้ลงเวลา'}
+            </div>
+            {clockedIn ? (
+              <div style={{ fontSize: 12, color: 'var(--lgx-text-muted)', marginTop: 4 }}>
+                เข้างานตั้งแต่ {formatDateTime(clockIn)} — <strong style={{ color: 'var(--lgx-text)' }}>{formatDuration(elapsed)}</strong>
+                {autoRemain != null && autoRemain > 0 && (
+                  <span className="lgx-pill warn" style={{ marginLeft: 8 }}>ออกอัตโนมัติใน {formatDuration(autoRemain)}</span>
                 )}
               </div>
-              <div className="d-flex align-items-center gap-2">
-                {!clockedIn && (
-                  <select
-                    className="form-select form-select-sm"
-                    style={{ width: 'auto', minWidth: 150 }}
-                    value={selectedDuration || ''}
-                    onChange={e => setSelectedDuration(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    {DURATION_OPTIONS.map((opt, i) => (
-                      <option key={i} value={opt.value || ''}>{opt.label}</option>
-                    ))}
-                  </select>
-                )}
-                <button
-                  className={`btn ${clockedIn ? 'btn-outline-danger' : 'btn-success'} px-4`}
-                  onClick={clockedIn ? doClockOut : doClockIn}
-                  disabled={clockLoading}
-                >
-                  {clockLoading ? (
-                    <span className="spinner-border spinner-border-sm me-1"></span>
-                  ) : (
-                    <i className={`bi ${clockedIn ? 'bi-box-arrow-right' : 'bi-box-arrow-in-right'} me-1`}></i>
-                  )}
-                  {clockedIn ? 'ออกงาน' : 'เข้างาน'}
-                </button>
-              </div>
-            </div>
+            ) : null}
           </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card border-0 shadow-sm h-100">
-            <div className="card-body text-center">
-              <div className="text-secondary" style={{ fontSize: '0.8rem' }}>ชั่วโมงวันนี้</div>
-              <div className="fw-bold fs-4 text-primary">{formatDuration(todayTotal)}</div>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card border-0 shadow-sm h-100">
-            <div className="card-body text-center">
-              <div className="text-secondary" style={{ fontSize: '0.8rem' }}>รวมทั้งหมด</div>
-              <div className="fw-bold fs-4">{mySessions.length} ครั้ง</div>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {!clockedIn && (
+              <select
+                className="lgx-select"
+                style={{ width: 'auto', minWidth: 170 }}
+                value={selectedDuration || ''}
+                onChange={(e) => setSelectedDuration(e.target.value ? Number(e.target.value) : null)}
+              >
+                {DURATION_OPTIONS.map((opt, i) => (
+                  <option key={i} value={opt.value || ''}>{opt.label}</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              className={`lgx-btn${clockedIn ? '' : ' lgx-btn-ok'}`}
+              onClick={clockedIn ? doClockOut : doClockIn}
+              disabled={clockLoading}
+            >
+              <i className={`bi ${clockedIn ? 'bi-box-arrow-right' : 'bi-box-arrow-in-right'}`} />
+              {clockLoading ? '...' : clockedIn ? 'ออกงาน' : 'เข้างาน'}
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      {isAdmin && (
-        <ul className="nav nav-tabs mb-3">
-          <li className="nav-item">
-            <button className={`nav-link ${tab === 'my' ? 'active' : ''}`} onClick={() => setTab('my')}>ประวัติของฉัน</button>
-          </li>
-          <li className="nav-item">
-            <button className={`nav-link ${tab === 'all' ? 'active' : ''}`} onClick={() => setTab('all')}>ประวัติทั้งหมด</button>
-          </li>
-        </ul>
-      )}
+      <div className="lgx-panel">
+        {isAdmin && (
+          <div className="lgx-inline-tabs" style={{ padding: '0 18px' }}>
+            <button type="button" className={`lgx-inline-tab${tab === 'my' ? ' is-active' : ''}`} onClick={() => setTab('my')}>ประวัติของฉัน</button>
+            <button type="button" className={`lgx-inline-tab${tab === 'all' ? ' is-active' : ''}`} onClick={() => setTab('all')}>ประวัติทั้งหมด</button>
+          </div>
+        )}
 
-      {/* My sessions */}
-      {tab === 'my' && (
-        <div className="table-responsive">
-          <table className="table table-hover table-sm align-middle">
-            <thead className="table-light">
-              <tr>
-                <th>#</th>
-                <th>เข้างาน</th>
-                <th>ออกงาน</th>
-                <th>ระยะเวลา</th>
-                <th>โหมด</th>
-                <th>สถานะ</th>
-              </tr>
-            </thead>
+        {tab === 'my' && (
+          <table className="lgx-table">
+            <thead><tr><th>#</th><th>เข้างาน</th><th>ออกงาน</th><th>ระยะเวลา</th><th>โหมด</th><th>สถานะ</th></tr></thead>
             <tbody>
               {mySessions.map((s, i) => (
-                <tr key={s.id}>
-                  <td className="text-secondary">{mySessions.length - i}</td>
-                  <td>{formatDateTime(s.clock_in)}</td>
-                  <td>{s.clock_out ? formatDateTime(s.clock_out) : '-'}</td>
-                  <td><strong>{formatDuration(s.duration_seconds)}</strong></td>
-                  <td>
-                    {s.auto_clock_out_at ? (
-                      <span className="badge bg-info text-dark" title={`ออกอัตโนมัติเวลา ${formatDateTime(s.auto_clock_out_at)}`}>⭐ อัตโนมัติ</span>
-                    ) : (
-                      <span className="text-secondary" style={{ fontSize: '0.8rem' }}>ออกเอง</span>
-                    )}
-                  </td>
-                  <td>
-                    {s.clock_out ? (
-                      <span className="badge bg-secondary">เสร็จสิ้น</span>
-                    ) : (
-                      <span className="badge bg-success">กำลังทำงาน</span>
-                    )}
-                  </td>
-                </tr>
+                <SessionRow key={s.id} s={s} index={i} total={mySessions.length} showStaff={false} />
               ))}
-              {mySessions.length === 0 && (
-                <tr><td colSpan={6} className="text-center text-secondary py-4">ยังไม่มีประวัติการลงเวลา</td></tr>
-              )}
+              {mySessions.length === 0 && <tr><td colSpan={6} className="lgx-empty">ยังไม่มีประวัติการลงเวลา</td></tr>}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
 
-      {/* All sessions (admin/owner) */}
-      {tab === 'all' && isAdmin && (
-        <div className="table-responsive">
-          <table className="table table-hover table-sm align-middle">
-            <thead className="table-light">
-              <tr>
-                <th>#</th>
-                <th>สตาฟ</th>
-                <th>ยศ</th>
-                <th>เข้างาน</th>
-                <th>ออกงาน</th>
-                <th>ระยะเวลา</th>
-                <th>โหมด</th>
-                <th>สถานะ</th>
-              </tr>
-            </thead>
+        {tab === 'all' && isAdmin && (
+          <table className="lgx-table">
+            <thead><tr><th>#</th><th>สตาฟ</th><th>ยศ</th><th>เข้างาน</th><th>ออกงาน</th><th>ระยะเวลา</th><th>โหมด</th><th>สถานะ</th></tr></thead>
             <tbody>
               {(allSessions || []).map((s) => (
-                <tr key={s.id}>
-                  <td className="text-secondary">{s.id}</td>
-                  <td>
-                    <div className="fw-semibold" style={{ fontSize: '0.85rem' }}>{s.display_name || s.email}</div>
-                    {s.display_name && <small className="text-secondary">{s.email}</small>}
-                  </td>
-                  <td><span className="badge bg-info text-dark">{s.role}</span></td>
-                  <td>{formatDateTime(s.clock_in)}</td>
-                  <td>{s.clock_out ? formatDateTime(s.clock_out) : '-'}</td>
-                  <td><strong>{formatDuration(s.duration_seconds)}</strong></td>
-                  <td>
-                    {s.auto_clock_out_at ? (
-                      <span className="badge bg-info text-dark">⭐ อัตโนมัติ</span>
-                    ) : (
-                      <span className="text-secondary" style={{ fontSize: '0.8rem' }}>ออกเอง</span>
-                    )}
-                  </td>
-                  <td>
-                    {s.clock_out ? (
-                      <span className="badge bg-secondary">เสร็จสิ้น</span>
-                    ) : (
-                      <span className="badge bg-success">กำลังทำงาน</span>
-                    )}
-                  </td>
-                </tr>
+                <SessionRow key={s.id} s={s} showStaff />
               ))}
-              {(!allSessions || allSessions.length === 0) && (
-                <tr><td colSpan={8} className="text-center text-secondary py-4">ยังไม่มีประวัติ</td></tr>
-              )}
+              {(!allSessions || allSessions.length === 0) && <tr><td colSpan={8} className="lgx-empty">ยังไม่มีประวัติ</td></tr>}
             </tbody>
           </table>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   )
 }

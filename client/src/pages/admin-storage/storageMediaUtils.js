@@ -2,10 +2,10 @@ import { resolveApiUrl } from '../../api.js'
 
 export const INITIAL_MEDIA_RENDER_LIMIT = 48
 export const MEDIA_RENDER_STEP = 48
-export const THUMB_WIDTH = 220
-export const THUMB_QUALITY = 52
-export const VIDEO_THUMB_WIDTH = 160
-export const VIDEO_THUMB_QUALITY = 40
+export const THUMB_WIDTH = 400
+export const THUMB_QUALITY = 72
+export const VIDEO_THUMB_WIDTH = 380
+export const VIDEO_THUMB_QUALITY = 70
 export const VIEW_MODE_COOKIE = 'AdminSessionViewMode'
 export const VIEW_MODE_GRID_TOKEN = 'qf51qw781455s1fw54w8f4w1aaafwlvk'
 export const VIEW_MODE_COLUMN_TOKEN = 'qf51qw781455s1fw54w8f4w1aaafwlv2'
@@ -93,6 +93,9 @@ export function encodeStoragePathForRoute(pathValue) {
 export function buildStorageMediaUrl(endpoint, row, extraParams = {}) {
   const pathPart = encodeStoragePathForRoute(row?.path)
   const qs = new URLSearchParams()
+  if (row?.access_token) {
+    qs.set('st', String(row.access_token))
+  }
   for (const [key, value] of Object.entries(extraParams)) {
     if (value !== undefined && value !== null && value !== '') qs.set(key, String(value))
   }
@@ -102,7 +105,12 @@ export function buildStorageMediaUrl(endpoint, row, extraParams = {}) {
 
 export function canPreviewInBrowser(row) {
   if (!row) return false
-  return row.media_kind === 'image' || row.media_kind === 'video'
+  return (
+    row.media_kind === 'image' ||
+    row.media_kind === 'video' ||
+    row.media_kind === 'audio' ||
+    row.media_kind === 'document'
+  )
 }
 
 export function compareEntries(a, b, sortBy, sortOrder) {
@@ -134,13 +142,17 @@ export function joinClasses(...parts) {
 
 export function getEntryThumbnailUrl(row) {
   if (!row) return ''
-  return row.media_kind === 'image'
-    ? buildStorageMediaUrl('thumb', row, { w: THUMB_WIDTH, q: THUMB_QUALITY })
-    : buildStorageMediaUrl('video-thumb', row, { w: VIDEO_THUMB_WIDTH, q: VIDEO_THUMB_QUALITY })
+  if (row.media_kind === 'image') {
+    return buildStorageMediaUrl('thumb', row, { w: THUMB_WIDTH, q: THUMB_QUALITY })
+  }
+  if (row.media_kind === 'video') {
+    return buildStorageMediaUrl('video-thumb', row, { w: VIDEO_THUMB_WIDTH, q: VIDEO_THUMB_QUALITY })
+  }
+  return ''
 }
 
 export function getStorageFullscreenPreviewUrl(row) {
   if (!row) return ''
-  if (row.media_kind === 'image') return buildStorageMediaUrl('thumb', row, { w: 1280, q: 80 })
+  if (row.media_kind === 'image') return buildStorageMediaUrl('thumb', row, { w: 1920, q: 85 })
   return ''
 }

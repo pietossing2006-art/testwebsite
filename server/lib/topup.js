@@ -13,6 +13,7 @@ import {
   listMyTopups,
   updateTopupStatus,
 } from '../db.js'
+import { assertTopupMethodEnabledForRequest } from './topupSettings.js'
 
 const PROMPTPAY_PROVIDER = 'promptpay_manual'
 const PROMPTPAY_METHOD = 'promptpay'
@@ -82,6 +83,8 @@ async function buildPromptpayTopupResponse(topup) {
     reference: String(topup.reference || topup.provider_ref || ''),
     points: amountPoints,
     payableAmount: amountPoints,
+    promptpayTarget: target,
+    promptpayName: process.env.PROMPTPAY_NAME || process.env.PROMPTPAY_ACCOUNT_NAME || 'พร้อมเพย์ (PromptPay)',
     expiresAt: promptpayExpiresAt(topup).toISOString(),
     ttlSeconds: Math.max(0, Math.ceil((promptpayExpiresAt(topup).getTime() - Date.now()) / 1000)),
     qr: {
@@ -104,21 +107,78 @@ function dataUrlToBuffer(value) {
   return buffer
 }
 
+async function tryScanQr(sharpInstance) {
+  try {
+    const { data, info } = await sharpInstance
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+
+    const code = jsQR(new Uint8ClampedArray(data), info.width, info.height, {
+      inversionAttempts: 'attemptBoth',
+    })
+
+    const raw = typeof code?.data === 'string' ? code.data.trim() : ''
+    return raw || null
+  } catch {
+    return null
+  }
+}
+
 async function readQrFromSlipImage(imageData) {
   const buffer = dataUrlToBuffer(imageData)
-  const { data, info } = await sharp(buffer, { limitInputPixels: 24_000_000 })
-    .rotate()
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true })
+  const baseSharp = sharp(buffer, { limitInputPixels: 24_000_000 }).rotate()
 
-  const code = jsQR(new Uint8ClampedArray(data), info.width, info.height, {
-    inversionAttempts: 'attemptBoth',
-  })
+  // Pass 1: Raw original image
+  let raw = await tryScanQr(baseSharp.clone())
+  if (raw) return raw
 
-  const raw = typeof code?.data === 'string' ? code.data.trim() : ''
-  if (!raw) throw new Error('slip_qr_not_found')
-  return raw
+  // Pass 2: Grayscale + normalized contrast + sharpened
+  raw = await tryScanQr(
+    baseSharp.clone()
+      .greyscale()
+      .normalize()
+      .sharpen()
+  )
+  if (raw) return raw
+
+  // Pass 3: Thresholding / Binarization (handles lighting & shadows)
+  raw = await tryScanQr(
+    baseSharp.clone()
+      .greyscale()
+      .threshold(135)
+  )
+  if (raw) return raw
+
+  // Pass 4: Normalized downscale / standard width
+  raw = await tryScanQr(
+    baseSharp.clone()
+      .resize({ width: 1000, height: 1000, fit: 'inside', withoutEnlargement: false })
+      .greyscale()
+      .normalize()
+  )
+  if (raw) return raw
+
+  // Pass 5: Crop bottom 65% (where Thai bank QR stamps usually reside)
+  try {
+    const meta = await baseSharp.metadata()
+    if (meta.width && meta.height && meta.height > 200) {
+      const cropHeight = Math.floor(meta.height * 0.65)
+      const topOffset = meta.height - cropHeight
+      raw = await tryScanQr(
+        baseSharp.clone()
+          .extract({ left: 0, top: topOffset, width: meta.width, height: cropHeight })
+          .greyscale()
+          .normalize()
+          .sharpen()
+      )
+      if (raw) return raw
+    }
+  } catch {
+    // ignore crop error
+  }
+
+  throw new Error('slip_qr_not_found')
 }
 
 function parseEmvTags(payload) {
@@ -211,6 +271,37 @@ function parseSlipQrData(raw) {
     // Some bank QR payloads are plain text or EMV-style TLV, not JSON.
   }
 
+  // Check EMV Tags including Thai National Mini-QR Standard (0046 / Sending Bank / TransRef)
+  const emvTags = parseEmvTags(text)
+  if (emvTags.size > 0) {
+    // 1. Thai Interbank Mini-QR tag '00'
+    const tag00 = emvTags.get('00')
+    if (tag00) {
+      const subTags00 = parseEmvTags(tag00)
+      const sendingBank = subTags00.get('01') || ''
+      const bankTransRef = subTags00.get('02') || ''
+      if (bankTransRef) {
+        transactionRef = sendingBank ? `${sendingBank}_${bankTransRef}` : bankTransRef
+        referenceSource = 'thai_mini_qr'
+      }
+    }
+
+    // 2. Tag 62 (Additional Data)
+    if (!transactionRef) {
+      const additionalData = parseEmvTags(emvTags.get('62') || '')
+      const emvRef = additionalData.get('05') || additionalData.get('07') || additionalData.get('08') || additionalData.get('01')
+      if (emvRef && /^[A-Za-z0-9._:\-]{6,96}$/.test(emvRef)) {
+        transactionRef = emvRef.trim()
+        referenceSource = 'emv'
+      }
+    }
+
+    // 3. Amount from Tag 54
+    if (amount == null) {
+      amount = toMoneyNumber(emvTags.get('54'))
+    }
+  }
+
   if (!transactionRef) {
     const refMatch = text.match(/(?:trans(?:action)?[_\-\s]?ref(?:erence)?|trace[_\-\s]?no|slip[_\-\s]?id|txid|txn(?:id)?|ref(?:erence)?)\s*[:=]\s*([A-Za-z0-9._:\-]{6,96})/i)
     if (refMatch?.[1]) {
@@ -222,20 +313,6 @@ function parseSlipQrData(raw) {
   if (amount == null) {
     const amountMatch = text.match(/(?:amount|amt|paid[_\-\s]?amount|total|thb)\s*[:=]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i)
     amount = toMoneyNumber(amountMatch?.[1])
-  }
-
-  const emvTags = parseEmvTags(text)
-  if (!transactionRef && emvTags.size > 0) {
-    const additionalData = parseEmvTags(emvTags.get('62') || '')
-    const emvRef = additionalData.get('05') || additionalData.get('07') || additionalData.get('08') || additionalData.get('01')
-    if (emvRef && /^[A-Za-z0-9._:\-]{6,96}$/.test(emvRef)) {
-      transactionRef = emvRef.trim()
-      referenceSource = 'emv'
-    }
-  }
-
-  if (amount == null) {
-    amount = toMoneyNumber(emvTags.get('54'))
   }
 
   if (!transactionRef) {
@@ -310,6 +387,7 @@ function parseAngpaoReference(reference) {
 }
 
 export async function redeemAngpaoVoucher({ userId, reference }) {
+  await assertTopupMethodEnabledForRequest('angpao')
   const uid = Number(userId)
   if (!Number.isFinite(uid) || uid <= 0) throw new Error('invalid_user_id')
 
@@ -369,6 +447,7 @@ export async function redeemAngpaoVoucher({ userId, reference }) {
 }
 
 export async function createPromptpayTopup({ userId, points }) {
+  await assertTopupMethodEnabledForRequest('promptpay')
   const uid = Number(userId)
   if (!Number.isFinite(uid) || uid <= 0) throw new Error('invalid_user_id')
   const amountPoints = normalizeTopupPoints(points)
@@ -423,6 +502,7 @@ export async function getPendingPromptpayTopup({ userId }) {
 }
 
 export async function verifyPromptpaySlip({ userId, topupId, slipImage }) {
+  await assertTopupMethodEnabledForRequest('promptpay')
   const uid = Number(userId)
   const tid = Number(topupId)
   if (!Number.isFinite(uid) || uid <= 0) throw new Error('invalid_user_id')

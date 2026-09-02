@@ -5,6 +5,7 @@ import {
   listCategories,
   listProducts,
   listProductsByIds,
+  searchProductsPublic,
   getProductById,
   getDiscordLinkForUser,
   getProductOptionStockAvailability,
@@ -24,9 +25,10 @@ import {
   quoteBundlePurchase,
   purchaseBundle,
 } from '../db.js'
-import { requireAuth, requireAdmin, rateLimitMiddleware } from '../lib/auth.js'
+import { requireAuth, requireAdmin, optionalAuth, rateLimitMiddleware } from '../lib/auth.js'
 import { sendDiscordOrderTracking } from '../lib/discordBot.js'
 import { CouponRedeemBodySchema } from '../lib/requestSchemas.js'
+import { assertTopupMethodEnabledForRequest } from '../lib/topupSettings.js'
 import { validateBody } from '../lib/validation.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -118,7 +120,14 @@ router.get('/api/vapid-public-key', (req, res) => {
 router.get('/api/ui-settings', async (req, res) => {
   try {
     const settings = await getUiSettings()
-    res.json({ ok: true, image_settings: settings?.image_settings, branding_settings: settings?.branding_settings, homepage_settings: settings?.homepage_settings, site_settings: settings?.site_settings })
+    res.json({
+      ok: true,
+      image_settings: settings?.image_settings,
+      branding_settings: settings?.branding_settings,
+      homepage_settings: settings?.homepage_settings,
+      site_settings: settings?.site_settings,
+      topup_settings: settings?.topup_settings,
+    })
   } catch {
     res.status(500).json({ error: 'db_error' })
   }
@@ -137,6 +146,27 @@ router.get('/api/categories', async (req, res) => {
   try {
     const categories = await listCategories()
     res.json({ categories })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/products/search', async (req, res) => {
+  try {
+    const { q, category, min_price, max_price, badge, tag, in_stock, limit, offset, sort } = req.query
+    const result = await searchProductsPublic({
+      query: q,
+      categorySlug: category,
+      minPrice: min_price,
+      maxPrice: max_price,
+      badge,
+      tag,
+      inStockOnly: in_stock === 'true' || in_stock === '1',
+      limit,
+      offset,
+      sort,
+    })
+    res.json({ ok: true, ...result })
   } catch {
     res.status(500).json({ error: 'db_error' })
   }
@@ -180,11 +210,11 @@ router.get('/api/products/option-stock-bulk', async (req, res) => {
 })
 
 router.get('/api/products/:id', async (req, res) => {
-  const id = Number(req.params.id)
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  const idOrSlug = String(req.params.id || '').trim()
+  if (!idOrSlug) return res.status(400).json({ error: 'invalid_id' })
 
   try {
-    const product = await getProductById(id)
+    const product = await getProductById(idOrSlug)
     if (!product) return res.status(404).json({ error: 'not_found' })
     res.json({ product })
   } catch {
@@ -193,11 +223,17 @@ router.get('/api/products/:id', async (req, res) => {
 })
 
 router.get('/api/products/:id/option-stock', async (req, res) => {
-  const id = Number(req.params.id)
-  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  const idOrSlug = String(req.params.id || '').trim()
+  if (!idOrSlug) return res.status(400).json({ error: 'invalid_id' })
 
   try {
-    const data = await getProductOptionStockAvailability(id)
+    let numericId = Number(idOrSlug)
+    if (!Number.isFinite(numericId)) {
+      const p = await getProductById(idOrSlug)
+      if (!p) return res.status(404).json({ error: 'not_found' })
+      numericId = p.id
+    }
+    const data = await getProductOptionStockAvailability(numericId)
     res.json({ ok: true, ...data })
   } catch (e) {
     const msg = String(e?.message ?? '')
@@ -207,14 +243,20 @@ router.get('/api/products/:id/option-stock', async (req, res) => {
   }
 })
 
-router.post('/api/quote', async (req, res) => {
+router.post('/api/quote', optionalAuth, async (req, res) => {
   const { product_id, qty, coupon_code, product_option_id } = req.body ?? {}
   const productId = Number(product_id)
   const q = qty == null ? 1 : Number(qty)
   if (!Number.isFinite(productId)) return res.status(400).json({ error: 'invalid_product_id' })
   if (!Number.isFinite(q) || q <= 0) return res.status(400).json({ error: 'invalid_qty' })
   try {
-    const quote = await quoteProductPurchase({ productId, qty: q, couponCode: coupon_code, productOptionId: product_option_id })
+    const quote = await quoteProductPurchase({
+      productId,
+      qty: q,
+      couponCode: coupon_code,
+      productOptionId: product_option_id,
+      userId: req.user?.id,
+    })
     res.json({ ok: true, quote })
   } catch (e) {
     const msg = String(e?.message ?? '')
@@ -288,6 +330,7 @@ router.post('/api/purchase', requireAuth, rateLimitMiddleware({ windowMs: 60_000
     if (msg === 'product_not_found') return res.status(404).json({ error: 'not_found' })
     if (msg === 'out_of_stock') return res.status(409).json({ error: 'out_of_stock' })
     if (msg === 'insufficient_points') return res.status(400).json({ error: 'insufficient_points' })
+    if (msg === 'free_box_single_only') return res.status(400).json({ error: 'free_box_single_only' })
     if (msg === 'invalid_qty') return res.status(400).json({ error: 'invalid_qty' })
     if (msg === 'invalid_farm_form') return res.status(400).json({ error: 'invalid_farm_form' })
     if (msg === 'invalid_uid') return res.status(400).json({ error: 'invalid_uid' })
@@ -334,10 +377,12 @@ router.post('/api/coupons/redeem', requireAuth, async (req, res) => {
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
   const { code } = parsed.data
   try {
+    await assertTopupMethodEnabledForRequest('coupon')
     const result = await redeemCoupon({ userId: req.user.id, code })
     res.json({ ok: true, result })
   } catch (e) {
     const msg = String(e?.message ?? '')
+    if (msg === 'topup_method_disabled') return res.status(403).json({ error: 'topup_method_disabled' })
     if (msg === 'coupon_not_found') return res.status(404).json({ error: 'not_found' })
     if (msg === 'coupon_inactive') return res.status(400).json({ error: 'inactive' })
     if (msg === 'coupon_expired') return res.status(400).json({ error: 'expired' })
@@ -370,11 +415,11 @@ router.get('/api/bundles/:id(\\d+)', async (req, res) => {
   }
 })
 
-router.post('/api/bundles/:id(\\d+)/quote', async (req, res) => {
+router.post('/api/bundles/:id(\\d+)/quote', optionalAuth, async (req, res) => {
   const id = Number(req.params.id)
   const { coupon_code } = req.body ?? {}
   try {
-    const quote = await quoteBundlePurchase({ bundleId: id, couponCode: coupon_code })
+    const quote = await quoteBundlePurchase({ bundleId: id, couponCode: coupon_code, userId: req.user?.id })
     res.json({ ok: true, quote })
   } catch (e) {
     const msg = String(e?.message ?? '')

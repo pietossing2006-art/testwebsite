@@ -59,19 +59,44 @@ export const USER_ROLE_OPTIONS = ['owner', 'admin', 'finance', 'support', 'boost
 // ── Defaults ──
 export const DEFAULT_USERS_QUERY = { search: '', role: 'all', status: 'all', sort: 'created_desc', page: 1, limit: 25 }
 export const DEFAULT_SUPPORT_QUERY = { status: '', scope: 'all', assignedTo: '', search: '', limit: 120 }
-export const DEFAULT_FULFILLMENT_QUERY = { status: 'pending', search: '', scope: 'all', assignedTo: '', limit: 200 }
-export const DEFAULT_LOGS_QUERY = { action: '', entity_type: '', limit: 50 }
+export const DEFAULT_FULFILLMENT_QUERY = { status: '', search: '', scope: 'all', assignedTo: '', limit: 200 }
+export const DEFAULT_LOGS_QUERY = { search: '', action: '', category: 'all', severity: 'all', status: 'all', actorUserId: '', dateFrom: '', dateTo: '', limit: 50, page: 1 }
 export const DEFAULT_CATALOG_FILTER = { search: '', categoryId: 'all', hidden: 'all' }
-export const DEFAULT_CATEGORY_FORM = { id: null, name: '', slug: '', image_url: '', description: '' }
+export const DEFAULT_CATEGORY_FORM = { id: null, name: '', slug: '', image_url: '', description: '', is_hidden: false, parent_id: '', sort_order: 0, icon: '' }
 export const DEFAULT_PRODUCT_FORM = {
   id: null, category_id: '', name: '', slug: '', price: 0, stock: 0, sort_order: 0, image_url: '',
   description: '', highlights: '', manual_url: '', manual_text: '', manual_video_url: '',
   fulfillment_type: 'digital_stock', custom_form_fields: [], product_options: [],
   is_featured: false, is_unlimited_stock: false,
+  gallery_images: [], badge: '', tags: [], sku: '', admin_notes: '', volume_pricing: [],
+  min_order_qty: 1, max_order_qty: '',
 }
+export const PRESET_BADGE_OPTIONS = [
+  { value: '', label: 'ไม่มีป้าย' },
+  { value: 'HOT', label: '🔥 HOT (ยอดนิยม)', color: 'danger' },
+  { value: 'SALE', label: '🏷️ SALE (ลดราคา)', color: 'warning' },
+  { value: 'NEW', label: '✨ NEW (มาใหม่)', color: 'success' },
+  { value: 'LIMITED', label: '⚡ LIMITED (จำนวนจำกัด)', color: 'info' },
+  { value: 'BESTSELLER', label: '👑 BEST SELLER (ขายดีอันดับ 1)', color: 'primary' },
+]
 export const DEFAULT_PRODUCT_OPTION_DRAFT = { editIndex: null, id: '', label: '', value: '', price_points: '' }
 export const DEFAULT_COUPON_FORM = { id: null, code: '', points: 100, max_uses: 1, used_count: 0, expires_at: '', is_active: true }
-export const DEFAULT_PROMOTION_FORM = { id: null, product_id: '', title: '', discount_percent: '', discount_amount_points: '', starts_at: '', ends_at: '', is_active: true }
+export const DEFAULT_PROMOTION_FORM = {
+  id: null,
+  scope: 'product',
+  product_id: '',
+  category_id: '',
+  title: '',
+  badge_text: '',
+  discount_percent: '',
+  discount_amount_points: '',
+  min_spend_points: '',
+  max_discount_points: '',
+  is_flash_sale: false,
+  starts_at: '',
+  ends_at: '',
+  is_active: true,
+}
 export const DEFAULT_DISCOUNT_COUPON_FORM = { id: null, code: '', title: '', discount_percent: '', discount_amount_points: '', max_uses: '', used_count: 0, expires_at: '', is_active: true }
 export const DEFAULT_POOL_FORM = { id: null, name: '', kind: 'digital_code', quantity_remaining: '', is_active: true }
 export const DEFAULT_STOCK_ITEM_EDIT = { id: null, payload: '', status: 'available' }
@@ -141,15 +166,30 @@ export function isoToLocalInput(value) {
   return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}:${pad(dt.getSeconds())}`
 }
 
-export function getErrorMessage(err, fallback = 'Request failed') {
+const ERROR_MESSAGES_TH = {
+  points_over_hard_limit: 'จำนวนแต้มเกินขีดจำกัดสูงสุดที่ระบบอนุญาต (สูงสุดครั้งละ 100,000,000 แต้ม)',
+  owner_approval_required_for_large_adjustment: 'การปรับแต้ม 50,000 ขึ้นไปต้องดำเนินการโดย Owner เท่านั้น',
+  invalid_points: 'จำนวนแต้มไม่ถูกต้อง กรุณากรอกตัวเลขที่มากกว่า 0',
+  user_not_found: 'ไม่พบบัญชีผู้ใช้นี้ในระบบ',
+  cannot_ban_owner: 'ไม่สามารถระงับ/แบนบัญชีระดับ Owner ได้',
+  cannot_delete_self: 'ไม่สามารถลบบัญชีของตัวเองได้',
+  cannot_modify_owner: 'ไม่มีสิทธิ์แก้ไขข้อมูลบัญชีระดับ Owner',
+  invalid_role: 'สิทธิ์การใช้งานไม่ถูกต้อง',
+  unauthorized: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง',
+  forbidden: 'คุณไม่มีสิทธิ์ในการดำเนินการนี้',
+}
+
+export function getErrorMessage(err, fallback = 'เกิดข้อผิดพลาดในการดำเนินการ') {
   const apiMessage = String(err?.data?.message || '').trim()
   if (apiMessage) return apiMessage
   const apiError = String(err?.data?.error || '').trim()
+  if (apiError && ERROR_MESSAGES_TH[apiError]) return ERROR_MESSAGES_TH[apiError]
   if (apiError) return apiError
   const status = Number(err?.status)
-  if (status === 401) return 'Session expired. Please sign in again.'
-  if (status === 403) return 'You do not have permission for this action.'
+  if (status === 401) return 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง'
+  if (status === 403) return 'คุณไม่มีสิทธิ์ในการดำเนินการนี้ (Forbidden)'
   const text = String(err?.message || '').trim()
+  if (text && ERROR_MESSAGES_TH[text]) return ERROR_MESSAGES_TH[text]
   if (text && text !== 'request_failed') return text
   return fallback
 }
@@ -400,3 +440,42 @@ export function normalizeSiteSettings(input) {
     tos_content: txt(s.tos_content, DEFAULT_SITE_SETTINGS.tos_content, 50000),
   }
 }
+
+export const DEFAULT_TOPUP_SETTINGS = {
+  angpao: true,
+  coupon: true,
+  promptpay: true,
+}
+
+export function normalizeTopupSettings(input) {
+  const source = input && typeof input === 'object' ? input : {}
+  return {
+    angpao: source.angpao !== false,
+    coupon: source.coupon !== false,
+    promptpay: source.promptpay !== false,
+  }
+}
+
+export function normalizeVolumePricingForSubmit(tiers) {
+  if (!Array.isArray(tiers)) return []
+  return tiers
+    .map((t) => ({
+      min_qty: Number(t?.min_qty),
+      discount_percent: Number(t?.discount_percent || 0),
+      discount_amount_points: Number(t?.discount_amount_points || 0),
+    }))
+    .filter((t) => Number.isFinite(t.min_qty) && t.min_qty > 1 && (t.discount_percent > 0 || t.discount_amount_points > 0))
+    .sort((a, b) => a.min_qty - b.min_qty)
+}
+
+export function normalizeGalleryImagesForSubmit(images) {
+  if (!Array.isArray(images)) return []
+  return images.map((img) => (typeof img === 'string' ? img.trim() : String(img?.url || '').trim())).filter(Boolean)
+}
+
+export function normalizeTagsForSubmit(tags) {
+  if (!Array.isArray(tags)) return []
+  return tags.map((t) => String(t || '').trim()).filter(Boolean)
+}
+
+

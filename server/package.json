@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@fortune-inc/tw-voucher": "^1.1.2",
+    "archiver": "^8.0.0",
     "argon2": "^0.44.0",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
@@ -22,6 +23,8 @@
     "ioredis": "^5.9.3",
     "jsqr": "^1.4.0",
     "multer": "^2.2.0",
+    "nodemailer": "^9.0.6",
+    "otplib": "^13.5.0",
     "pg": "^8.13.3",
     "promptpay-qr": "^0.5.0",
     "qrcode": "^1.5.4",

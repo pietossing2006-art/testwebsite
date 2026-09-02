@@ -1,25 +1,32 @@
 import path from 'node:path'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 
-export const STORAGE_THUMB_DEFAULT_WIDTH = 240
+export const STORAGE_THUMB_DEFAULT_WIDTH = 400
 export const STORAGE_THUMB_MIN_WIDTH = 96
-export const STORAGE_THUMB_MAX_WIDTH = 640
-export const STORAGE_THUMB_DEFAULT_QUALITY = 50
+export const STORAGE_THUMB_MAX_WIDTH = 1024
+export const STORAGE_THUMB_DEFAULT_QUALITY = 72
 export const STORAGE_THUMB_MIN_QUALITY = 30
-export const STORAGE_THUMB_MAX_QUALITY = 85
-export const STORAGE_VIDEO_THUMB_DEFAULT_WIDTH = 200
+export const STORAGE_THUMB_MAX_QUALITY = 90
+export const STORAGE_VIDEO_THUMB_DEFAULT_WIDTH = 380
 export const STORAGE_VIDEO_THUMB_MIN_WIDTH = 96
-export const STORAGE_VIDEO_THUMB_MAX_WIDTH = 480
-export const STORAGE_VIDEO_THUMB_DEFAULT_QUALITY = 45
+export const STORAGE_VIDEO_THUMB_MAX_WIDTH = 1024
+export const STORAGE_VIDEO_THUMB_DEFAULT_QUALITY = 70
 export const STORAGE_VIDEO_THUMB_MIN_QUALITY = 25
-export const STORAGE_VIDEO_THUMB_MAX_QUALITY = 80
+export const STORAGE_VIDEO_THUMB_MAX_QUALITY = 88
 
 export const STORAGE_IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.tif', '.tiff', '.ico', '.heic', '.heif', '.avif',
 ])
 export const STORAGE_VIDEO_EXTENSIONS = new Set([
   '.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v', '.mpeg', '.mpg', '.ts',
+])
+export const STORAGE_AUDIO_EXTENSIONS = new Set([
+  '.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac', '.wma', '.opus',
+])
+export const STORAGE_DOCUMENT_EXTENSIONS = new Set([
+  '.pdf', '.txt', '.json', '.md', '.log', '.csv', '.xml', '.yaml', '.yml',
 ])
 
 export const STORAGE_ACCESS_TOKEN_MAX_AGE_SECONDS = 60 * 60
@@ -29,8 +36,10 @@ export const STORAGE_TREE_HARD_MAX_DEPTH = 24
 export const STORAGE_TREE_HARD_MAX_FOLDERS = 100000
 export const STORAGE_LIST_STAT_CONCURRENCY = 32
 export const STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES = 180
+export const STORAGE_FFMPEG_MAX_CONCURRENCY = 2
 
 export const STORAGE_MIME_BY_EXT = {
+  // Images
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
@@ -44,6 +53,7 @@ export const STORAGE_MIME_BY_EXT = {
   '.heic': 'image/heic',
   '.heif': 'image/heif',
   '.avif': 'image/avif',
+  // Videos
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.mov': 'video/quicktime',
@@ -53,6 +63,25 @@ export const STORAGE_MIME_BY_EXT = {
   '.mpeg': 'video/mpeg',
   '.mpg': 'video/mpeg',
   '.ts': 'video/mp2t',
+  // Audio
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wma': 'audio/x-ms-wma',
+  '.opus': 'audio/opus',
+  // Documents & Text
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.log': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
+  '.yaml': 'text/yaml; charset=utf-8',
+  '.yml': 'text/yaml; charset=utf-8',
 }
 
 let _storageBrowserRoot = null
@@ -67,8 +96,13 @@ export function getStorageBrowserRoot() {
 }
 
 export function normalizeStorageRelativePath(raw) {
-  const text = typeof raw === 'string' ? raw.trim() : ''
+  let text = typeof raw === 'string' ? raw.trim() : ''
   if (!text || text === '.' || text === '/') return ''
+  try {
+    if (text.includes('%')) text = decodeURIComponent(text)
+  } catch {
+    // ignore
+  }
   const unified = text.replace(/\\/g, '/').replace(/^\/+/, '')
   const parts = unified
     .split('/')
@@ -97,6 +131,8 @@ export function getStorageMediaKindByPath(targetPath) {
   const ext = path.extname(String(targetPath || '')).toLowerCase()
   if (STORAGE_IMAGE_EXTENSIONS.has(ext)) return 'image'
   if (STORAGE_VIDEO_EXTENSIONS.has(ext)) return 'video'
+  if (STORAGE_AUDIO_EXTENSIONS.has(ext)) return 'audio'
+  if (STORAGE_DOCUMENT_EXTENSIONS.has(ext)) return 'document'
   return null
 }
 
@@ -104,7 +140,10 @@ export function getStorageMimeByPath(targetPath, mediaKind) {
   const ext = path.extname(String(targetPath || '')).toLowerCase()
   const mapped = STORAGE_MIME_BY_EXT[ext]
   if (mapped) return mapped
-  return mediaKind === 'video' ? 'video/mp4' : 'application/octet-stream'
+  if (mediaKind === 'video') return 'video/mp4'
+  if (mediaKind === 'audio') return 'audio/mpeg'
+  if (mediaKind === 'document') return 'text/plain; charset=utf-8'
+  return 'application/octet-stream'
 }
 
 export function parseStorageNumberInRange(raw, { fallback, min, max }) {
@@ -124,14 +163,14 @@ export function mapThumbQualityToFfmpegQ(quality) {
   return Math.max(3, Math.min(20, Math.round(20 - ratio * 17)))
 }
 
-export function buildStorageVideoThumbFfmpegArgs({ inputPath, width, ffmpegQ }) {
+export function buildStorageVideoThumbFfmpegArgs({ inputPath, width, ffmpegQ, seekTime = '00:00:02.500' }) {
   return [
     '-hide_banner',
     '-loglevel',
     'error',
     '-nostdin',
     '-ss',
-    '00:00:01',
+    String(seekTime || '00:00:02.500'),
     '-protocol_whitelist',
     'file,pipe',
     '-i',
@@ -139,13 +178,13 @@ export function buildStorageVideoThumbFfmpegArgs({ inputPath, width, ffmpegQ }) 
     '-frames:v',
     '1',
     '-vf',
-    `scale=${width}:-2:force_original_aspect_ratio=decrease`,
+    `scale=${width}:-2:force_original_aspect_ratio=decrease:flags=lanczos`,
     '-f',
     'image2pipe',
     '-vcodec',
     'mjpeg',
     '-q:v',
-    String(ffmpegQ),
+    String(ffmpegQ || 5),
     'pipe:1',
   ]
 }
@@ -221,6 +260,82 @@ export function createStorageMemoryCache(options = {}) {
     get size() {
       return entries.size
     },
+  }
+}
+
+let _storageDiskCacheDir = null
+
+export function getStorageDiskCacheDir() {
+  if (_storageDiskCacheDir) return _storageDiskCacheDir
+  const candidate = path.join(process.cwd(), 'uploads', '.cache', 'storage-thumbs')
+  try {
+    if (!fs.existsSync(candidate)) {
+      fs.mkdirSync(candidate, { recursive: true })
+    }
+    _storageDiskCacheDir = candidate
+  } catch {
+    _storageDiskCacheDir = path.join(os.tmpdir(), 'vxpers-storage-thumbs')
+    if (!fs.existsSync(_storageDiskCacheDir)) {
+      fs.mkdirSync(_storageDiskCacheDir, { recursive: true })
+    }
+  }
+  return _storageDiskCacheDir
+}
+
+export function hashStorageCacheKey(cacheKey) {
+  return crypto.createHash('sha256').update(String(cacheKey || '')).digest('hex')
+}
+
+export async function readStorageDiskCache(cacheKey, ext = 'webp') {
+  try {
+    const hash = hashStorageCacheKey(cacheKey)
+    const filePath = path.join(getStorageDiskCacheDir(), `${hash}.${ext}`)
+    return await fs.promises.readFile(filePath)
+  } catch {
+    return null
+  }
+}
+
+export async function writeStorageDiskCache(cacheKey, ext = 'webp', buffer) {
+  try {
+    if (!buffer || !buffer.length) return
+    const hash = hashStorageCacheKey(cacheKey)
+    const filePath = path.join(getStorageDiskCacheDir(), `${hash}.${ext}`)
+    await fs.promises.writeFile(filePath, buffer)
+  } catch {
+    // Disk cache writes fail silently without breaking media response
+  }
+}
+
+export function createStorageConcurrencyLimiter(maxConcurrency = 2) {
+  let running = 0
+  const queue = []
+
+  const next = () => {
+    if (running >= maxConcurrency || queue.length === 0) return
+    running++
+    const { fn, resolve, reject } = queue.shift()
+    Promise.resolve()
+      .then(fn)
+      .then(
+        (val) => {
+          running--
+          resolve(val)
+          next()
+        },
+        (err) => {
+          running--
+          reject(err)
+          next()
+        },
+      )
+  }
+
+  return function limit(fn) {
+    return new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject })
+      next()
+    })
   }
 }
 
@@ -409,4 +524,65 @@ export function verifyStorageAccessToken(rawToken, rawPath) {
     return false
   }
   return requestedPath === tokenPath
+}
+
+export function sanitizeStorageFileName(rawName) {
+  const name = String(rawName || '').trim()
+  if (!name) throw new Error('invalid_name')
+  if (name.includes('/') || name.includes('\\') || name.includes('..')) throw new Error('invalid_name')
+  const sanitized = name.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim()
+  if (!sanitized || sanitized === '.' || sanitized === '..') throw new Error('invalid_name')
+  return sanitized
+}
+
+export async function createStorageFolder(rawParentPath, rawFolderName) {
+  const folderName = sanitizeStorageFileName(rawFolderName)
+  const targetParent = resolveStoragePath(rawParentPath)
+  const newDirPath = path.join(targetParent.absolute, folderName)
+  const check = resolveStoragePath(targetParent.rel ? `${targetParent.rel}/${folderName}` : folderName)
+  if (fs.existsSync(newDirPath)) {
+    throw new Error('already_exists')
+  }
+  await fs.promises.mkdir(newDirPath, { recursive: true })
+  return {
+    name: folderName,
+    path: check.rel,
+    type: 'directory',
+  }
+}
+
+export async function renameStorageItem(rawSourcePath, rawNewName) {
+  const newName = sanitizeStorageFileName(rawNewName)
+  const source = resolveStoragePath(rawSourcePath)
+  if (!source.rel) throw new Error('cannot_rename_root')
+
+  const parentRel = source.rel.includes('/') ? source.rel.slice(0, source.rel.lastIndexOf('/')) : ''
+  const newRel = parentRel ? `${parentRel}/${newName}` : newName
+  const dest = resolveStoragePath(newRel)
+
+  if (fs.existsSync(dest.absolute)) {
+    throw new Error('already_exists')
+  }
+
+  await fs.promises.rename(source.absolute, dest.absolute)
+  return {
+    old_path: source.rel,
+    new_path: dest.rel,
+    name: newName,
+  }
+}
+
+export async function deleteStorageItem(rawPath) {
+  const target = resolveStoragePath(rawPath)
+  if (!target.rel) throw new Error('cannot_delete_root')
+
+  const stat = await fs.promises.stat(target.absolute)
+  if (stat.isDirectory()) {
+    await fs.promises.rm(target.absolute, { recursive: true, force: true })
+  } else {
+    await fs.promises.unlink(target.absolute)
+  }
+  return {
+    deleted_path: target.rel,
+  }
 }

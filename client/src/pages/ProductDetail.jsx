@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { fetchJson, reloadPageSoon, triggerAppRefresh } from '../api.js'
+import { fetchJson, reloadPageSoon, triggerAppRefresh, resolveImageUrl } from '../api.js'
 import DiscountBreakdown from '../components/growth/DiscountBreakdown.jsx'
 import ReviewSummary from '../components/growth/ReviewSummary.jsx'
 import WishlistButton from '../components/growth/WishlistButton.jsx'
+import MysteryUnboxModal from '../components/mystery/MysteryUnboxModal.jsx'
+import UserAvatar from '../components/UserAvatar.jsx'
+import { normalizeReviewSummary } from '../components/growth/growthDisplayUtils.js'
 import { DEFAULT_UI_IMAGE_SETTINGS, normalizeUiImageSettings } from '../uiImageSettings.js'
 
 function fmt(value) {
   return Math.round(Number(value) || 0).toLocaleString()
+}
+
+function maskUsername(name) {
+  const s = String(name || '').trim()
+  if (!s) return 'ผู้เล่น'
+  if (s.length <= 2) return `${s[0]}***`
+  return `${s.slice(0, 2)}${'*'.repeat(Math.max(2, s.length - 3))}${s.slice(-1)}`
 }
 
 function discountUnitPrice(unitPrice, promoPercent, promoAmount) {
@@ -53,9 +63,10 @@ function CountdownPill({ endsAt }) {
   if (!time) return null
   const pad = (value) => String(value).padStart(2, '0')
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-500/10 px-3 py-1 text-[11px] font-black text-cyan-100">
-      <span>หมดใน</span>
-      <span className="tabular-nums">{time.d > 0 ? `${time.d}วัน ` : ''}{pad(time.h)}:{pad(time.m)}:{pad(time.s)}</span>
+    <div className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-gradient-to-r from-amber-100 to-amber-50 px-3 py-1.5 text-xs font-black text-amber-950 shadow-xs tabular-nums">
+      <span className="text-amber-600 animate-pulse">⏰</span>
+      <span className="text-[11px] font-bold text-amber-800">หมดใน</span>
+      <span className="font-extrabold tracking-tight text-amber-950">{time.d > 0 ? `${time.d}วัน ` : ''}{pad(time.h)}:{pad(time.m)}:{pad(time.s)}</span>
     </div>
   )
 }
@@ -63,9 +74,9 @@ function CountdownPill({ endsAt }) {
 function Modal({ children, onClose, maxWidth = 'max-w-md' }) {
   if (typeof document === 'undefined') return null
   return createPortal(
-    <div className="popup-overlay-animate fixed inset-0 z-50 grid place-items-center bg-black/80 p-4" onMouseDown={onClose}>
+    <div className="popup-overlay-animate fixed inset-0 z-50 grid place-items-center bg-slate-900/60 p-4 backdrop-blur-sm" onMouseDown={onClose}>
       <div
-        className={`popup-panel-animate w-full ${maxWidth} rounded-3xl border border-white/[0.08] bg-[#080b0f]/90 p-5 shadow-[0_30px_120px_rgba(0,0,0,0.8)] backdrop-blur`}
+        className={`popup-panel-animate w-full ${maxWidth} rounded-3xl border border-sky-200 bg-white p-6 shadow-2xl text-slate-900`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         {children}
@@ -79,6 +90,7 @@ function getApiErrorMessage(error) {
   const code = error?.data?.error
   if (code === 'out_of_stock') return 'สินค้าหมดสต็อก'
   if (code === 'insufficient_points') return 'พ้อยท์ไม่เพียงพอ'
+  if (code === 'free_box_single_only') return 'กล่องสุ่มฟรีจำกัดการเปิดครั้งละ 1 ครั้ง'
   if (code === 'duplicate_purchase') return 'ระบบป้องกันรายการซ้ำ กรุณาลองใหม่อีกครั้ง'
   if (code === 'invalid_qty') return 'จำนวนสินค้าไม่ถูกต้อง'
   if (code === 'invalid_product_option') return 'กรุณาเลือกตัวเลือกสินค้าให้ถูกต้อง'
@@ -130,6 +142,7 @@ export default function ProductDetail() {
   const [selectedOptionId, setSelectedOptionId] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
   const [qtyRequiredOpen, setQtyRequiredOpen] = useState(false)
+  const [mysteryUnboxOpen, setMysteryUnboxOpen] = useState(false)
   const [mysteryPrizes, setMysteryPrizes] = useState([])
   const [mysteryRecentWins, setMysteryRecentWins] = useState([])
   const [wishlist, setWishlist] = useState({ followed: false, loaded: false })
@@ -137,6 +150,14 @@ export default function ProductDetail() {
   const [reviewForm, setReviewForm] = useState({ reviewer_name: '', rating: 5, comment: '' })
   const [reviewStatus, setReviewStatus] = useState('idle')
   const [reviewMessage, setReviewMessage] = useState('')
+  const [reviewFilter, setReviewFilter] = useState('all')
+  const [hoverRating, setHoverRating] = useState(0)
+  const [writeReviewOpen, setWriteReviewOpen] = useState(false)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [activeImageIndex, setActiveImageIndex] = useState(0)
+  const [zoomModalOpen, setZoomModalOpen] = useState(false)
+  const [copiedLink, setCopiedLink] = useState(false)
+  const [relatedProducts, setRelatedProducts] = useState([])
 
   useEffect(() => {
     let cancelled = false
@@ -155,6 +176,18 @@ export default function ProductDetail() {
         setSelectedOptionId(options.length === 1 ? String(options[0]?.id ?? '') : '')
         setOptionStock(null)
         setBuyError('')
+        setActiveImageIndex(0)
+
+        // Load related products
+        if (nextProduct?.category_slug) {
+          fetchJson(`/api/products?category=${encodeURIComponent(nextProduct.category_slug)}`)
+            .then((res) => {
+              if (!cancelled && Array.isArray(res?.products)) {
+                setRelatedProducts(res.products.filter((p) => p.id !== nextProduct.id).slice(0, 4))
+              }
+            })
+            .catch(() => {})
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -169,8 +202,11 @@ export default function ProductDetail() {
     let cancelled = false
     async function checkAuth() {
       try {
-        await fetchJson('/api/me')
-        if (!cancelled) setIsAuthed(true)
+        const meRes = await fetchJson('/api/me')
+        if (!cancelled) {
+          setIsAuthed(true)
+          setCurrentUser(meRes?.user || null)
+        }
       } catch (error) {
         if (!cancelled && error?.status === 401) setIsAuthed(false)
       }
@@ -310,7 +346,9 @@ export default function ProductDetail() {
   const legacyStockCap = isUnlimited ? serverQtyLimit : Number(product?.stock ?? 1) || 1
   const baseMaxQty = Math.max(1, Math.min(serverQtyLimit, hasProductOptions ? serverQtyLimit : legacyStockCap))
   const stockAwareMaxQty = selectedOptionHasLimit ? Math.max(1, Math.min(baseMaxQty, selectedOptionRemaining)) : baseMaxQty
-  const maxQty = isMystery ? serverQtyLimit : stockAwareMaxQty
+  const productPrice = Number(product?.price ?? 0)
+  const isFreeBox = isMystery && productPrice === 0
+  const maxQty = isMystery ? (isFreeBox ? 1 : Math.min(10, serverQtyLimit)) : stockAwareMaxQty
   const qtyValue = String(qty ?? '').trim()
   const parsedQty = Number(qtyValue)
   const isQtyEmpty = qtyValue === ''
@@ -475,28 +513,29 @@ export default function ProductDetail() {
       return
     }
 
-    const reviewerName = String(reviewForm.reviewer_name || '').trim()
-    if (!reviewerName) {
+    if (!reviewForm.comment.trim()) {
       setReviewStatus('error')
-      setReviewMessage('กรุณาใส่ชื่อผู้รีวิว')
+      setReviewMessage('กรุณาเขียนข้อความรีวิวอย่างน้อย 2 ตัวอักษร')
       return
     }
 
     setReviewStatus('submitting')
     setReviewMessage('')
     try {
+      const reviewerName = reviewForm.reviewer_name.trim() || currentUser?.display_name || currentUser?.username || 'ผู้ซื้อ'
       await fetchJson(`/api/products/${product.id}/reviews`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reviewer_name: reviewerName,
-          rating: Number(reviewForm.rating),
-          comment: reviewForm.comment,
+          rating: Number(reviewForm.rating || 5),
+          comment: reviewForm.comment.trim(),
         }),
       })
       setReviewForm({ reviewer_name: '', rating: 5, comment: '' })
       setReviewStatus('success')
-      setReviewMessage('ส่งรีวิวแล้ว รอแอดมินอนุมัติก่อนแสดงผล')
+      setReviewMessage('🎉 ขอบคุณสำหรับรีวิว! ระบบบันทึกรีวิวของคุณเรียบร้อยแล้ว')
+      setWriteReviewOpen(false)
       await loadReviews()
     } catch (error) {
       setReviewStatus('error')
@@ -512,6 +551,13 @@ export default function ProductDetail() {
     if (outOfStock || selectedOptionOut || optionInsufficient || !canSubmit || buyStatus === 'submitting') return
     setBuyStatus('submitting')
     setBuyError('')
+    if (isMystery) {
+      // Open the unbox modal immediately so the shaking/loading animation covers the real
+      // network wait, instead of only appearing after the result is already known.
+      setConfirmOpen(false)
+      setSuccessData(null)
+      setMysteryUnboxOpen(true)
+    }
     try {
       const data = await fetchJson('/api/purchase', {
         method: 'POST',
@@ -531,16 +577,23 @@ export default function ProductDetail() {
       })
       setBuyStatus('success')
       setConfirmOpen(false)
-      setSuccessData(data)
-      setSuccessOption(selectedOption ?? null)
-      setSuccessOpen(true)
       const nextProduct = await fetchJson(`/api/products/${id}`).catch(() => null)
       if (nextProduct?.product) setProduct(nextProduct.product)
       const nextStock = await fetchJson(`/api/products/${id}/option-stock`).catch(() => null)
       if (nextStock) setOptionStock(nextStock?.option_stock ?? null)
+
+      if (isMystery && data.picks && data.picks.length > 0) {
+        setSuccessData(data)
+        setMysteryUnboxOpen(true)
+      } else {
+        setSuccessData(data)
+        setSuccessOption(selectedOption ?? null)
+        setSuccessOpen(true)
+      }
     } catch (error) {
       setBuyError(getApiErrorMessage(error))
       setBuyStatus('error')
+      if (isMystery) setMysteryUnboxOpen(false)
     }
   }
 
@@ -573,18 +626,18 @@ export default function ProductDetail() {
 
   if (loading) {
     return (
-      <div className="grid min-h-[460px] place-items-center rounded-3xl border border-white/[0.08] bg-white/[0.025]">
-        <div className="text-sm font-bold text-white/55">กำลังโหลดสินค้า...</div>
+      <div className="grid min-h-[460px] place-items-center rounded-3xl border border-sky-200 bg-white shadow-sm">
+        <div className="text-sm font-bold text-slate-500">กำลังโหลดสินค้า...</div>
       </div>
     )
   }
 
   if (!product) {
     return (
-      <div className="grid min-h-[360px] place-items-center rounded-3xl border border-white/[0.08] bg-white/[0.025] text-center">
+      <div className="grid min-h-[360px] place-items-center rounded-3xl border border-sky-200 bg-white text-center shadow-sm">
         <div>
-          <div className="text-lg font-black text-white">ไม่พบสินค้า</div>
-          <Link to="/categories" className="ui-btn-primary mt-5 inline-flex h-11 items-center px-5 text-sm font-black">ดูหมวดหมู่สินค้า</Link>
+          <div className="text-lg font-black text-slate-900">ไม่พบสินค้า</div>
+          <Link to="/categories" className="ui-btn-primary mt-5 inline-flex h-11 items-center px-5 text-xs font-black">ดูหมวดหมู่สินค้า</Link>
         </div>
       </div>
     )
@@ -612,63 +665,199 @@ export default function ProductDetail() {
           : optionInsufficient
             ? 'จำนวนเกินสต็อก'
             : isMystery
-              ? 'เริ่มสุ่มสินค้า'
+              ? (isFreeBox ? '✨ สุ่มฟรีตอนนี้!' : `🎲 สุ่มลุ้นรางวัล (${safeQty} ครั้ง)`)
               : 'ซื้อสินค้า'
   const successPicks = Array.isArray(successData?.picks) ? successData.picks : []
   const successItems = successPicks.length > 0 ? successPicks : []
   const reviewItems = Array.isArray(reviews.reviews) ? reviews.reviews : []
 
   return (
-    <div className="space-y-7 fade-in-up">
-      <div className="text-xs font-bold text-white/50">
-        <Link to={`/category/${product.category_slug}`} className="hover:text-white">{product.category_name}</Link>
-        <span className="mx-2 text-white/20">/</span>
-        <span className="text-white/75">{product.name}</span>
+    <div className="mx-auto max-w-7xl space-y-6 fade-in-up">
+      <div className="text-xs font-bold text-slate-500">
+        <Link to={`/category/${product.category_slug}`} className="text-sky-600 hover:underline">{product.category_name}</Link>
+        <span className="mx-2 text-slate-400">/</span>
+        <span className="text-slate-800">{product.name}</span>
       </div>
 
-      <section className="motion-stagger grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(420px,0.88fr)]">
-        <div className="min-w-0 space-y-4">
-          <div className="product-detail-media-frame motion-card motion-hover motion-soft-glow relative overflow-hidden rounded-3xl border border-white/[0.08] bg-white/[0.035] shadow-[0_30px_100px_rgba(0,0,0,0.32)]">
-            <div className="absolute inset-0 scanline opacity-35" />
-            {product.image_url ? (
-              <img
-                src={product.image_url}
-                alt={product.name}
-                loading="lazy"
-                decoding="async"
-                className="product-detail-media-image motion-image absolute inset-0 h-full w-full"
-              />
-            ) : (
-              <div className="grid h-full place-items-center bg-cyan-500/5 text-white/25">ไม่มีรูปสินค้า</div>
-            )}
-            {hasPromo ? (
-              <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-                <span className="rounded-full border border-cyan-300/20 bg-cyan-500/20 px-3 py-1 text-xs font-black text-cyan-100 backdrop-blur">ลดราคา</span>
-                <span className="rounded-full border border-emerald-300/20 bg-emerald-500/15 px-3 py-1 text-xs font-black text-emerald-100 backdrop-blur">{promoBadgeLabel}</span>
+      <section className="grid min-w-0 gap-6 lg:grid-cols-12 items-start">
+        {/* Left Column: Media, Guarantees, Description & Reviews */}
+        <div className="min-w-0 space-y-6 lg:col-span-7">
+          {(() => {
+            const allImages = [product.image_url, ...(Array.isArray(product.gallery_images) ? product.gallery_images : [])].filter(Boolean)
+            const currentImg = allImages[activeImageIndex] || product.image_url
+            return (
+              <div className="space-y-3">
+                <div
+                  className="product-detail-media-frame relative overflow-hidden rounded-3xl border border-sky-200 bg-white p-2 shadow-sm"
+                  style={{ aspectRatio: uiImageSettings?.product_detail_ratio || (16 / 10) }}
+                >
+                  {currentImg ? (
+                    <>
+                      <img
+                        src={resolveImageUrl(currentImg)}
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 h-full w-full object-cover blur-xl opacity-20 scale-110"
+                      />
+                      <img
+                        src={resolveImageUrl(currentImg)}
+                        alt={product.name}
+                        loading="lazy"
+                        decoding="async"
+                        className="product-detail-media-image relative z-10 h-full w-full rounded-2xl object-cover cursor-zoom-in"
+                        onClick={() => setZoomModalOpen(true)}
+                      />
+                    </>
+                  ) : (
+                    <div className="grid h-full place-items-center bg-sky-50 text-slate-400 font-bold">ไม่มีรูปสินค้า</div>
+                  )}
+
+                  {/* Badges on main image */}
+                  <div className="absolute left-4 top-4 z-20 flex flex-wrap gap-2">
+                    {product.badge ? (
+                      <span className="rounded-full border border-rose-400 bg-rose-500 px-3 py-1 text-xs font-black text-white shadow-sm">
+                        {product.badge}
+                      </span>
+                    ) : null}
+                    {product.promo_is_flash_sale ? (
+                      <span className="rounded-full border border-amber-300 bg-gradient-to-r from-amber-500 to-rose-500 px-3 py-1 text-xs font-black text-white shadow-md animate-pulse">
+                        ⚡ Flash Sale
+                      </span>
+                    ) : null}
+                    {product.promo_badge_text ? (
+                      <span className="rounded-full border border-sky-300 bg-sky-600 px-3 py-1 text-xs font-black text-white shadow-sm">
+                        {product.promo_badge_text}
+                      </span>
+                    ) : null}
+                    {hasPromo && !product.promo_badge_text && !product.promo_is_flash_sale ? (
+                      <>
+                        <span className="rounded-full border border-sky-300 bg-sky-500 px-3 py-1 text-xs font-black text-white shadow-sm">ลดราคา</span>
+                        <span className="rounded-full border border-emerald-300 bg-emerald-500 px-3 py-1 text-xs font-black text-white shadow-sm">{promoBadgeLabel}</span>
+                      </>
+                    ) : null}
+                  </div>
+
+                  {/* Zoom button on top right */}
+                  {currentImg ? (
+                    <button
+                      type="button"
+                      onClick={() => setZoomModalOpen(true)}
+                      className="absolute right-4 top-4 z-20 rounded-full bg-white/90 backdrop-blur-md p-2 text-slate-700 shadow-md hover:bg-white transition"
+                      title="ขยายรูปภาพ"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7" />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* Thumbnails Row */}
+                {allImages.length > 1 ? (
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    {allImages.map((img, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setActiveImageIndex(idx)}
+                        style={{ aspectRatio: uiImageSettings?.product_detail_ratio || (16 / 10) }}
+                        className={`relative shrink-0 h-16 rounded-xl overflow-hidden border-2 transition-all ${
+                          idx === activeImageIndex
+                            ? 'border-sky-500 ring-2 ring-sky-300 shadow-md scale-105'
+                            : 'border-slate-200 opacity-70 hover:opacity-100'
+                        }`}
+                      >
+                        <img src={resolveImageUrl(img)} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Fullscreen Zoom Modal */}
+                {zoomModalOpen && currentImg ? (
+                  <Modal onClose={() => setZoomModalOpen(false)} maxWidth="max-w-4xl">
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setZoomModalOpen(false)}
+                        className="absolute -top-2 -right-2 z-10 rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 transition"
+                      >
+                        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                      <img src={resolveImageUrl(currentImg)} alt={product.name} className="w-full max-h-[75vh] object-contain rounded-2xl" />
+                    </div>
+                  </Modal>
+                ) : null}
               </div>
-            ) : null}
+            )
+          })()}
+
+          {/* Quick Trust / Delivery Guarantees */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-sky-100 bg-white p-3.5 text-center shadow-xs">
+              <div className="text-lg">⚡</div>
+              <div className="mt-1 text-xs font-black text-slate-900">จัดส่งอัตโนมัติ</div>
+              <div className="text-[10px] text-slate-400">รับสินค้าทันที 24 ชม.</div>
+            </div>
+            <div className="rounded-2xl border border-sky-100 bg-white p-3.5 text-center shadow-xs">
+              <div className="text-lg">🔒</div>
+              <div className="mt-1 text-xs font-black text-slate-900">รับประกัน 100%</div>
+              <div className="text-[10px] text-slate-400">คีย์แท้ ปลอดภัย</div>
+            </div>
+            <div className="rounded-2xl border border-sky-100 bg-white p-3.5 text-center shadow-xs">
+              <div className="text-lg">💬</div>
+              <div className="mt-1 text-xs font-black text-slate-900">ซัพพอร์ต 24 ชม.</div>
+              <div className="text-[10px] text-slate-400">ทีมงานพร้อมช่วยเหลือ</div>
+            </div>
           </div>
 
+          {/* Product Description */}
+          <div className="rounded-3xl border border-sky-200 bg-white p-6 shadow-sm">
+            <div className="text-base font-black text-slate-900">รายละเอียดสินค้า</div>
+            <div className="mt-3 whitespace-pre-wrap text-xs leading-relaxed text-slate-600">{product.description || 'ยังไม่มีรายละเอียดสินค้า'}</div>
+          </div>
+
+          {/* Mystery Box Prizes (if mystery) */}
           {isMystery && mysteryPrizes.length > 0 ? (
-            <div className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5">
+            <div className="rounded-3xl border border-sky-200 bg-white p-5 shadow-sm">
+              {mysteryRecentWins.length > 0 ? (
+                <div className="-mx-5 -mt-5 mb-5 overflow-hidden rounded-t-3xl border-b border-sky-100 bg-gradient-to-r from-sky-50 via-cyan-50/60 to-sky-50 px-5 py-2.5">
+                  <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                    <span className="shrink-0 text-[11px] font-black text-sky-600">🔥 เพิ่งเปิดไป</span>
+                    {mysteryRecentWins.slice(0, 12).map((win, idx) => (
+                      <span
+                        key={idx}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 shadow-xs"
+                      >
+                        <span className="text-sky-700">{maskUsername(win.username)}</span>
+                        <span className="text-slate-400">ได้</span>
+                        <span className="max-w-[110px] truncate text-slate-800">{win.delivery_name || 'รางวัล'}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               <div className="flex items-end justify-between gap-4">
                 <div>
-                  <div className="text-sm font-black text-white">รายการสุ่ม</div>
-                  <div className="mt-1 text-xs text-white/42">โอกาสและของรางวัลที่มีในกล่องนี้</div>
+                  <div className="text-sm font-black text-slate-900">รายการสุ่ม</div>
+                  <div className="mt-0.5 text-xs text-slate-500">โอกาสและของรางวัลที่มีในกล่องนี้</div>
                 </div>
-                <div className="text-xs font-bold text-cyan-200">{mysteryRecentWins.length} ล่าสุด</div>
+                <div className="text-xs font-bold text-sky-600">{mysteryRecentWins.length} ล่าสุด</div>
               </div>
-              <div className="motion-stagger mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 {mysteryPrizes.slice(0, 8).map((prize) => {
                   const chance = Number(prize.chance_percent ?? 0)
                   return (
-                    <div key={prize.id} className="motion-card motion-hover flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-3">
-                      <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-black/30">
-                        {prize.prize_image_url ? <img src={prize.prize_image_url} alt={prize.prize_name} className="h-full w-full object-contain" /> : <span className="text-xs font-black text-white/50">Prize</span>}
+                    <div key={prize.id} className="flex items-center gap-3 rounded-2xl border border-sky-100 bg-sky-50/50 p-3">
+                      <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white border border-sky-100">
+                        {prize.prize_image_url ? <img src={prize.prize_image_url} alt={prize.prize_name} className="h-full w-full object-contain" /> : <span className="text-xs font-black text-slate-400">Prize</span>}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-bold text-white">{prize.prize_name}</div>
-                        <div className="mt-1 text-xs font-black text-cyan-200">{chance.toFixed(chance >= 1 ? 2 : 4)}%</div>
+                        <div className="truncate text-xs font-bold text-slate-800">{prize.prize_name}</div>
+                        <div className="mt-0.5 text-xs font-black text-sky-600">{chance.toFixed(chance >= 1 ? 2 : 4)}%</div>
                       </div>
                     </div>
                   )
@@ -676,33 +865,383 @@ export default function ProductDetail() {
               </div>
             </div>
           ) : null}
+
+          {/* Reviews Section */}
+          <div id="reviews" className="rounded-3xl border border-sky-200 bg-white p-6 sm:p-7 shadow-sm space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-sky-100 pb-4">
+              <div>
+                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                  <span>⭐ รีวิวจากผู้ซื้อจริง</span>
+                  <span className="rounded-full bg-sky-100 text-sky-700 text-xs px-2.5 py-0.5 font-bold">
+                    {reviews.summary?.review_count || 0} รีวิว
+                  </span>
+                </h3>
+                <div className="mt-0.5 text-xs text-slate-500">รีวิวที่ผ่านการยืนยันคำสั่งซื้อจริงเท่านั้น</div>
+              </div>
+
+              {isAuthed ? (
+                <button
+                  type="button"
+                  onClick={() => setWriteReviewOpen((prev) => !prev)}
+                  className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-black transition-all ${
+                    writeReviewOpen
+                      ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      : 'bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-md shadow-sky-500/20 hover:from-sky-600 hover:to-cyan-600'
+                  }`}
+                >
+                  <span>{writeReviewOpen ? '✕ ปิดแบบฟอร์ม' : '✍️ เขียนรีวิวสินค้า'}</span>
+                </button>
+              ) : (
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-1.5 rounded-2xl border border-sky-200 bg-sky-50/60 px-3.5 py-2 text-xs font-black text-sky-700 hover:bg-sky-100"
+                >
+                  <span>เข้าสู่ระบบเพื่อรีวิว</span>
+                  <span>→</span>
+                </Link>
+              )}
+            </div>
+
+            {/* Scorecard Overview */}
+            {(() => {
+              const summaryData = normalizeReviewSummary(reviews.summary)
+              const total = summaryData.reviewCount
+              const starsBreakdown = [
+                { star: 5, count: summaryData.stars5 },
+                { star: 4, count: summaryData.stars4 },
+                { star: 3, count: summaryData.stars3 },
+                { star: 2, count: summaryData.stars2 },
+                { star: 1, count: summaryData.stars1 },
+              ]
+
+              return (
+                <div className="grid gap-6 rounded-3xl border border-sky-100 bg-gradient-to-br from-sky-50/70 via-white to-sky-50/30 p-5 sm:p-6 md:grid-cols-12 items-center">
+                  {/* Big Rating */}
+                  <div className="md:col-span-5 text-center md:text-left space-y-1">
+                    <div className="flex items-baseline justify-center md:justify-start gap-2">
+                      <span className="text-4xl sm:text-5xl font-black text-slate-900 tracking-tight">
+                        {summaryData.averageRating > 0 ? summaryData.averageRating.toFixed(1) : '0.0'}
+                      </span>
+                      <span className="text-slate-400 font-bold text-sm">/ 5.0</span>
+                    </div>
+                    <div className="flex items-center justify-center md:justify-start gap-1 text-amber-400 text-lg">
+                      {[1, 2, 3, 4, 5].map((s) => (
+                        <span key={s} className={s <= Math.round(summaryData.averageRating) ? 'text-amber-400' : 'text-slate-200'}>
+                          ★
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-xs font-semibold text-slate-500">
+                      จากผู้ซื้อจริงทั้งหมด {total.toLocaleString('th-TH')} รายการ
+                    </div>
+                  </div>
+
+                  {/* Stars Progress Breakdown */}
+                  <div className="md:col-span-7 space-y-1.5 border-t md:border-t-0 md:border-l border-sky-100 pt-4 md:pt-0 md:pl-6">
+                    {starsBreakdown.map(({ star, count }) => {
+                      const pct = total > 0 ? Math.round((count / total) * 100) : 0
+                      return (
+                        <div key={star} className="flex items-center gap-2.5 text-xs">
+                          <span className="w-9 font-bold text-slate-600 flex items-center gap-1 shrink-0">
+                            <span>{star}</span>
+                            <span className="text-amber-400">★</span>
+                          </span>
+                          <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-500"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="w-12 text-right font-semibold text-slate-400 shrink-0 text-[11px]">
+                            {pct}% ({count})
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Write Review Card Form (Expandable) */}
+            {writeReviewOpen && isAuthed ? (
+              <form
+                onSubmit={submitReview}
+                className="rounded-3xl border-2 border-sky-300 bg-sky-50/50 p-5 sm:p-6 space-y-4 shadow-sm animate-fade-in"
+              >
+                <div className="flex items-center justify-between border-b border-sky-200/60 pb-3">
+                  <div className="text-sm font-black text-slate-900">✍️ แบ่งปันความประทับใจของคุณ</div>
+                  <div className="text-xs text-sky-600 font-semibold">ผู้รีวิว: {currentUser?.display_name || currentUser?.username || 'สมาชิก'}</div>
+                </div>
+
+                {/* Star Picker */}
+                <div className="space-y-2">
+                  <label className="text-xs font-black text-slate-700">ให้คะแนนความพึงพอใจ:</label>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1 text-3xl cursor-pointer select-none">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onMouseEnter={() => setHoverRating(star)}
+                          onMouseLeave={() => setHoverRating(0)}
+                          onClick={() => setReviewForm((prev) => ({ ...prev, rating: star }))}
+                          className={`p-1 transition-transform hover:scale-125 ${
+                            star <= (hoverRating || reviewForm.rating)
+                              ? 'text-amber-400 drop-shadow-sm'
+                              : 'text-slate-300'
+                          }`}
+                        >
+                          ★
+                        </button>
+                      ))}
+                    </div>
+                    <span className="rounded-full bg-white border border-sky-200 px-3 py-1 text-xs font-black text-sky-700 shadow-xs">
+                      {reviewForm.rating === 5 ? '🤩 ยอดเยี่ยมที่สุด (5 ดาว)'
+                        : reviewForm.rating === 4 ? '😊 ดีมาก (4 ดาว)'
+                        : reviewForm.rating === 3 ? '😐 ปานกลาง (3 ดาว)'
+                        : reviewForm.rating === 2 ? '😕 พอใช้ (2 ดาว)'
+                        : '😞 ควรปรับปรุง (1 ดาว)'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Quick Tags */}
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-bold text-slate-500">แท็กข้อความด่วน (คลิกเพื่อเพิ่ม):</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['⚡ ส่งไวมาก', '💯 ใช้งานได้จริง 100%', '✨ คุ้มค่าคุ้มราคา', '👍 บริการดีมาก', '🔥 แนะนำเลย', '🛡️ ปลอดภัย มั่นใจได้'].map((tag) => (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setReviewForm((prev) => ({
+                            ...prev,
+                            comment: prev.comment ? `${prev.comment} ${tag}` : tag,
+                          }))
+                        }}
+                        className="rounded-xl border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 hover:border-sky-400 hover:bg-sky-50 transition-colors"
+                      >
+                        + {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Comment Text Area */}
+                <div>
+                  <label className="text-xs font-black text-slate-700">ข้อความรีวิวของคุณ:</label>
+                  <textarea
+                    value={reviewForm.comment}
+                    onChange={(e) => setReviewForm((prev) => ({ ...prev, comment: e.target.value }))}
+                    rows={3}
+                    maxLength={1200}
+                    placeholder="เขียนบอกเล่าประสบการณ์หลังสั่งซื้อสินค้า เพื่อเป็นประโยชน์แก่ผู้ซื้อท่านอื่น..."
+                    className="ui-field mt-1.5 w-full bg-white rounded-2xl p-3.5 text-xs text-slate-800"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <div className="text-xs font-bold text-slate-500">
+                    {reviewMessage ? (
+                      <span className={reviewStatus === 'success' ? 'text-emerald-600' : 'text-rose-600'}>
+                        {reviewMessage}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setWriteReviewOpen(false)}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={reviewStatus === 'submitting'}
+                      className="rounded-xl bg-sky-500 px-5 py-2 text-xs font-black text-white shadow-md shadow-sky-500/20 hover:bg-sky-600 disabled:opacity-60"
+                    >
+                      {reviewStatus === 'submitting' ? 'กำลังบันทึก...' : 'ส่งรีวิวทันที'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            ) : null}
+
+            {/* Filter Tabs */}
+            {reviewItems.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 border-b border-sky-100 pb-3">
+                <span className="text-xs font-bold text-slate-500 mr-1">ตัวกรอง:</span>
+                {[
+                  { id: 'all', label: `ทั้งหมด (${reviewItems.length})` },
+                  { id: '5', label: `5 ดาว (${reviewItems.filter((r) => r.rating === 5).length})` },
+                  { id: '4', label: `4 ดาว (${reviewItems.filter((r) => r.rating === 4).length})` },
+                  { id: '3', label: `3 ดาว (${reviewItems.filter((r) => r.rating === 3).length})` },
+                  { id: '2', label: `2 ดาว (${reviewItems.filter((r) => r.rating === 2).length})` },
+                  { id: '1', label: `1 ดาว (${reviewItems.filter((r) => r.rating === 1).length})` },
+                ].map(({ id: fId, label }) => (
+                  <button
+                    key={fId}
+                    type="button"
+                    onClick={() => setReviewFilter(fId)}
+                    className={`rounded-xl px-3 py-1 text-xs font-black transition-all ${
+                      reviewFilter === fId
+                        ? 'bg-sky-500 text-white shadow-sm'
+                        : 'border border-sky-100 bg-sky-50/60 text-slate-600 hover:bg-sky-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {/* Reviews Feed List */}
+            <div className="space-y-3 pt-1">
+              {(() => {
+                const filtered = reviewFilter === 'all'
+                  ? reviewItems
+                  : reviewItems.filter((r) => r.rating === Number(reviewFilter))
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="rounded-3xl border border-dashed border-sky-200 bg-sky-50/30 p-8 text-center space-y-2">
+                      <div className="text-3xl">💬</div>
+                      <div className="text-sm font-black text-slate-700">
+                        {reviewItems.length === 0 ? 'ยังไม่มีรีวิวสำหรับสินค้านี้' : 'ไม่พบรีวิวในตัวกรองนี้'}
+                      </div>
+                      <div className="text-xs text-slate-400">สั่งซื้อสินค้าและร่วมเป็นคนแรกที่เขียนรีวิว!</div>
+                    </div>
+                  )
+                }
+
+                return filtered.map((review) => (
+                  <div
+                    key={review.id}
+                    className="rounded-2xl border border-sky-100 bg-gradient-to-br from-white to-sky-50/30 p-4 sm:p-5 shadow-xs space-y-2.5 transition-all hover:border-sky-200"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <UserAvatar
+                          name={review.reviewer_name}
+                          src={review.reviewer_avatar}
+                          size={34}
+                          rounded="full"
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-slate-900">{review.reviewer_name || 'ผู้ซื้อ'}</span>
+                            <span className="inline-flex items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.2 text-[9px] font-black text-emerald-700">
+                              ✓ ผู้ซื้อจริง
+                            </span>
+                          </div>
+                          {review.created_at ? (
+                            <div className="text-[10px] font-semibold text-slate-400">
+                              {new Date(review.created_at).toLocaleDateString('th-TH', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 text-amber-400 text-sm">
+                        {'★'.repeat(review.rating)}
+                        <span className="text-slate-200">{'★'.repeat(Math.max(0, 5 - review.rating))}</span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-slate-50/80 p-3 text-xs leading-relaxed text-slate-700 font-medium whitespace-pre-wrap border border-slate-100">
+                      {review.comment}
+                    </div>
+                  </div>
+                ))
+              })()}
+            </div>
+          </div>
         </div>
 
-        <aside className="motion-card min-w-0 rounded-3xl border border-white/[0.08] glass-strong p-4 sm:p-6">
+        {/* Right Column: Sticky Purchasing Box */}
+        <aside className="min-w-0 rounded-3xl border border-sky-200 bg-white p-5 shadow-sm sm:p-7 lg:col-span-5 lg:sticky lg:top-24 space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0">
-              <h1 className="break-words text-2xl font-black leading-tight text-white sm:text-3xl">{product.name}</h1>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                {product.badge && (
+                  <span className="rounded-full border border-rose-400 bg-rose-500 px-2.5 py-0.5 text-[10px] font-black text-white shadow-xs">
+                    {product.badge}
+                  </span>
+                )}
+                {product.sku && (
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-mono font-bold text-slate-500">
+                    SKU: {product.sku}
+                  </span>
+                )}
+              </div>
+              <h1 className="break-words text-2xl font-black leading-tight text-slate-900 sm:text-3xl">{product.name}</h1>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-3 py-1 text-[11px] font-black ${outOfStock ? 'bg-red-500/10 text-red-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
+                <span className={`rounded-full px-3 py-0.5 text-[11px] font-black ${outOfStock ? 'border border-rose-200 bg-rose-50 text-rose-700' : 'border border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
                   {outOfStock ? 'ไม่พร้อมขาย' : 'พร้อมสั่งซื้อ'}
                 </span>
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-bold text-white/55">{product.category_name}</span>
+                <span className="rounded-full border border-sky-100 bg-sky-50 px-3 py-0.5 text-[11px] font-bold text-slate-600">{product.category_name}</span>
                 <ReviewSummary summary={reviews.summary} compact />
               </div>
+
+              {/* Tags */}
+              {Array.isArray(product.tags) && product.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {product.tags.map((t, idx) => (
+                    <span key={idx} className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600">
+                      #{t}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
-            <WishlistButton
-              productId={product.id}
-              initialFollowed={wishlist.followed}
-              isAuthed={isAuthed}
-              onChange={(followed) => setWishlist({ followed, loaded: true })}
-            />
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Share / Copy Link Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (navigator.clipboard) {
+                    navigator.clipboard.writeText(window.location.href)
+                    setCopiedLink(true)
+                    setTimeout(() => setCopiedLink(false), 2000)
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 rounded-2xl border border-sky-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-sky-50 transition shadow-xs"
+                title="คัดลอกลิงก์สินค้านี้"
+              >
+                {copiedLink ? (
+                  <>
+                    <span className="text-emerald-600 font-black">✓</span>
+                    <span className="text-emerald-600 font-bold">คัดลอกแล้ว</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                    </svg>
+                    <span>แชร์</span>
+                  </>
+                )}
+              </button>
+              <WishlistButton
+                productId={product.id}
+                initialFollowed={wishlist.followed}
+                isAuthed={isAuthed}
+                onChange={(followed) => setWishlist({ followed, loaded: true })}
+              />
+            </div>
           </div>
 
-          <div className="mt-5">
-            <div className="text-xs font-bold text-white/45">ราคา</div>
+          <div>
+            <div className="text-xs font-bold text-slate-500">ราคา</div>
             <div className="mt-1 flex flex-wrap items-end gap-3">
-              <div className="motion-price break-words text-3xl font-black text-emerald-300 [text-shadow:0_0_12px_rgba(110,231,183,0.18)] sm:text-4xl">{priceDisplayLabel}</div>
-              {hasPromo ? <div className="text-sm font-bold text-white/35 line-through">{originalPriceLabel}</div> : null}
+              <div className="break-words text-3xl font-black text-slate-900 sm:text-4xl">{priceDisplayLabel}</div>
+              {hasPromo ? <div className="text-sm font-bold text-slate-400 line-through">{originalPriceLabel}</div> : null}
             </div>
             {hasPromo && product.promo_ends_at ? (
               <div className="mt-3">
@@ -712,12 +1251,12 @@ export default function ProductDetail() {
           </div>
 
           {highlights.length > 0 ? (
-            <div className="mt-5 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4">
-              <div className="text-xs font-black text-white/55">ไฮไลท์</div>
-              <ul className="mt-3 space-y-2 text-sm leading-6 text-white/68">
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+              <div className="text-xs font-black text-slate-700">ไฮไลท์</div>
+              <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-slate-600">
                 {highlights.map((highlight, index) => (
                   <li key={index} className="flex gap-2">
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300" />
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-500" />
                     <span>{highlight}</span>
                   </li>
                 ))}
@@ -725,22 +1264,22 @@ export default function ProductDetail() {
             </div>
           ) : null}
 
-          <div className="mt-5 grid gap-3">
-            <div className="rounded-2xl border border-white/[0.06] bg-black/20 px-4 py-3">
+          <div className="grid gap-3">
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 px-4 py-3">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs font-black text-white/55">สต็อก</span>
-                <span className={outOfStock ? 'text-sm font-black text-red-200' : 'text-sm font-black text-white'}>{stockLabel}</span>
+                <span className="text-xs font-black text-slate-600">สต็อก</span>
+                <span className={outOfStock ? 'text-xs font-black text-rose-600' : 'text-xs font-black text-emerald-700'}>{stockLabel}</span>
               </div>
             </div>
 
             {hasProductOptions ? (
-              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-                <label className="text-xs font-black text-white/55" htmlFor="product-option">ตัวเลือกสินค้า</label>
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                <label className="text-xs font-black text-slate-700" htmlFor="product-option">ตัวเลือกสินค้า</label>
                 <select
                   id="product-option"
                   value={selectedOptionId}
                   onChange={(event) => setSelectedOptionId(event.target.value)}
-                  className="ui-field mt-2 h-12"
+                  className="ui-field mt-2 h-11"
                 >
                   <option value="">{allOptionsOut ? 'ตัวเลือกหมดทั้งหมด' : 'เลือกตัวเลือก'}</option>
                   {optionItems.map((option, index) => (
@@ -752,89 +1291,187 @@ export default function ProductDetail() {
                     </option>
                   ))}
                 </select>
-                {optionStockStatus === 'loading' ? <div className="mt-2 text-[11px] text-white/45">กำลังโหลดสต็อกตัวเลือก...</div> : null}
-                {!canOptionSubmit && !allOptionsOut ? <div className="mt-2 text-[11px] font-bold text-cyan-200">กรุณาเลือกตัวเลือกก่อนสั่งซื้อ</div> : null}
+                {optionStockStatus === 'loading' ? <div className="mt-2 text-[11px] text-slate-500">กำลังโหลดสต็อกตัวเลือก...</div> : null}
+                {!canOptionSubmit && !allOptionsOut ? <div className="mt-2 text-[11px] font-bold text-sky-600">กรุณาเลือกตัวเลือกก่อนสั่งซื้อ</div> : null}
                 {selectedOption ? (
-                  <div className="mt-3 rounded-xl border border-white/[0.05] bg-white/[0.03] p-3 text-xs text-white/55">
-                    <div><span className="text-white/35">เลือกแล้ว:</span> <span className="font-bold text-white/80">{selectedOption.label}</span></div>
-                    {selectedOption.value ? <div className="mt-1"><span className="text-white/35">ค่า:</span> {selectedOption.value}</div> : null}
-                    {selectedOptionHasLimit ? <div className="mt-1"><span className="text-white/35">คงเหลือ:</span> {fmt(selectedOptionRemaining)} ชิ้น</div> : null}
+                  <div className="mt-3 rounded-xl border border-sky-200 bg-white p-3 text-xs text-slate-600">
+                    <div><span className="text-slate-400">เลือกแล้ว:</span> <span className="font-bold text-slate-900">{selectedOption.label}</span></div>
+                    {selectedOption.value ? <div className="mt-1"><span className="text-slate-400">ค่า:</span> {selectedOption.value}</div> : null}
+                    {selectedOptionHasLimit ? <div className="mt-1"><span className="text-slate-400">คงเหลือ:</span> {fmt(selectedOptionRemaining)} ชิ้น</div> : null}
                   </div>
                 ) : null}
               </div>
             ) : null}
 
             {isFarm ? (
-              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-                <div className="text-xs font-black text-white/55">กรอกข้อมูลของคุณ</div>
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                <div className="text-xs font-black text-slate-700">กรอกข้อมูลของคุณ</div>
                 <div className="mt-3 grid gap-3">
                   {farmFields.length > 0 ? farmFields.map((field) => (
                     <div key={field.id}>
                       {field.type === 'checkbox' ? (
-                        <label className="inline-flex items-center gap-2 text-xs font-bold text-white/65">
+                        <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700">
                           <input type="checkbox" checked={Boolean(farmForm?.[field.id])} onChange={(event) => setFarmForm((prev) => ({ ...prev, [field.id]: event.target.checked }))} />
-                          <span>{field.label}{field.required ? <span className="text-cyan-300"> *</span> : null}</span>
+                          <span>{field.label}{field.required ? <span className="text-rose-500"> *</span> : null}</span>
                         </label>
                       ) : (
                         <>
-                          <label className="text-[11px] font-bold text-white/55">{field.label}{field.required ? <span className="text-cyan-300"> *</span> : null}</label>
+                          <label className="text-[11px] font-bold text-slate-600">{field.label}{field.required ? <span className="text-rose-500"> *</span> : null}</label>
                           <input value={farmForm?.[field.id] ?? ''} onChange={(event) => setFarmForm((prev) => ({ ...prev, [field.id]: event.target.value }))} placeholder={field.label} className="ui-field mt-1 h-11" />
                         </>
                       )}
                     </div>
-                  )) : <div className="text-xs text-white/45">ไม่ต้องกรอกข้อมูลเพิ่มเติม</div>}
-                  <div className="text-[11px] leading-5 text-white/42">ระบบจะส่งข้อมูลนี้ให้แอดมินเพื่อดำเนินการ</div>
+                  )) : <div className="text-xs text-slate-500">ไม่ต้องกรอกข้อมูลเพิ่มเติม</div>}
+                  <div className="text-[11px] leading-5 text-slate-400">ระบบจะส่งข้อมูลนี้ให้แอดมินเพื่อดำเนินการ</div>
                 </div>
               </div>
             ) : null}
 
             {isUidForm ? (
-              <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-                <div className="text-xs font-black text-white/55">กรอก UID ของคุณ</div>
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                <div className="text-xs font-black text-slate-700">กรอก UID ของคุณ</div>
                 <input value={uidForm.uid} onChange={(event) => setUidForm((prev) => ({ ...prev, uid: event.target.value }))} placeholder="กรอก UID" className="ui-field mt-3 h-11" />
-                <label className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-white/65">
+                <label className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-slate-700">
                   <input type="checkbox" checked={Boolean(uidForm.confirmed)} onChange={(event) => setUidForm((prev) => ({ ...prev, confirmed: event.target.checked }))} />
                   ยืนยันว่า UID ถูกต้อง
                 </label>
-                <div className="mt-2 text-[11px] leading-5 text-white/42">กรุณาตรวจสอบ UID ก่อนสั่งซื้อเพื่อป้องกันการเติมผิดบัญชี</div>
+                <div className="mt-1.5 text-[11px] leading-5 text-slate-400">กรุณาตรวจสอบ UID ก่อนสั่งซื้อเพื่อป้องกันการเติมผิดบัญชี</div>
               </div>
             ) : null}
 
-            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-              <div className="grid gap-3">
-                <div className="min-w-0">
-                  <label className="text-xs font-black text-white/55">จำนวน</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={maxQty}
-                    value={qty}
-                    onChange={(event) => {
-                      const raw = String(event.target.value ?? '')
-                      if (raw === '') {
-                        setQty('')
-                        return
-                      }
-                      const next = Number(raw)
-                      if (!Number.isFinite(next)) return
-                      setQty(String(Math.max(1, Math.min(maxQty, Math.trunc(next)))))
-                      setQtyRequiredOpen(false)
-                    }}
-                    className="ui-field mt-2 h-12 w-full"
-                  />
-                  <div className="mt-2 text-[11px] text-white/42">เลือกได้ 1 - {fmt(maxQty)}</div>
+            {/* Volume Pricing Tiered Discounts Table */}
+            {Array.isArray(product.volume_pricing) && product.volume_pricing.length > 0 && !isMystery ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-black text-emerald-900 flex items-center gap-1.5">
+                    <span>🏷️ ราคาส่งพิเศษตามจำนวน</span>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-700">คลิกเพื่อเลือกจำนวน</span>
                 </div>
-                <div className="rounded-xl border border-emerald-300/15 bg-emerald-400/[0.06] px-3 py-3 text-sm text-white/55">
-                  <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/38">รวม</div>
-                  <div className="mt-1 whitespace-nowrap text-base font-black text-white">
-                    <span className="text-emerald-300">{fmt(displayTotalPoints)}</span> พ้อยท์
+                <div className="grid grid-cols-2 gap-2">
+                  {product.volume_pricing.map((tier, i) => {
+                    const isTierActive = safeQty >= tier.min_qty
+                    const discountLabel = tier.discount_percent
+                      ? `ลด ${tier.discount_percent}%`
+                      : `ลด ${fmt(tier.discount_amount_points)} แต้ม/ชิ้น`
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          setQty(String(tier.min_qty))
+                          setQtyRequiredOpen(false)
+                        }}
+                        className={`flex flex-col items-start p-2.5 rounded-xl border text-left transition-all ${
+                          isTierActive
+                            ? 'bg-emerald-600 border-emerald-600 text-white shadow-md'
+                            : 'bg-white border-emerald-200 text-slate-800 hover:border-emerald-400'
+                        }`}
+                      >
+                        <div className="text-xs font-black">ซื้อ {tier.min_qty}+ ชิ้น</div>
+                        <div className={`text-[11px] font-bold ${isTierActive ? 'text-emerald-100' : 'text-emerald-600'}`}>
+                          {discountLabel}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {isMystery ? (
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-slate-700">
+                    {isFreeBox ? '🎁 สุ่มฟรี' : '🎲 เลือกจำนวนครั้งที่สุ่ม'}
+                  </label>
+                  {isFreeBox ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-black text-emerald-700">
+                      จำกัด 1 กล่องต่อครั้ง
+                    </span>
+                  ) : null}
+                </div>
+
+                {isFreeBox ? (
+                  <div className="mt-3 flex items-center justify-between rounded-xl border border-sky-200 bg-white p-3.5 shadow-sm">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl">🎁</span>
+                      <div>
+                        <div className="text-xs font-black text-slate-900">กล่องสุ่มฟรี (1 กล่อง)</div>
+                        <div className="text-[11px] text-slate-400">กดปุ่มสุ่มด้านล่างเพื่อลุ้นรับของรางวัลทันที</div>
+                      </div>
+                    </div>
+                    <span className="text-sm font-black text-emerald-600">ฟรี 0 พ้อยท์</span>
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      {[1, 5, 10].map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          onClick={() => {
+                            setQty(String(count))
+                            setQtyRequiredOpen(false)
+                          }}
+                          className={`flex flex-col items-center justify-center rounded-xl border py-2.5 text-xs font-black transition-all ${
+                            safeQty === count
+                              ? 'border-sky-500 bg-sky-500 text-white shadow-md shadow-sky-500/20'
+                              : 'border-sky-200 bg-white text-slate-700 hover:border-sky-300 hover:bg-sky-50'
+                          }`}
+                        >
+                          <span>สุ่ม {count} ครั้ง</span>
+                          <span className={`text-[10px] font-semibold ${safeQty === count ? 'text-sky-100' : 'text-slate-400'}`}>
+                            ({fmt(displayUnitPoints * count)} พ้อยท์)
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-xl border border-sky-200 bg-white px-3.5 py-2.5 text-xs text-slate-600 shadow-sm">
+                      <span className="font-bold text-slate-500">ยอดชำระ ({safeQty} ครั้ง):</span>
+                      <span className="text-base font-black text-emerald-600">{fmt(displayTotalPoints)} พ้อยท์</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                <div className="grid gap-3">
+                  <div className="min-w-0">
+                    <label className="text-xs font-black text-slate-700">จำนวน</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={maxQty}
+                      value={qty}
+                      onChange={(event) => {
+                        const raw = String(event.target.value ?? '')
+                        if (raw === '') {
+                          setQty('')
+                          return
+                        }
+                        const next = Number(raw)
+                        if (!Number.isFinite(next)) return
+                        setQty(String(Math.max(1, Math.min(maxQty, Math.trunc(next)))))
+                        setQtyRequiredOpen(false)
+                      }}
+                      className="ui-field mt-2 h-11 w-full"
+                    />
+                    <div className="mt-1.5 text-[11px] text-slate-400">เลือกได้ 1 - {fmt(maxQty)}</div>
+                  </div>
+                  <div className="rounded-xl border border-sky-200 bg-white px-3 py-2.5 text-sm text-slate-600 shadow-sm">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">รวม</div>
+                    <div className="mt-0.5 whitespace-nowrap text-base font-black text-slate-900">
+                      <span className="text-emerald-600">{fmt(displayTotalPoints)}</span> พ้อยท์
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-              <label className="text-xs font-black text-white/55">โค้ดส่วนลด</label>
+            <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+              <label className="text-xs font-black text-slate-700">โค้ดส่วนลด</label>
               <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
                 <input
                   value={couponInput}
@@ -849,160 +1486,115 @@ export default function ProductDetail() {
                     }
                   }}
                   placeholder="กรอกโค้ดคูปอง ถ้ามี"
-                  className="ui-field h-11"
+                  className="ui-field h-10"
                 />
-                <button type="button" onClick={() => { setCouponCode(couponInput.trim().toUpperCase()); setCouponError('') }} className="ui-btn h-11 px-4 text-xs font-black">
+                <button type="button" onClick={() => { setCouponCode(couponInput.trim().toUpperCase()); setCouponError('') }} className="ui-btn h-10 px-4 text-xs font-black">
                   ใช้โค้ด
                 </button>
               </div>
-              {quoteStatus === 'loading' ? <div className="mt-2 text-[11px] text-white/45">กำลังคำนวณส่วนลด...</div> : null}
-              {couponError ? <div className="mt-2 text-[11px] font-bold text-cyan-200">{couponError}</div> : null}
-              {!couponError && quote?.coupon_valid && couponCode ? <div className="mt-2 text-[11px] font-bold text-emerald-300">โค้ด {quote.coupon_code} ใช้ได้</div> : null}
+              {quoteStatus === 'loading' ? <div className="mt-2 text-[11px] text-slate-500">กำลังคำนวณส่วนลด...</div> : null}
+              {couponError ? <div className="mt-2 text-[11px] font-bold text-rose-600">{couponError}</div> : null}
+              {!couponError && quote?.coupon_valid && couponCode ? <div className="mt-2 text-[11px] font-bold text-emerald-600">โค้ด {quote.coupon_code} ใช้ได้</div> : null}
               {quote && (Number(quote.promo_discount_total_points ?? 0) > 0 || Number(quote.coupon_discount_total_points ?? 0) > 0) ? (
-                <div className="mt-3 space-y-1 rounded-xl border border-white/[0.05] bg-white/[0.03] p-3 text-xs text-white/62">
-                  <div>ราคาเดิม: <span className="font-bold text-white">{fmt(quote.subtotal_points)}</span> พ้อยท์</div>
-                  {Number(quote.promo_discount_total_points ?? 0) > 0 ? <div>ลดโปรโมชัน: <span className="font-bold text-cyan-200">-{fmt(quote.promo_discount_total_points)}</span> พ้อยท์</div> : null}
-                  {Number(quote.coupon_discount_total_points ?? 0) > 0 ? <div>ลดคูปอง: <span className="font-bold text-cyan-200">-{fmt(quote.coupon_discount_total_points)}</span> พ้อยท์</div> : null}
-                  <div className="border-t border-white/10 pt-1">สุทธิ: <span className="font-black text-emerald-300">{fmt(quote.total_points)}</span> พ้อยท์</div>
+                <div className="mt-3 space-y-1 rounded-xl border border-sky-200 bg-white p-3 text-xs text-slate-600 shadow-sm">
+                  <div>ราคาเดิม: <span className="font-bold text-slate-900">{fmt(quote.subtotal_points)}</span> พ้อยท์</div>
+                  {Number(quote.promo_discount_total_points ?? 0) > 0 ? <div>ลดโปรโมชัน: <span className="font-bold text-sky-600">-{fmt(quote.promo_discount_total_points)}</span> พ้อยท์</div> : null}
+                  {Number(quote.coupon_discount_total_points ?? 0) > 0 ? <div>ลดคูปอง: <span className="font-bold text-sky-600">-{fmt(quote.coupon_discount_total_points)}</span> พ้อยท์</div> : null}
+                  <div className="border-t border-sky-100 pt-1">สุทธิ: <span className="font-black text-emerald-600">{fmt(quote.total_points)}</span> พ้อยท์</div>
                 </div>
               ) : null}
               <DiscountBreakdown quote={quote} />
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 sm:flex sm:flex-wrap">
+          <div className="grid gap-2.5 pt-2 sm:flex sm:flex-wrap">
             <button
               type="button"
               onClick={openConfirm}
               disabled={outOfStock || selectedOptionOut || optionInsufficient || buyStatus === 'submitting' || !canSubmit}
-              className="ui-btn-primary h-12 w-full px-6 text-sm font-black disabled:cursor-not-allowed disabled:opacity-55 sm:w-auto"
+              className="ui-btn-primary h-12 flex-1 px-6 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50"
             >
               {primaryButtonLabel}
             </button>
-            <button
-              type="button"
-              onClick={() => setManualOpen(true)}
-              disabled={!hasManual}
-              className="ui-btn h-12 w-full px-6 text-sm font-black disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
-            >
-              คู่มือ / วิธีใช้งาน
-            </button>
+            {hasManual ? (
+              <button
+                type="button"
+                onClick={() => setManualOpen(true)}
+                className="ui-btn h-12 px-5 text-xs font-black disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                คู่มือ
+              </button>
+            ) : null}
           </div>
-          {buyError ? <div className="mt-3 rounded-2xl border border-cyan-300/15 bg-cyan-500/10 px-4 py-3 text-xs font-bold text-cyan-100">{buyError}</div> : null}
+          {buyError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700">{buyError}</div> : null}
         </aside>
       </section>
 
-      <section className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 sm:p-6">
-        <div className="text-base font-black text-white">รายละเอียดสินค้า</div>
-        <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-white/62">{product.description || 'ยังไม่มีรายละเอียดสินค้า'}</div>
-      </section>
-
-      <section id="reviews" className="motion-card rounded-3xl border border-white/[0.08] bg-white/[0.025] p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="text-base font-black text-white">รีวิวจากผู้ซื้อจริง</div>
-            <div className="mt-1 text-sm text-white/45">แสดงเฉพาะรีวิวที่ผ่านการอนุมัติ เพื่อให้ข้อมูลน่าเชื่อถือและไม่รกสายตา</div>
+      {/* Related Products from same category */}
+      {relatedProducts.length > 0 ? (
+        <section className="rounded-3xl border border-sky-200 bg-white p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-sky-100 pb-3">
+            <div>
+              <h3 className="text-lg font-black text-slate-900">สินค้าอื่นๆ ในหมวดหมู่นี้</h3>
+              <div className="text-xs text-slate-400">สินค้าที่คุณอาจสนใจเพิ่มเติม</div>
+            </div>
+            <Link to={`/category/${product.category_slug}`} className="text-xs font-bold text-sky-600 hover:underline">
+              ดูทั้งหมดในหมวดหมู่นี้ →
+            </Link>
           </div>
-          <ReviewSummary summary={reviews.summary} />
-        </div>
-
-        <div className="mt-5 grid gap-4 lg:grid-cols-[0.82fr_1.18fr]">
-          <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
-            {isAuthed === true ? (
-              <form onSubmit={submitReview} className="grid gap-3">
-                <div>
-                  <label className="text-[11px] font-black text-white/55">ชื่อ</label>
-                  <input
-                    type="text"
-                    value={reviewForm.reviewer_name}
-                    onChange={(event) => setReviewForm((prev) => ({ ...prev, reviewer_name: event.target.value }))}
-                    maxLength={80}
-                    autoComplete="name"
-                    placeholder="ชื่อผู้รีวิว"
-                    className="ui-field mt-1 h-11"
-                  />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {relatedProducts.map((p) => (
+              <Link
+                key={p.id}
+                to={`/p/${p.slug || p.id}`}
+                className="group flex flex-col overflow-hidden rounded-2xl border border-sky-100 bg-slate-50/50 p-3 hover:border-sky-300 hover:bg-white hover:shadow-md transition"
+              >
+                <div className="relative aspect-video w-full rounded-xl overflow-hidden bg-white border border-slate-100">
+                  {p.badge && (
+                    <span className="absolute left-2 top-2 z-10 rounded-full bg-rose-500 text-white text-[9px] font-black px-2 py-0.5 shadow-sm">
+                      {p.badge}
+                    </span>
+                  )}
+                  {p.image_url ? (
+                    <img src={resolveImageUrl(p.image_url)} alt="" className="h-full w-full object-contain group-hover:scale-105 transition duration-300" />
+                  ) : (
+                    <div className="grid h-full place-items-center text-slate-300 text-xs">No Image</div>
+                  )}
                 </div>
-                <div>
-                  <label className="text-[11px] font-black text-white/55">คะแนน</label>
-                  <select
-                    value={reviewForm.rating}
-                    onChange={(event) => setReviewForm((prev) => ({ ...prev, rating: Number(event.target.value) }))}
-                    className="ui-field mt-1 h-11"
-                  >
-                    {[5, 4, 3, 2, 1].map((rating) => (
-                      <option key={rating} value={rating}>{ratingStars(rating)} {rating}/5</option>
-                    ))}
-                  </select>
+                <div className="mt-2.5 flex-1 flex flex-col justify-between">
+                  <div className="text-xs font-bold text-slate-800 line-clamp-2 group-hover:text-sky-600 transition">{p.name}</div>
+                  <div className="mt-2 text-sm font-black text-sky-600">{fmt(p.price)} พ้อยท์</div>
                 </div>
-                <div>
-                  <label className="text-[11px] font-black text-white/55">รีวิว</label>
-                  <textarea
-                    value={reviewForm.comment}
-                    onChange={(event) => setReviewForm((prev) => ({ ...prev, comment: event.target.value }))}
-                    rows={4}
-                    maxLength={1200}
-                    placeholder="เล่าประสบการณ์หลังซื้อสินค้า"
-                    className="ui-field mt-1 min-h-28 py-3"
-                  />
-                </div>
-                <button type="submit" disabled={reviewStatus === 'submitting'} className="ui-btn-primary h-11 text-xs font-black disabled:cursor-wait disabled:opacity-60">
-                  {reviewStatus === 'submitting' ? 'กำลังส่งรีวิว...' : 'ส่งรีวิว'}
-                </button>
-                {reviewMessage ? (
-                  <div className={`text-xs font-bold ${reviewStatus === 'success' ? 'text-emerald-200' : 'text-rose-200'}`}>{reviewMessage}</div>
-                ) : null}
-              </form>
-            ) : (
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4 text-sm leading-6 text-white/55">
-                เข้าสู่ระบบและซื้อสินค้าสำเร็จก่อน จึงจะเขียนรีวิวได้
-                <div className="mt-3">
-                  <Link to="/login" className="ui-btn inline-flex h-10 items-center px-4 text-xs font-black">เข้าสู่ระบบ</Link>
-                </div>
-              </div>
-            )}
+              </Link>
+            ))}
           </div>
-
-          <div className="space-y-3">
-            {reviewItems.length > 0 ? reviewItems.map((review) => (
-              <div key={review.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm font-black text-white">{review.reviewer_name || 'ผู้ซื้อ'}</div>
-                  <div className="text-xs font-black text-amber-100">{ratingStars(review.rating)}</div>
-                </div>
-                <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/62">{review.comment}</div>
-                {review.created_at ? <div className="mt-3 text-[11px] text-white/35">{new Date(review.created_at).toLocaleDateString('th-TH')}</div> : null}
-              </div>
-            )) : (
-              <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-6 text-sm font-bold text-white/42">ยังไม่มีรีวิว</div>
-            )}
-          </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
 
       {qtyRequiredOpen ? (
         <Modal onClose={() => setQtyRequiredOpen(false)} maxWidth="max-w-sm">
-          <div className="text-lg font-black text-white">กรุณาใส่จำนวนสินค้า</div>
-          <div className="mt-2 text-sm leading-6 text-white/55">กรุณาใส่จำนวนสินค้าก่อนกดสั่งซื้อ</div>
+          <div className="text-lg font-black text-slate-900">กรุณาใส่จำนวนสินค้า</div>
+          <div className="mt-2 text-xs leading-relaxed text-slate-600">กรุณาใส่จำนวนสินค้าก่อนกดสั่งซื้อ</div>
           <div className="mt-5 flex justify-end">
-            <button type="button" onClick={() => setQtyRequiredOpen(false)} className="ui-btn-primary h-10 px-5 text-sm font-black">ตกลง</button>
+            <button type="button" onClick={() => setQtyRequiredOpen(false)} className="ui-btn-primary h-10 px-5 text-xs font-black">ตกลง</button>
           </div>
         </Modal>
       ) : null}
 
       {confirmOpen ? (
         <Modal onClose={() => setConfirmOpen(false)}>
-          <div className="text-lg font-black text-white">ยืนยันการสั่งซื้อ</div>
-          <div className="mt-2 text-sm leading-6 text-white/55">ตรวจสอบรายการก่อนกดยืนยัน ระบบจะตัดพ้อยท์ทันที</div>
-          <div className="mt-4 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4">
-            <div className="text-xs font-bold text-white/45">ยอดชำระ</div>
-            <div className="mt-1 text-3xl font-black text-emerald-300">{fmt(displayTotalPoints)} พ้อยท์</div>
-            <div className="mt-3 grid gap-1 text-xs text-white/55">
-              <div>จำนวน: <span className="font-bold text-white/80">{safeQty}</span></div>
-              <div>ราคา/ชิ้น: <span className="font-bold text-white/80">{fmt(displayUnitPoints)} พ้อยท์</span></div>
-              {selectedOption ? <div>ตัวเลือก: <span className="font-bold text-cyan-100">{selectedOption.label}</span></div> : null}
+          <div className="text-lg font-black text-slate-900">ยืนยันการสั่งซื้อ</div>
+          <div className="mt-1.5 text-xs leading-relaxed text-slate-600">ตรวจสอบรายการก่อนกดยืนยัน ระบบจะตัดพ้อยท์ทันที</div>
+          <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/60 p-4">
+            <div className="text-xs font-bold text-slate-500">ยอดชำระ</div>
+            <div className="mt-1 text-3xl font-black text-emerald-600">{fmt(displayTotalPoints)} พ้อยท์</div>
+            <div className="mt-3 grid gap-1 text-xs text-slate-600">
+              <div>จำนวน: <span className="font-bold text-slate-900">{safeQty}</span></div>
+              <div>ราคา/ชิ้น: <span className="font-bold text-slate-900">{fmt(displayUnitPoints)} พ้อยท์</span></div>
+              {selectedOption ? <div>ตัวเลือก: <span className="font-bold text-sky-700">{selectedOption.label}</span></div> : null}
             </div>
           </div>
-          {buyError ? <div className="mt-3 text-xs font-bold text-cyan-200">{buyError}</div> : null}
+          {buyError ? <div className="mt-3 text-xs font-bold text-rose-600">{buyError}</div> : null}
           <div className="mt-5 flex gap-2">
             <button type="button" onClick={() => setConfirmOpen(false)} disabled={buyStatus === 'submitting'} className="ui-btn h-10 flex-1 text-xs font-black">ยกเลิก</button>
             <button type="button" onClick={buy} disabled={buyStatus === 'submitting'} className="ui-btn-primary h-10 flex-1 text-xs font-black">
@@ -1014,26 +1606,26 @@ export default function ProductDetail() {
 
       {successOpen ? (
         <Modal onClose={() => setSuccessOpen(false)}>
-          <div className="text-lg font-black text-white">{isMystery ? 'สุ่มสำเร็จ' : 'ซื้อสำเร็จ'}</div>
-          <div className="mt-2 text-sm leading-6 text-white/55">ระบบทำรายการเรียบร้อยแล้ว สามารถดูสินค้าที่ได้รับได้ที่กล่องรับของ</div>
+          <div className="text-lg font-black text-slate-900">{isMystery ? 'สุ่มสำเร็จ' : 'ซื้อสำเร็จ'}</div>
+          <div className="mt-1.5 text-xs leading-relaxed text-slate-600">ระบบทำรายการเรียบร้อยแล้ว สามารถดูสินค้าที่ได้รับได้ที่กล่องรับของ</div>
           {successOption ? (
-            <div className="mt-4 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-3 text-xs text-white/58">
-              ตัวเลือก: <span className="font-bold text-cyan-100">{successOption.label}</span>
+            <div className="mt-4 rounded-2xl border border-sky-100 bg-sky-50/60 p-3 text-xs text-slate-700">
+              ตัวเลือก: <span className="font-bold text-sky-700">{successOption.label}</span>
               {successOption.value ? <span> • {successOption.value}</span> : null}
             </div>
           ) : null}
           {successItems.length > 0 ? (
-            <div className="mt-3 rounded-2xl border border-white/[0.06] bg-white/[0.035] p-3 text-xs text-white/58">
+            <div className="mt-3 rounded-2xl border border-sky-100 bg-sky-50/60 p-3 text-xs text-slate-700">
               {successItems.slice(0, 3).map((item, index) => (
                 <div key={index}>{item.prize_name || item.prize_product_name || item.delivery_name || 'รายการที่ได้รับ'}</div>
               ))}
             </div>
           ) : null}
           <div className="mt-5 flex gap-2">
-            <button type="button" onClick={goToInboxAfterPurchase} className="h-10 flex-1 rounded-xl border border-cyan-200/25 bg-cyan-500/90 px-4 text-xs font-black text-white shadow-[0_12px_32px_rgba(6,182,212,0.18)] transition hover:border-cyan-100/45 hover:bg-cyan-400">
+            <button type="button" onClick={goToInboxAfterPurchase} className="ui-btn-primary h-10 flex-1 px-4 text-xs font-black">
               ไปกล่องรับของ
             </button>
-            <button type="button" onClick={stayAfterPurchase} className="h-10 flex-1 rounded-xl border border-white/[0.12] bg-white/[0.06] px-4 text-xs font-black text-white/[0.86] transition hover:border-white/[0.22] hover:bg-white/[0.1]">
+            <button type="button" onClick={stayAfterPurchase} className="ui-btn h-10 flex-1 px-4 text-xs font-black">
               อยู่ต่อ
             </button>
           </div>
@@ -1044,32 +1636,45 @@ export default function ProductDetail() {
         <Modal onClose={() => setManualOpen(false)} maxWidth="max-w-2xl">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-lg font-black text-white">คู่มือ / วิธีใช้งาน</div>
-              <div className="mt-1 text-sm text-white/45">{product.name}</div>
+              <div className="text-lg font-black text-slate-900">คู่มือ / วิธีใช้งาน</div>
+              <div className="mt-0.5 text-xs text-slate-500">{product.name}</div>
             </div>
             <button type="button" onClick={() => setManualOpen(false)} className="ui-btn h-9 px-4 text-xs font-black">ปิด</button>
           </div>
           <div className="mt-5 space-y-3">
             {manualText ? (
-              <div className="rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4">
-                <div className="whitespace-pre-wrap text-sm leading-7 text-white/70">{manualText}</div>
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/40 p-4">
+                <div className="whitespace-pre-wrap text-xs leading-relaxed text-slate-700">{manualText}</div>
               </div>
             ) : null}
             {manualUrl ? (
-              <a href={manualUrl} target="_blank" rel="noreferrer" className="block rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4 text-sm font-bold text-white hover:bg-white/[0.055]">
+              <a href={manualUrl} target="_blank" rel="noreferrer" className="block rounded-2xl border border-sky-100 bg-sky-50/40 p-4 text-xs font-bold text-sky-700 hover:bg-sky-50">
                 เปิดลิงก์คู่มือ →
-                <div className="mt-1 break-all text-xs text-white/42">{manualUrl}</div>
+                <div className="mt-1 break-all text-[11px] text-slate-500">{manualUrl}</div>
               </a>
             ) : null}
             {manualVideoUrl ? (
-              <a href={manualVideoUrl} target="_blank" rel="noreferrer" className="block rounded-2xl border border-white/[0.06] bg-white/[0.035] p-4 text-sm font-bold text-white hover:bg-white/[0.055]">
+              <a href={manualVideoUrl} target="_blank" rel="noreferrer" className="block rounded-2xl border border-sky-100 bg-sky-50/40 p-4 text-xs font-bold text-sky-700 hover:bg-sky-50">
                 เปิดคลิปวิดีโอ →
-                <div className="mt-1 break-all text-xs text-white/42">{manualVideoUrl}</div>
+                <div className="mt-1 break-all text-[11px] text-slate-500">{manualVideoUrl}</div>
               </a>
             ) : null}
           </div>
         </Modal>
       ) : null}
+
+      <MysteryUnboxModal
+        isOpen={mysteryUnboxOpen}
+        isLoading={buyStatus === 'submitting'}
+        onClose={() => setMysteryUnboxOpen(false)}
+        onRollAgain={buy}
+        boxName={product.name}
+        boxImage={resolveImageUrl(product.image_url)}
+        picks={successData?.picks || []}
+        orderRef={successData?.order?.ref || ''}
+        canRollAgain={!outOfStock && buyStatus !== 'submitting'}
+        rollPriceLabel={isFreeBox ? 'ฟรี' : `${fmt(displayTotalPoints)} พ้อยท์`}
+      />
     </div>
   )
 }

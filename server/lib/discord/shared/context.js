@@ -2,7 +2,9 @@ import { EmbedBuilder } from 'discord.js'
 import {
   adjustUserPoints,
   claimDiscordLinkCode,
+  countUnreadSiteMessages,
   getDiscordLinkedUserByDiscordId,
+  getMyVip,
   getProductById,
   getUserById,
   getWallet,
@@ -12,6 +14,7 @@ import {
   unlinkDiscordByDiscordUserId,
 } from '../../../db.js'
 import { createPromptpayTopup, redeemAngpaoVoucher, verifyPromptpaySlip } from '../../topup.js'
+import { getTopupSettings } from '../../topupSettings.js'
 
 const EPHEMERAL = 64
 const EMBED_COLORS = {
@@ -300,14 +303,17 @@ export function createDiscordContext() {
     createPromptpayTopup,
     redeemAngpaoVoucher,
     redeemCoupon,
+    getTopupSettings,
     setUserPassword,
     unlinkDiscordByDiscordUserId,
     verifyPromptpaySlip,
     getDiscordLinkedUserByDiscordId,
+    getMyVip,
     getProductById,
     getUserById,
     getWallet,
     listMyOrders,
+    countUnreadSiteMessages,
     envValue,
     formatPoints,
     compactText,

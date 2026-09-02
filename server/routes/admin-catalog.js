@@ -18,12 +18,14 @@ import {
   adminSetProductOptionStockBinding,
   adminUnsetProductOptionStockBinding,
   adminSetProductHidden,
+  adminSetProductFeatured,
   adminSetCategoryHidden,
   adminListCategories,
   adminCreateProductPromotion,
   adminDeleteProductPromotion,
   adminListProductPromotions,
   adminUpdateProductPromotion,
+  adminToggleProductPromotion,
   adminCreateDiscountCoupon,
   adminDeleteDiscountCoupon,
   adminListDiscountCoupons,
@@ -49,9 +51,12 @@ import {
   adminCreateBundle,
   adminUpdateBundle,
   adminDeleteBundle,
+  adminReorderCategories,
   createCoupon,
   createCategory,
   createProduct,
+  duplicateProduct,
+  bulkUpdateProducts,
   deleteCategory,
   deleteCoupon,
   deleteProduct,
@@ -61,10 +66,23 @@ import {
   updateCoupon,
   updateCategory,
   updateProduct,
+  adminListLowStockProducts,
+  adminUpdateProductStockThreshold,
+  adminExportDigitalStockItems,
+  adminGetUnifiedStockOverview,
+  adminAddUnifiedStockBatch,
+  adminGetUnifiedStockItems,
+  adminDeleteStockItemsBatch,
 } from '../db.js'
 import { requireAuth, requireAdmin, requireFinance } from '../lib/auth.js'
 import { CategoryBodySchema, ProductBodySchema, StockItemsBodySchema } from '../lib/requestSchemas.js'
 import { validateBody } from '../lib/validation.js'
+import multer from 'multer'
+
+const stockUploadMulter = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+})
 
 const router = Router()
 
@@ -82,7 +100,7 @@ router.get('/api/admin/categories', requireAuth, requireAdmin, async (req, res) 
 router.post('/api/admin/categories', requireAuth, requireAdmin, async (req, res) => {
   const parsed = validateBody(CategoryBodySchema, req.body)
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
-  const { name, slug, image_url, description } = parsed.data
+  const { name, slug, image_url, description, parent_id, sort_order, icon } = parsed.data
 
   try {
     const id = await createCategory({
@@ -90,10 +108,15 @@ router.post('/api/admin/categories', requireAuth, requireAdmin, async (req, res)
       slug,
       imageUrl: image_url,
       description,
+      parentId: parent_id,
+      sortOrder: sort_order,
+      icon,
     })
     res.status(201).json({ ok: true, id })
   } catch (e) {
+    const msg = String(e?.message ?? '')
     if (e?.code === '23505') return res.status(409).json({ error: 'slug_taken' })
+    if (msg === 'parent_category_not_found') return res.status(400).json({ error: 'parent_category_not_found' })
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -103,7 +126,7 @@ router.put('/api/admin/categories/:id', requireAuth, requireAdmin, async (req, r
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
   const parsed = validateBody(CategoryBodySchema, req.body)
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
-  const { name, slug, image_url, description } = parsed.data
+  const { name, slug, image_url, description, parent_id, sort_order, icon } = parsed.data
 
   try {
     const category = await updateCategory({
@@ -112,10 +135,27 @@ router.put('/api/admin/categories/:id', requireAuth, requireAdmin, async (req, r
       slug,
       imageUrl: image_url,
       description,
+      parentId: parent_id,
+      sortOrder: sort_order,
+      icon,
     })
     res.json({ ok: true, category })
   } catch (e) {
+    const msg = String(e?.message ?? '')
     if (e?.code === '23505') return res.status(409).json({ error: 'slug_taken' })
+    if (msg === 'invalid_parent_self') return res.status(400).json({ error: 'invalid_parent_self' })
+    if (msg === 'invalid_parent_circular') return res.status(400).json({ error: 'invalid_parent_circular' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/categories/reorder', requireAuth, requireAdmin, async (req, res) => {
+  const { items } = req.body ?? {}
+  if (!Array.isArray(items)) return res.status(400).json({ error: 'invalid_items' })
+  try {
+    await adminReorderCategories(items)
+    res.json({ ok: true })
+  } catch {
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -123,14 +163,16 @@ router.put('/api/admin/categories/:id', requireAuth, requireAdmin, async (req, r
 router.delete('/api/admin/categories/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  const reassignId = req.query.reassign_to_category_id || req.body?.reassign_to_category_id
   try {
-    await deleteCategory(id)
+    await deleteCategory(id, { reassignToCategoryId: reassignId })
     res.json({ ok: true })
   } catch (e) {
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
     if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
     if (msg === 'category_in_use') return res.status(409).json({ error: 'category_in_use' })
+    if (msg === 'reassign_target_not_found') return res.status(400).json({ error: 'reassign_target_not_found' })
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -176,6 +218,21 @@ router.put('/api/admin/products/:id/hidden', requireAuth, requireAdmin, async (r
   }
 })
 
+router.put('/api/admin/products/:id/featured', requireAuth, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id)
+  const { is_featured } = req.body ?? {}
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  try {
+    await adminSetProductFeatured({ productId: id, isFeatured: Boolean(is_featured) })
+    res.json({ ok: true })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_id' })
+    if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
 router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) => {
   const parsed = validateBody(ProductBodySchema, req.body)
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
@@ -200,6 +257,14 @@ router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) =
     sort_order: so,
     is_featured,
     is_unlimited_stock,
+    gallery_images,
+    badge,
+    tags,
+    sku,
+    admin_notes,
+    volume_pricing,
+    min_order_qty,
+    max_order_qty,
   } = parsed.data
 
   try {
@@ -224,6 +289,14 @@ router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) =
       sortOrder: so,
       isFeatured: Boolean(is_featured),
       isUnlimitedStock: Boolean(is_unlimited_stock),
+      galleryImages: gallery_images,
+      badge,
+      tags,
+      sku,
+      adminNotes: admin_notes,
+      volumePricing: volume_pricing,
+      minOrderQty: min_order_qty,
+      maxOrderQty: max_order_qty,
     })
     try {
       await logAuditEvent({
@@ -241,6 +314,58 @@ router.post('/api/admin/products', requireAuth, requireAdmin, async (req, res) =
   } catch (e) {
     if (String(e?.message ?? '') === 'invalid_product_option') return res.status(400).json({ error: 'invalid_product_option' })
     if (e?.code === '23505') return res.status(409).json({ error: 'slug_taken' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/products/:id/duplicate', requireAuth, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'invalid_id' })
+  try {
+    const product = await duplicateProduct(id)
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'product.duplicate',
+        entityType: 'product',
+        entityId: String(product.id),
+        detail: { sourceProductId: id, name: product.name },
+      })
+    } catch {
+      // ignore
+    }
+    res.status(201).json({ ok: true, product })
+  } catch (e) {
+    if (String(e?.message) === 'not_found') return res.status(404).json({ error: 'not_found' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/products/bulk', requireAuth, requireAdmin, async (req, res) => {
+  const { product_ids, action, payload } = req.body ?? {}
+  if (!Array.isArray(product_ids) || product_ids.length === 0) return res.status(400).json({ error: 'invalid_product_ids' })
+  if (!action) return res.status(400).json({ error: 'invalid_action' })
+  try {
+    const result = await bulkUpdateProducts({ productIds: product_ids, action, payload })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: `product.bulk_${action}`,
+        entityType: 'product',
+        entityId: product_ids.join(','),
+        detail: { productIds: product_ids, action, payload },
+      })
+    } catch {
+      // ignore
+    }
+    res.json({ ok: true, ...result })
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg.startsWith('invalid_') || msg === 'category_not_found' || msg === 'too_many_items') {
+      return res.status(400).json({ error: msg })
+    }
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -271,6 +396,14 @@ router.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res
     sort_order: so,
     is_featured,
     is_unlimited_stock,
+    gallery_images,
+    badge,
+    tags,
+    sku,
+    admin_notes,
+    volume_pricing,
+    min_order_qty,
+    max_order_qty,
   } = parsed.data
 
   try {
@@ -296,6 +429,14 @@ router.put('/api/admin/products/:id', requireAuth, requireAdmin, async (req, res
       sortOrder: so,
       isFeatured: Boolean(is_featured),
       isUnlimitedStock: Boolean(is_unlimited_stock),
+      galleryImages: gallery_images,
+      badge,
+      tags,
+      sku,
+      adminNotes: admin_notes,
+      volumePricing: volume_pricing,
+      minOrderQty: min_order_qty,
+      maxOrderQty: max_order_qty,
     })
     try {
       await logAuditEvent({
@@ -350,9 +491,10 @@ router.post('/api/admin/stock', requireAuth, requireAdmin, async (req, res) => {
   const parsed = validateBody(StockItemsBodySchema, { ...(req.body ?? {}), target_id: req.body?.product_id })
   if (!parsed.ok) return res.status(400).json({ error: parsed.error === 'invalid_id' ? 'invalid_product_id' : parsed.error })
   const { target_id: productId, items: arr } = parsed.data
+  const allowDuplicates = Boolean(req.body?.allow_duplicates)
 
   try {
-    const result = await adminAddDigitalStock({ productId, items: arr })
+    const result = await adminAddDigitalStock({ productId, items: arr, allowDuplicates })
     try {
       await logAuditEvent({
         actorUserId: req.user?.id,
@@ -360,7 +502,11 @@ router.post('/api/admin/stock', requireAuth, requireAdmin, async (req, res) => {
         action: 'stock.add',
         entityType: 'product',
         entityId: String(productId),
-        detail: { inserted: Number(result?.inserted ?? 0) },
+        detail: {
+          inserted: Number(result?.inserted ?? 0),
+          duplicates_in_batch: Number(result?.duplicates_in_batch ?? 0),
+          duplicates_in_db: Number(result?.duplicates_in_db ?? 0),
+        },
       })
     } catch {
       // ignore
@@ -370,6 +516,227 @@ router.post('/api/admin/stock', requireAuth, requireAdmin, async (req, res) => {
   } catch (e) {
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/stock/import', requireAuth, requireAdmin, stockUploadMulter.single('file'), async (req, res) => {
+  const productId = Number(req.body?.product_id)
+  if (!Number.isFinite(productId) || productId <= 0) return res.status(400).json({ error: 'invalid_product_id' })
+
+  let text = ''
+  if (req.file && req.file.buffer) {
+    text = req.file.buffer.toString('utf8')
+  } else if (typeof req.body?.text === 'string') {
+    text = req.body.text
+  }
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0)
+
+  if (lines.length === 0) return res.status(400).json({ error: 'empty_file' })
+  const allowDuplicates = Boolean(req.body?.allow_duplicates === 'true' || req.body?.allow_duplicates === true)
+
+  try {
+    const result = await adminAddDigitalStock({ productId, items: lines, allowDuplicates })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'stock.import',
+        entityType: 'product',
+        entityId: String(productId),
+        detail: {
+          filename: req.file?.originalname || 'text',
+          inserted: Number(result?.inserted ?? 0),
+          duplicates_in_batch: Number(result?.duplicates_in_batch ?? 0),
+          duplicates_in_db: Number(result?.duplicates_in_db ?? 0),
+        },
+      })
+    } catch {
+      // ignore
+    }
+    const summary = await adminGetDigitalStockSummary(productId)
+    res.json({ ok: true, result, summary })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/admin/stock/export', requireAuth, requireAdmin, async (req, res) => {
+  const productId = Number(req.query.product_id)
+  if (!Number.isFinite(productId) || productId <= 0) return res.status(400).json({ error: 'invalid_product_id' })
+
+  const status = typeof req.query.status === 'string' ? req.query.status : 'available'
+  const mask = req.query.mask === 'true' || req.query.mask === '1'
+  const format = req.query.format === 'txt' ? 'txt' : 'csv'
+
+  try {
+    const items = await adminExportDigitalStockItems(productId, { status, mask })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'stock.export',
+        entityType: 'product',
+        entityId: String(productId),
+        detail: { count: items.length, status, mask, format },
+      })
+    } catch {
+      // ignore
+    }
+
+    if (format === 'txt') {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.setHeader('Content-Disposition', `attachment; filename="stock-export-product-${productId}.txt"`)
+      return res.send(items.map((i) => i.payload).join('\n'))
+    }
+
+    // CSV format
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', `attachment; filename="stock-export-product-${productId}.csv"`)
+    const csvHeader = 'ID,Payload,Status,Created At,Delivered At\r\n'
+    const csvRows = items.map((i) => {
+      const escapedPayload = `"${String(i.payload || '').replace(/"/g, '""')}"`
+      return `${i.id},${escapedPayload},${i.status},${i.created_at || ''},${i.delivered_at || ''}`
+    })
+    return res.send(csvHeader + csvRows.join('\r\n'))
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/admin/stock/low-stock', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const products = await adminListLowStockProducts()
+    res.json({ ok: true, products })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/admin/stock/overview', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const search = typeof req.query.search === 'string' ? req.query.search : ''
+    const filter = typeof req.query.filter === 'string' ? req.query.filter : 'all'
+    const categoryId = typeof req.query.category_id === 'string' ? req.query.category_id : 'all'
+    const overview = await adminGetUnifiedStockOverview({ search, filter, categoryId })
+    res.json({ ok: true, ...overview })
+  } catch (e) {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/stock/quick-add', requireAuth, requireAdmin, stockUploadMulter.single('file'), async (req, res) => {
+  const productId = req.body?.product_id ? Number(req.body.product_id) : null
+  const optionId = typeof req.body?.option_id === 'string' && req.body.option_id.trim() ? req.body.option_id.trim() : null
+  const poolId = req.body?.pool_id ? Number(req.body.pool_id) : null
+  const allowDuplicates = Boolean(req.body?.allow_duplicates === 'true' || req.body?.allow_duplicates === true)
+
+  let text = ''
+  if (req.file && req.file.buffer) {
+    text = req.file.buffer.toString('utf8')
+  } else if (typeof req.body?.text === 'string') {
+    text = req.body.text
+  }
+
+  const lines = text
+    .split(/\r?\n/)
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0)
+
+  if (lines.length === 0) return res.status(400).json({ error: 'empty_payload' })
+
+  try {
+    const result = await adminAddUnifiedStockBatch({ productId, optionId, poolId, items: lines, allowDuplicates })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'stock.quick_add',
+        entityType: 'stock_item',
+        entityId: String(productId || poolId || 'batch'),
+        detail: {
+          productId,
+          optionId,
+          poolId,
+          inserted: Number(result?.inserted ?? 0),
+          duplicates_in_batch: Number(result?.duplicates_in_batch ?? 0),
+          duplicates_in_db: Number(result?.duplicates_in_db ?? 0),
+        },
+      })
+    } catch {
+      // ignore
+    }
+    res.json({ ok: true, result })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
+    if (msg === 'invalid_pool_id') return res.status(400).json({ error: 'invalid_pool_id' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.get('/api/admin/stock/unified-items', requireAuth, requireAdmin, async (req, res) => {
+  const productId = req.query.product_id ? Number(req.query.product_id) : undefined
+  const optionId = typeof req.query.option_id === 'string' ? req.query.option_id : undefined
+  const poolId = req.query.pool_id ? Number(req.query.pool_id) : undefined
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined
+  const search = typeof req.query.search === 'string' ? req.query.search : ''
+  const limit = req.query.limit ? Number(req.query.limit) : 100
+  const offset = req.query.offset ? Number(req.query.offset) : 0
+
+  try {
+    const data = await adminGetUnifiedStockItems({ productId, optionId, poolId, status, search, limit, offset })
+    res.json({ ok: true, ...data })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/stock/items/batch-delete', requireAuth, requireAdmin, async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : []
+  if (ids.length === 0) return res.status(400).json({ error: 'empty_ids' })
+
+  try {
+    const result = await adminDeleteStockItemsBatch({ ids })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'stock.batch_delete',
+        entityType: 'stock_item',
+        entityId: 'batch',
+        detail: { deleted: Number(result?.deleted ?? 0), count: ids.length },
+      })
+    } catch {
+      // ignore
+    }
+    res.json({ ok: true, ...result })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.patch('/api/admin/products/:id/stock-threshold', requireAuth, requireAdmin, async (req, res) => {
+  const productId = Number(req.params.id)
+  const threshold = Number(req.body?.threshold)
+  if (!Number.isFinite(productId) || productId <= 0) return res.status(400).json({ error: 'invalid_product_id' })
+  if (!Number.isFinite(threshold) || threshold < 0) return res.status(400).json({ error: 'invalid_threshold' })
+
+  try {
+    const product = await adminUpdateProductStockThreshold({ productId, threshold })
+    res.json({ ok: true, product })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
+    if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -570,9 +937,10 @@ router.post('/api/admin/stock-pool-items', requireAuth, requireAdmin, async (req
   const parsed = validateBody(StockItemsBodySchema, { ...(req.body ?? {}), target_id: req.body?.pool_id })
   if (!parsed.ok) return res.status(400).json({ error: parsed.error === 'invalid_id' ? 'invalid_pool_id' : parsed.error })
   const { target_id: poolId, items: arr } = parsed.data
+  const allowDuplicates = Boolean(req.body?.allow_duplicates)
 
   try {
-    const result = await adminAddStockPoolItems({ poolId, items: arr })
+    const result = await adminAddStockPoolItems({ poolId, items: arr, allowDuplicates })
     const summary = await adminGetStockPoolSummary(poolId)
     res.json({ ok: true, result, summary })
   } catch (e) {
@@ -616,10 +984,12 @@ router.delete('/api/admin/stock-pool-items/:id', requireAuth, requireAdmin, asyn
 // ── Product Option Stock Bindings ──
 
 router.get('/api/admin/product-option-stock-bindings', requireAuth, requireAdmin, async (req, res) => {
-  const productId = Number(req.query.product_id)
-  if (!Number.isFinite(productId)) return res.status(400).json({ error: 'invalid_product_id' })
+  const productId = req.query.product_id != null && req.query.product_id !== '' ? Number(req.query.product_id) : undefined
+  if (productId !== undefined && (!Number.isFinite(productId) || productId <= 0)) {
+    return res.status(400).json({ error: 'invalid_product_id' })
+  }
   try {
-    const bindings = await adminListProductOptionStockBindings(productId)
+    const bindings = await adminListProductOptionStockBindings({ productId })
     res.json({ ok: true, bindings })
   } catch {
     res.status(500).json({ error: 'db_error' })
@@ -673,13 +1043,33 @@ router.get('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) 
 })
 
 router.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res) => {
-  const { product_id, title, discount_percent, discount_amount_points, starts_at, ends_at, is_active } = req.body ?? {}
+  const {
+    product_id,
+    scope,
+    category_id,
+    title,
+    discount_percent,
+    discount_amount_points,
+    min_spend_points,
+    max_discount_points,
+    badge_text,
+    is_flash_sale,
+    starts_at,
+    ends_at,
+    is_active,
+  } = req.body ?? {}
   try {
     const id = await adminCreateProductPromotion({
-      productId: Number(product_id),
+      productId: product_id ? Number(product_id) : null,
+      scope: scope || 'product',
+      categoryId: category_id ? Number(category_id) : null,
       title,
       discountPercent: discount_percent,
       discountAmountPoints: discount_amount_points,
+      minSpendPoints: min_spend_points,
+      maxDiscountPoints: max_discount_points,
+      badgeText: badge_text,
+      isFlashSale: is_flash_sale,
       startsAt: starts_at,
       endsAt: ends_at,
       isActive: is_active,
@@ -688,6 +1078,7 @@ router.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res)
   } catch (e) {
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_product_id') return res.status(400).json({ error: 'invalid_product_id' })
+    if (msg === 'invalid_category_id') return res.status(400).json({ error: 'invalid_category_id' })
     if (msg === 'invalid_discount') return res.status(400).json({ error: 'invalid_discount' })
     if (msg === 'invalid_discount_percent') return res.status(400).json({ error: 'invalid_discount_percent' })
     if (msg === 'invalid_discount_amount') return res.status(400).json({ error: 'invalid_discount_amount' })
@@ -698,13 +1089,34 @@ router.post('/api/admin/promotions', requireAuth, requireAdmin, async (req, res)
 router.put('/api/admin/promotions/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
-  const { title, discount_percent, discount_amount_points, starts_at, ends_at, is_active } = req.body ?? {}
+  const {
+    product_id,
+    scope,
+    category_id,
+    title,
+    discount_percent,
+    discount_amount_points,
+    min_spend_points,
+    max_discount_points,
+    badge_text,
+    is_flash_sale,
+    starts_at,
+    ends_at,
+    is_active,
+  } = req.body ?? {}
   try {
     await adminUpdateProductPromotion({
       id,
+      productId: product_id ? Number(product_id) : null,
+      scope,
+      categoryId: category_id ? Number(category_id) : null,
       title,
       discountPercent: discount_percent,
       discountAmountPoints: discount_amount_points,
+      minSpendPoints: min_spend_points,
+      maxDiscountPoints: max_discount_points,
+      badgeText: badge_text,
+      isFlashSale: is_flash_sale,
       startsAt: starts_at,
       endsAt: ends_at,
       isActive: is_active,
@@ -716,6 +1128,21 @@ router.put('/api/admin/promotions/:id', requireAuth, requireAdmin, async (req, r
     if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
     if (msg === 'invalid_discount_percent') return res.status(400).json({ error: 'invalid_discount_percent' })
     if (msg === 'invalid_discount_amount') return res.status(400).json({ error: 'invalid_discount_amount' })
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.put('/api/admin/promotions/:id/toggle', requireAuth, requireAdmin, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  const { is_active } = req.body ?? {}
+  try {
+    const updated = await adminToggleProductPromotion(id, is_active)
+    res.json({ ok: true, promotion: updated })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_id') return res.status(400).json({ error: 'invalid_id' })
+    if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
     res.status(500).json({ error: 'db_error' })
   }
 })

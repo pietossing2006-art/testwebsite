@@ -1,7 +1,9 @@
+# Dependencies
 node_modules/
 client/node_modules/
 server/node_modules/
 
+# Production Builds & Binaries
 dist/
 client/dist/
 server/dist/
@@ -10,41 +12,37 @@ obj/
 tools/**/bin/
 tools/**/obj/
 
-.agent/
-.script-state/
-.worktrees/
-.windsurf/
-
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-.DS_Store
-.idea/
-.vscode/
-.vs/
-tools/StartVxpers.sln
-tools/StartVxpers/
-
+# Environment Variables & Secrets
 .env
 .env.*
 client/.env*
 server/.env*
-
-server/data.sqlite
-server/uploads/
-manga_ocr_server/storage/uploads/
-manga_ocr_server/storage/results/
-manga_ocr_server/storage/fonts/
-manga_ocr_server/__pycache__/
-**/__pycache__/
-*.py[cod]
-
-manga_ocr_server/.env
-manga_ocr_server/.env.*
-!manga_ocr_server/.env.example
-
 cloudflare/*.json
 !cloudflare/config.example.yml
+
+# Storage & Uploads
+server/uploads/
+server/data.sqlite
+
+# Logs & Scripts State
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.script-state/
+
+# IDE & Editor Files
+.DS_Store
+.idea/
+.vscode/
+.vs/
+.windsurf/
+.worktrees/
+.agent/
+tools/StartVxpers.sln
+tools/StartVxpers/
+
+# Python Cache (Tracker / scripts)
+**/__pycache__/
+*.py[cod]

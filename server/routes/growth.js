@@ -90,20 +90,32 @@ export function createGrowthRouter({ store = db, auth = defaultAuth() } = {}) {
     }
   })
 
-  router.get('/api/products/:id(\\d+)/reviews', async (req, res) => {
+  router.get('/api/products/:id/reviews', async (req, res) => {
     try {
-      const data = await store.listProductReviewsPublic({ productId: Number(req.params.id), limit: req.query.limit, offset: req.query.offset })
+      let productId = Number(req.params.id)
+      if (!Number.isFinite(productId) && store.getProductById) {
+        const p = await store.getProductById(req.params.id)
+        if (p) productId = p.id
+      }
+      if (!Number.isFinite(productId)) return res.json({ ok: true, summary: null, reviews: [] })
+      const data = await store.listProductReviewsPublic({ productId, limit: req.query.limit, offset: req.query.offset })
       res.json({ ok: true, ...data })
     } catch (error) {
       mapError(res, error)
     }
   })
 
-  router.post('/api/products/:id(\\d+)/reviews', auth.requireAuth, async (req, res) => {
+  router.post('/api/products/:id/reviews', auth.requireAuth, async (req, res) => {
     const parsed = validateBody(ReviewBodySchema, req.body)
     if (!parsed.ok) return res.status(400).json({ error: parsed.error })
     try {
-      const review = await store.createProductReview({ userId: req.user.id, productId: Number(req.params.id), ...parsed.data })
+      let productId = Number(req.params.id)
+      if (!Number.isFinite(productId) && store.getProductById) {
+        const p = await store.getProductById(req.params.id)
+        if (p) productId = p.id
+      }
+      if (!Number.isFinite(productId)) return res.status(400).json({ error: 'invalid_product_id' })
+      const review = await store.createProductReview({ userId: req.user.id, productId, ...parsed.data })
       res.status(201).json({ ok: true, review })
     } catch (error) {
       mapError(res, error)
@@ -197,7 +209,7 @@ export function createGrowthRouter({ store = db, auth = defaultAuth() } = {}) {
   router.post('/api/admin/growth-notifications/test', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     const parsed = validateBody(GrowthNotificationTestBodySchema, req.body)
     if (!parsed.ok) return res.status(400).json({ error: parsed.error })
-    return callStore(res, () => store.adminSendGrowthNotificationTest({ userId: req.user.id, ...parsed.data }), (result) => res.json({ ok: true, result }))
+    return callStore(res, () => store.adminTestGrowthNotification(parsed.data), (result) => res.json({ ok: true, ...result }))
   })
 
   return router

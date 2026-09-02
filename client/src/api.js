@@ -18,18 +18,18 @@ function vxpersApiBase(hostname, protocol) {
 function withBase(url) {
   const base = import.meta.env?.VITE_API_BASE
   const u = String(url)
-  if (u.startsWith('http://') || u.startsWith('https://')) return u
+  if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:') || u.startsWith('blob:')) return u
 
   try {
     const { hostname, port, protocol } = window.location
     const vxpersBase = vxpersApiBase(hostname, protocol)
     if (vxpersBase) {
-      if (u.startsWith('/api')) return `${vxpersBase}${u}`
+      if (u.startsWith('/api') || u.startsWith('/uploads')) return `${vxpersBase}${u}`
       if (u === '/' || u === '') return vxpersBase
     }
     const devPorts = new Set(['3091', '4173', '5173'])
     const isLocalFrontend = isLanDevHost(hostname) && (devPorts.has(port) || !port)
-    if (isLocalFrontend && u.startsWith('/api')) return `${protocol}//${hostname}:3001${u}`
+    if (isLocalFrontend && (u.startsWith('/api') || u.startsWith('/uploads'))) return `${protocol}//${hostname}:3001${u}`
   } catch {
     // Fall through to the relative URL when window is unavailable.
   }
@@ -56,6 +56,14 @@ function normalizeConsent(raw) {
 
 export function resolveApiUrl(url) {
   return withBase(url)
+}
+
+export function resolveImageUrl(url) {
+  const raw = String(url || '').trim()
+  if (!raw) return ''
+  if (/^(https?:|data:|blob:)/i.test(raw)) return raw
+  if (raw.startsWith('/')) return resolveApiUrl(raw)
+  return raw
 }
 
 export function getAuthToken() {
@@ -108,6 +116,10 @@ export function setCookieConsent(consent) {
   try {
     localStorage.setItem(COOKIE_CONSENT_STORAGE_KEY, JSON.stringify(normalized))
     if (!normalized.personalization) {
+      const currentToken = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)
+      if (currentToken && !sessionStorage.getItem(AUTH_TOKEN_SESSION_STORAGE_KEY)) {
+        sessionStorage.setItem(AUTH_TOKEN_SESSION_STORAGE_KEY, currentToken)
+      }
       localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY)
     } else {
       const sessionToken = sessionStorage.getItem(AUTH_TOKEN_SESSION_STORAGE_KEY)

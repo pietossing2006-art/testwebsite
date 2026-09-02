@@ -112,7 +112,12 @@ export function normalizeReviewSummary(summary) {
   const reviewCount = Math.max(0, Math.trunc(toFiniteNumber(summary?.review_count ?? summary?.count)))
   const rawAverage = toFiniteNumber(summary?.average_rating ?? summary?.average)
   const averageRating = reviewCount > 0 ? Math.round(Math.max(0, rawAverage) * 10) / 10 : 0
-  return { averageRating, reviewCount }
+  const stars5 = Math.max(0, Math.trunc(toFiniteNumber(summary?.stars_5)))
+  const stars4 = Math.max(0, Math.trunc(toFiniteNumber(summary?.stars_4)))
+  const stars3 = Math.max(0, Math.trunc(toFiniteNumber(summary?.stars_3)))
+  const stars2 = Math.max(0, Math.trunc(toFiniteNumber(summary?.stars_2)))
+  const stars1 = Math.max(0, Math.trunc(toFiniteNumber(summary?.stars_1)))
+  return { averageRating, reviewCount, stars5, stars4, stars3, stars2, stars1 }
 }
 
 function campaignTargetLink(targets) {
@@ -160,6 +165,10 @@ export function normalizeNotificationPreferences(preferences) {
 export function getVipProgressPercent(vip) {
   const nextThreshold = Number(vip?.next_threshold_points)
   if (!Number.isFinite(nextThreshold) || nextThreshold <= 0) return 100
+  const currentThreshold = Number(vip?.tier?.threshold_points_spent || 0)
   const pointsSpent = Math.max(0, toFiniteNumber(vip?.points_spent))
-  return Math.max(0, Math.min(100, Math.round((pointsSpent / nextThreshold) * 100)))
+  const range = nextThreshold - currentThreshold
+  if (range <= 0) return Math.max(0, Math.min(100, Math.round((pointsSpent / nextThreshold) * 100)))
+  const progress = ((pointsSpent - currentThreshold) / range) * 100
+  return Math.max(0, Math.min(100, Math.round(progress)))
 }

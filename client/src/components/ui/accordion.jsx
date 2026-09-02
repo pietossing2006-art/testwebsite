@@ -27,7 +27,7 @@ const AccordionItemContext = createContext(null)
 export function AccordionItem({ value, className = '', children }) {
   return (
     <AccordionItemContext.Provider value={String(value)}>
-      <div className={cn('border-b border-white/10', className)}>{children}</div>
+      <div className={cn('border-b border-sky-100 last:border-b-0', className)}>{children}</div>
     </AccordionItemContext.Provider>
   )
 }
@@ -59,17 +59,17 @@ export function AccordionTrigger({ className = '', children }) {
       onClick={onToggle}
       aria-expanded={isOpen}
       className={cn(
-        'group flex w-full items-center justify-between gap-3 py-4 text-left text-sm font-semibold text-white/90 transition-colors hover:text-white',
+        'group flex w-full items-center justify-between gap-3 py-3.5 text-left text-sm font-bold text-slate-800 transition-colors hover:text-sky-600',
         className,
       )}
     >
-      <span>{children}</span>
+      <span className="min-w-0 flex-1">{children}</span>
       <svg
         viewBox="0 0 24 24"
-        className={cn('h-4 w-4 shrink-0 text-white/60 transition-transform duration-200', isOpen ? 'rotate-180' : '')}
+        className={cn('h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 group-hover:text-sky-600', isOpen ? 'rotate-180 text-sky-600' : '')}
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.8"
+        strokeWidth="2"
       >
         <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
       </svg>
@@ -89,7 +89,7 @@ export function AccordionContent({ className = '', children }) {
   return (
     <div className={cn('grid transition-[grid-template-rows] duration-200 ease-out', isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
       <div className="overflow-hidden">
-        <div className={cn('pb-4 text-sm text-white/60', className)}>{children}</div>
+        <div className={cn('pb-3.5 text-xs sm:text-sm text-slate-600 leading-relaxed font-normal', className)}>{children}</div>
       </div>
     </div>
   )

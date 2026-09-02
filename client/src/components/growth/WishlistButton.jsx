@@ -53,11 +53,11 @@ export default function WishlistButton({ productId, initialFollowed = false, isA
         onClick={toggleWishlist}
         disabled={working}
         aria-pressed={followed}
-        className={`rounded-full border px-3 py-1 text-[11px] font-black transition disabled:cursor-wait disabled:opacity-60 ${followed ? 'border-cyan-300/25 bg-cyan-500/15 text-cyan-100' : 'border-white/10 bg-white/[0.04] text-white/65 hover:bg-white/[0.075]'} ${className}`}
+        className={`rounded-full border px-3 py-1 text-[11px] font-black transition disabled:cursor-wait disabled:opacity-60 ${followed ? 'border-sky-300 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900'} ${className}`}
       >
-        {working ? 'กำลังบันทึก...' : followed ? 'ติดตามแล้ว' : 'ติดตาม'}
+        {working ? 'กำลังบันทึก...' : followed ? '♥ ติดตามแล้ว' : '♡ ติดตาม'}
       </button>
-      {status ? <span className="text-[11px] font-bold text-rose-200">{status}</span> : null}
+      {status ? <span className="text-[11px] font-bold text-rose-600">{status}</span> : null}
     </div>
   )
 }

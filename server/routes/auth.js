@@ -19,8 +19,22 @@ import {
   deleteUserPasswordResetTokens,
   setUserPassword,
   getDiscordLinkForUser,
+  listUserSessions,
+  deleteUserSession,
+  deleteAllUserSessionsExcept,
+  logAuditEvent,
+  getUser2FASecret,
+  updateUserBackupCodes,
 } from '../db.js'
+import { redis } from '../lib/redis.js'
+import { sendEmail, buildHtmlEmailTemplate } from '../lib/email.js'
 import { sendDiscordPasswordResetLink } from '../lib/discordBot.js'
+import { verifyTotpToken, verifyAndConsumeBackupCode } from '../lib/totp.js'
+import { requestEmailOtp, verifyEmailOtp } from '../lib/emailOtp.js'
+
+const temp2faStore = new Map()
+const memoryFailedAttempts = new Map()
+const memoryLockouts = new Map()
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -44,6 +58,94 @@ const router = Router()
 const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state'
 const DISCORD_OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 const pendingDiscordOauthStates = new Map()
+
+const LOCKOUT_MAX_ATTEMPTS = 5
+const LOCKOUT_DURATION_SECONDS = 10 * 60 // 10 minutes
+const ATTEMPT_WINDOW_SECONDS = 15 * 60   // 15 minutes
+
+function formatDeviceName(userAgent) {
+  if (!userAgent || typeof userAgent !== 'string') return 'Web Browser'
+  const ua = userAgent
+  let browser = 'Browser'
+  if (ua.includes('Edg/')) browser = 'Microsoft Edge'
+  else if (ua.includes('Chrome/')) browser = 'Google Chrome'
+  else if (ua.includes('Safari/') && !ua.includes('Chrome/')) browser = 'Apple Safari'
+  else if (ua.includes('Firefox/')) browser = 'Mozilla Firefox'
+  else if (ua.includes('Opera/') || ua.includes('OPR/')) browser = 'Opera'
+
+  let os = 'Unknown OS'
+  if (ua.includes('Windows NT 10.0')) os = 'Windows 10/11'
+  else if (ua.includes('Windows')) os = 'Windows'
+  else if (ua.includes('iPhone')) os = 'iPhone'
+  else if (ua.includes('iPad')) os = 'iPad'
+  else if (ua.includes('Macintosh') || ua.includes('Mac OS')) os = 'macOS'
+  else if (ua.includes('Android')) os = 'Android'
+  else if (ua.includes('Linux')) os = 'Linux'
+
+  return `${browser} on ${os}`
+}
+
+async function isAccountLocked(key) {
+  if (!redis) {
+    const lockedUntil = memoryLockouts.get(key)
+    if (lockedUntil && lockedUntil > Date.now()) {
+      return { locked: true, retryAfter: Math.ceil((lockedUntil - Date.now()) / 1000) }
+    }
+    if (lockedUntil) memoryLockouts.delete(key)
+    return { locked: false, retryAfter: 0 }
+  }
+  try {
+    const ttl = await redis.ttl(`auth:lockout:${key}`)
+    if (ttl > 0) return { locked: true, retryAfter: ttl }
+    return { locked: false, retryAfter: 0 }
+  } catch {
+    return { locked: false, retryAfter: 0 }
+  }
+}
+
+async function recordFailedAttempt(key) {
+  if (!redis) {
+    const now = Date.now()
+    const entry = memoryFailedAttempts.get(key)
+    const windowValid = entry && entry.expiresAt > now
+    const count = (windowValid ? entry.count : 0) + 1
+    memoryFailedAttempts.set(key, {
+      count,
+      expiresAt: windowValid ? entry.expiresAt : now + ATTEMPT_WINDOW_SECONDS * 1000,
+    })
+    if (count >= LOCKOUT_MAX_ATTEMPTS) {
+      memoryLockouts.set(key, now + LOCKOUT_DURATION_SECONDS * 1000)
+      memoryFailedAttempts.delete(key)
+    }
+    return
+  }
+  try {
+    const failedKey = `auth:failed:${key}`
+    const count = await redis.incr(failedKey)
+    if (count === 1) {
+      await redis.expire(failedKey, ATTEMPT_WINDOW_SECONDS)
+    }
+    if (count >= LOCKOUT_MAX_ATTEMPTS) {
+      await redis.set(`auth:lockout:${key}`, '1', 'EX', LOCKOUT_DURATION_SECONDS)
+      await redis.del(failedKey)
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function resetFailedAttempts(key) {
+  if (!redis) {
+    memoryFailedAttempts.delete(key)
+    memoryLockouts.delete(key)
+    return
+  }
+  try {
+    await redis.del(`auth:failed:${key}`, `auth:lockout:${key}`)
+  } catch {
+    // ignore
+  }
+}
 
 function envValue(name) {
   const value = String(process.env[name] || '').trim()
@@ -383,12 +485,33 @@ router.post('/api/auth/register', rateLimitMiddleware({ windowMs: 60_000, max: 5
 
   try {
     const user = await registerUser(email, password, username)
-    const token = await createSession(user.id)
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress
+    const userAgent = req.headers['user-agent']
+    const token = await createSession(user.id, {
+      ipAddress: clientIp,
+      userAgent,
+      remember: Boolean(remember),
+    })
     const u = await getUserById(user.id)
     const secure = isSecureCookie(req)
     const consent = chooseConsent(req)
     if (consent) setCookieConsentCookie(res, consent, { secure })
     setAuthCookie(res, token, { remember: Boolean(remember), secure })
+
+    try {
+      await logAuditEvent({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'auth.register',
+        entityType: 'user',
+        entityId: String(user.id),
+        detail: { username: u?.username },
+        ipAddress: clientIp,
+        userAgent,
+        status: 'success',
+        severity: 'info',
+      })
+    } catch {}
 
     res.status(201).json({
       ok: true,
@@ -399,6 +522,7 @@ router.post('/api/auth/register', rateLimitMiddleware({ windowMs: 60_000, max: 5
         role: typeof u?.role === 'string' && u.role.trim() ? u.role.trim().toLowerCase() : 'user',
         display_name: u?.display_name ?? null,
         avatar_url: u?.avatar_url ?? null,
+        is_email_verified: Boolean(u?.is_email_verified),
       },
       token,
     })
@@ -410,21 +534,135 @@ router.post('/api/auth/register', rateLimitMiddleware({ windowMs: 60_000, max: 5
   }
 })
 
-router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: 'login' }), async (req, res) => {
+router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 15, keyPrefix: 'login' }), async (req, res) => {
   const parsed = validateBody(LoginBodySchema, req.body)
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
   const { identifier, password, remember } = parsed.data
 
+  const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1'
+  const userAgent = req.headers['user-agent']
+  const keyUser = String(identifier || '').trim().toLowerCase()
+  const keyIp = String(clientIp || '').trim()
+
   try {
     const user = await getUserByLogin(identifier)
-    if (!user) return res.status(401).json({ error: 'invalid_credentials' })
-    if (!(await checkPassword(password, user.password_hash))) return res.status(401).json({ error: 'invalid_credentials' })
-    if (Boolean(user?.is_banned)) return res.status(403).json({ error: 'banned' })
-    const token = await createSession(user.id)
+    const passwordOk = Boolean(user) && (await checkPassword(password, user.password_hash))
+
+    // Lockout is only enforced against wrong passwords, never against the true
+    // account owner: gating on it before the password check would let an
+    // attacker who doesn't know the password deny access to the real owner
+    // just by submitting a handful of failed guesses for their email.
+    if (!passwordOk) {
+      const lockUser = await isAccountLocked(keyUser)
+      const lockIp = await isAccountLocked(keyIp)
+      if (lockUser.locked || lockIp.locked) {
+        const retryAfter = Math.max(lockUser.retryAfter, lockIp.retryAfter)
+        return res.status(429).json({
+          error: 'too_many_failed_attempts',
+          message: `ใส่รหัสผ่านผิดเกินกำหนด บัญชีถูกล็อกชั่วคราวเพื่อความปลอดภัย กรุณาลองใหม่ในอีก ${Math.ceil(retryAfter / 60)} นาที`,
+          retry_after_seconds: retryAfter,
+        })
+      }
+
+      await recordFailedAttempt(keyUser)
+      await recordFailedAttempt(keyIp)
+
+      try {
+        await logAuditEvent({
+          actorEmail: user?.email || identifier,
+          action: 'auth.login_failed',
+          entityType: 'auth',
+          entityId: identifier,
+          detail: { reason: 'invalid_credentials' },
+          ipAddress: clientIp,
+          userAgent,
+          status: 'failed',
+          severity: 'security',
+        })
+      } catch {}
+
+      return res.status(401).json({ error: 'invalid_credentials' })
+    }
+
+    if (Boolean(user?.is_banned)) {
+      return res.status(403).json({ error: 'banned' })
+    }
+
+    // Login successful: reset failed attempt counters
+    await resetFailedAttempts(keyUser)
+    await resetFailedAttempts(keyIp)
+
+    // Check 2FA Requirement
+    if (user.two_factor_enabled && user.two_factor_type && user.two_factor_type !== 'none') {
+      const tempToken = crypto.randomBytes(32).toString('hex')
+      const payload = {
+        userId: user.id,
+        remember: Boolean(remember),
+        ipAddress: clientIp,
+        userAgent,
+        createdAt: Date.now(),
+      }
+
+      if (redis) {
+        try {
+          await redis.set(`temp2fa:${tempToken}`, JSON.stringify(payload), 'EX', 300)
+        } catch {
+          temp2faStore.set(tempToken, { ...payload, expiresAt: Date.now() + 300_000 })
+        }
+      } else {
+        temp2faStore.set(tempToken, { ...payload, expiresAt: Date.now() + 300_000 })
+      }
+
+      if (user.two_factor_type === 'email') {
+        try {
+          await requestEmailOtp({
+            email: user.email,
+            purpose: 'login_2fa',
+            accountLabel: user.display_name || user.username || user.email,
+          })
+        } catch (e) {
+          console.error('[2FA LOGIN EMAIL DISPATCH ERROR]', e)
+        }
+      }
+
+      const emailParts = (user.email || '').split('@')
+      const maskedEmail = emailParts.length === 2
+        ? `${emailParts[0].slice(0, 2)}***@${emailParts[1]}`
+        : user.email
+
+      return res.json({
+        two_factor_required: true,
+        two_factor_type: user.two_factor_type,
+        temp_token: tempToken,
+        email_masked: maskedEmail,
+      })
+    }
+
+    const token = await createSession(user.id, {
+      ipAddress: clientIp,
+      userAgent,
+      remember: Boolean(remember),
+    })
+
     const secure = isSecureCookie(req)
     const consent = chooseConsent(req)
     if (consent) setCookieConsentCookie(res, consent, { secure })
     setAuthCookie(res, token, { remember: Boolean(remember), secure })
+
+    try {
+      await logAuditEvent({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'auth.login',
+        entityType: 'user',
+        entityId: String(user.id),
+        detail: { remember: Boolean(remember) },
+        ipAddress: clientIp,
+        userAgent,
+        status: 'success',
+        severity: 'info',
+      })
+    } catch {}
 
     res.json({
       ok: true,
@@ -435,12 +673,223 @@ router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 10, 
         role: typeof user?.role === 'string' && user.role.trim() ? user.role.trim().toLowerCase() : 'user',
         display_name: user.display_name ?? null,
         avatar_url: user.avatar_url ?? null,
+        is_email_verified: Boolean(user.is_email_verified),
+        two_factor_enabled: Boolean(user.two_factor_enabled),
+        two_factor_type: user.two_factor_type || 'none',
       },
       token,
     })
   } catch {
     res.status(500).json({ error: 'db_error' })
   }
+})
+
+router.post('/api/auth/2fa/verify', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: '2fa_verify' }), async (req, res) => {
+  const { temp_token, code, is_backup_code } = req.body ?? {}
+  if (!temp_token || !code) {
+    return res.status(400).json({ error: 'token_and_code_required', message: 'กรุณากรอกรหัสยืนยัน 2FA' })
+  }
+
+  try {
+    let sessionData = null
+    if (redis) {
+      try {
+        const raw = await redis.get(`temp2fa:${temp_token}`)
+        if (raw) sessionData = JSON.parse(raw)
+      } catch {}
+    }
+    if (!sessionData) {
+      const entry = temp2faStore.get(temp_token)
+      if (entry && entry.expiresAt > Date.now()) {
+        sessionData = entry
+      }
+    }
+
+    if (!sessionData || !sessionData.userId) {
+      return res.status(400).json({ error: '2fa_session_expired', message: 'เซสชัน 2FA หมดอายุ กรุณาเข้าสู่ระบบใหม่อีกครั้ง' })
+    }
+
+    const user = await getUserById(sessionData.userId)
+    const sec = await getUser2FASecret(sessionData.userId)
+
+    if (!user || !sec?.two_factor_enabled) {
+      return res.status(400).json({ error: 'invalid_request' })
+    }
+
+    let verified = false
+
+    if (Boolean(is_backup_code)) {
+      const backupCodes = Array.isArray(sec.two_factor_backup_codes) ? sec.two_factor_backup_codes : []
+      const result = verifyAndConsumeBackupCode(code, backupCodes)
+      if (result.valid) {
+        verified = true
+        await updateUserBackupCodes(user.id, result.remainingHashedCodes)
+      } else {
+        return res.status(400).json({ error: 'invalid_backup_code', message: 'รหัสสำรองฉุกเฉินไม่ถูกต้อง หรือถูกใช้งานไปแล้ว' })
+      }
+    } else if (sec.two_factor_type === 'totp') {
+      if (sec.two_factor_secret) {
+        verified = verifyTotpToken({ token: code, secret: sec.two_factor_secret })
+      }
+      if (!verified) {
+        return res.status(400).json({ error: 'invalid_totp_code', message: 'รหัส 6 หลักจากแอปไม่ถูกต้อง หรือเวลาในอุปกรณ์ไม่ตรง' })
+      }
+    } else if (sec.two_factor_type === 'email') {
+      try {
+        await verifyEmailOtp({ email: user.email, purpose: 'login_2fa', code })
+        verified = true
+      } catch {
+        return res.status(400).json({ error: 'invalid_email_otp', message: 'รหัส OTP จาก Gmail ไม่ถูกต้องหรือหมดอายุ' })
+      }
+    }
+
+    if (!verified) {
+      return res.status(400).json({ error: 'verification_failed', message: 'การยืนยันรหัส 2FA ไม่สำเร็จ' })
+    }
+
+    // Clear temp token
+    if (redis) {
+      try { await redis.del(`temp2fa:${temp_token}`) } catch {}
+    }
+    temp2faStore.delete(temp_token)
+
+    // Complete login session
+    const clientIp = sessionData.ipAddress || req.ip
+    const userAgent = sessionData.userAgent || req.headers['user-agent']
+    const token = await createSession(user.id, {
+      ipAddress: clientIp,
+      userAgent,
+      remember: Boolean(sessionData.remember),
+    })
+
+    const secure = isSecureCookie(req)
+    const consent = chooseConsent(req)
+    if (consent) setCookieConsentCookie(res, consent, { secure })
+    setAuthCookie(res, token, { remember: Boolean(sessionData.remember), secure })
+
+    try {
+      await logAuditEvent({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'auth.login_2fa_success',
+        entityType: 'user',
+        entityId: String(user.id),
+        detail: { two_factor_type: sec.two_factor_type, is_backup_code: Boolean(is_backup_code) },
+        ipAddress: clientIp,
+        userAgent,
+        status: 'success',
+        severity: 'info',
+      })
+    } catch {}
+
+    res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username ?? null,
+        role: typeof user?.role === 'string' && user.role.trim() ? user.role.trim().toLowerCase() : 'user',
+        display_name: user.display_name ?? null,
+        avatar_url: user.avatar_url ?? null,
+        is_email_verified: Boolean(user.is_email_verified),
+        two_factor_enabled: true,
+        two_factor_type: sec.two_factor_type,
+      },
+      token,
+    })
+  } catch (err) {
+    console.error('[2FA VERIFY LOGIN ERROR]', err)
+    res.status(500).json({ error: 'server_error' })
+  }
+})
+
+router.post('/api/auth/2fa/resend-email', rateLimitMiddleware({ windowMs: 60_000, max: 3, keyPrefix: '2fa_resend' }), async (req, res) => {
+  const { temp_token } = req.body ?? {}
+  if (!temp_token) return res.status(400).json({ error: 'token_required' })
+
+  try {
+    let sessionData = null
+    if (redis) {
+      try {
+        const raw = await redis.get(`temp2fa:${temp_token}`)
+        if (raw) sessionData = JSON.parse(raw)
+      } catch {}
+    }
+    if (!sessionData) {
+      const entry = temp2faStore.get(temp_token)
+      if (entry && entry.expiresAt > Date.now()) sessionData = entry
+    }
+
+    if (!sessionData) return res.status(400).json({ error: 'expired' })
+
+    const user = await getUserById(sessionData.userId)
+    if (user && user.two_factor_type === 'email') {
+      await requestEmailOtp({
+        email: user.email,
+        purpose: 'login_2fa',
+        accountLabel: user.display_name || user.username || user.email,
+      })
+    }
+
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'resend_failed' })
+  }
+})
+
+// ── Sessions & Device Management ──
+router.get('/api/auth/sessions', requireAuth, async (req, res) => {
+  try {
+    const bearer = getBearerToken(req)
+    const cookieToken = getCookieToken(req)
+    const currentToken = bearer || cookieToken
+    const sessions = await listUserSessions(req.user.id)
+    const items = sessions.map((s) => ({
+      id: s.token.slice(0, 12),
+      is_current: s.token === currentToken,
+      ip_address: s.ip_address || '-',
+      user_agent: s.user_agent || '-',
+      device_name: formatDeviceName(s.user_agent),
+      created_at: s.created_at,
+      last_active_at: s.last_active_at,
+      token_hash: crypto.createHash('sha256').update(s.token).digest('hex'),
+    }))
+    res.json({ ok: true, sessions: items })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.delete('/api/auth/sessions/:tokenHash', requireAuth, async (req, res) => {
+  try {
+    const tokenHash = req.params.tokenHash
+    const sessions = await listUserSessions(req.user.id)
+    const match = sessions.find(
+      (s) => crypto.createHash('sha256').update(s.token).digest('hex') === tokenHash,
+    )
+    if (match) await deleteUserSession(req.user.id, match.token)
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/auth/sessions/revoke-others', requireAuth, async (req, res) => {
+  try {
+    const bearer = getBearerToken(req)
+    const cookieToken = getCookieToken(req)
+    const currentToken = bearer || cookieToken
+    await deleteAllUserSessionsExcept(req.user.id, currentToken)
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+// ── Google OAuth Scaffolding ──
+router.get('/api/auth/google/config', (req, res) => {
+  const clientId = envValue('GOOGLE_CLIENT_ID')
+  res.json({ ok: true, enabled: Boolean(clientId) })
 })
 
 router.post('/api/auth/logout', async (req, res) => {
@@ -458,6 +907,12 @@ router.post('/api/auth/logout', async (req, res) => {
 
 router.get('/api/cookie-consent', (req, res) => {
   const consent = getConsentFromCookie(req)
+  res.json({ ok: true, consent })
+})
+
+router.post('/api/cookie-consent', (req, res) => {
+  const consent = normalizeConsentInput(req.body?.consent)
+  setCookieConsentCookie(res, consent, { secure: isSecureCookie(req) })
   res.json({ ok: true, consent })
 })
 
@@ -512,15 +967,28 @@ router.post('/api/auth/forgot-password', rateLimitMiddleware({ windowMs: 60_000,
         }
       }
 
-      const emailBody = `สวัสดีคุณ ${user.display_name || user.username || 'ผู้ใช้งาน'},\n\n` +
+      const emailHtml = buildHtmlEmailTemplate({
+        title: 'กู้คืนรหัสผ่านของคุณ - VxperS Store',
+        greeting: `สวัสดีคุณ ${user.display_name || user.username || 'สมาชิก VxperS'},`,
+        intro: `เราได้รับคำขอกู้คืนรหัสผ่านสำหรับบัญชีของคุณ (<strong>${user.email}</strong>) กรุณาคลิกปุ่มด้านล่างเพื่อตั้งรหัสผ่านใหม่:`,
+        ctaText: '🔑 ตั้งค่ารหัสผ่านใหม่',
+        ctaUrl: resetLink,
+        notice: 'ลิงก์นี้จะมีอายุการใช้งาน 30 นาที หากคุณไม่ได้เป็นผู้ส่งคำขอนี้ กรุณาละเลยอีเมลนี้',
+      })
+
+      const emailText = `สวัสดีคุณ ${user.display_name || user.username || 'สมาชิก VxperS'},\n\n` +
         `เราได้รับคำขอกู้คืนรหัสผ่านสำหรับบัญชีของคุณ\n` +
         `กรุณาคลิกที่ลิงก์ด้านล่างเพื่อตั้งค่ารหัสผ่านใหม่:\n\n` +
         `${resetLink}\n\n` +
         `ลิงก์นี้จะมีอายุการใช้งาน 30 นาที หากคุณไม่ได้ส่งคำขอนี้ กรุณาละเลยอีเมลนี้\n\n` +
-        `ขอบคุณครับ,\nทีมงาน VxperS Store\n` +
-        (sentDiscord ? `(ลิงก์นี้ถูกส่งไปยัง Discord DM ของคุณเรียบร้อยแล้วเช่นกัน)` : '')
+        `ขอบคุณครับ,\nทีมงาน VxperS Store`
 
-      logSimulatedEmail(user.email, 'กู้คืนรหัสผ่านของคุณ - VxperS Store', emailBody)
+      await sendEmail({
+        to: user.email,
+        subject: '[VxperS Store] กู้คืนรหัสผ่านของคุณ',
+        text: emailText,
+        html: emailHtml,
+      })
     }
 
     res.json({ ok: true })

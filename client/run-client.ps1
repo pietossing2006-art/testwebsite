@@ -18,6 +18,11 @@ trap {
 
 Set-Location -Path $PSScriptRoot
 
+$stateDir = Join-Path (Split-Path $PSScriptRoot -Parent) '.script-state'
+if (Test-Path $stateDir) {
+  $PID | Out-File -FilePath (Join-Path $stateDir 'client.pid') -Encoding utf8 -Force
+}
+
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 $viteCli = Join-Path $PSScriptRoot 'node_modules\vite\bin\vite.js'
 if (-not $nodeCommand -or -not (Test-Path -LiteralPath $viteCli)) {
@@ -46,11 +51,11 @@ if (-not (Test-Path 'node_modules')) {
 }
 
 if ($Mode -eq 'dev') {
-  Write-Host '=== Starting client dev server ===' -ForegroundColor Cyan
+  Write-Host '=== Starting client dev server (Port 5173) ===' -ForegroundColor Cyan
   Write-Host "Working Directory: $(Get-Location)" -ForegroundColor Gray
   Write-Host 'Press Ctrl+C to stop.'
   try {
-    & $nodeExe $viteCli
+    & $nodeExe $viteCli --host 0.0.0.0 --port 5173
     $exitCode = $LASTEXITCODE
   } catch {
     Write-Host "Error running dev server: $_" -ForegroundColor Red
@@ -65,8 +70,9 @@ if ($Mode -eq 'dev') {
 }
 
 # preview mode
-if (-not $SkipBuild -or $Build) {
-  Write-Host '=== Building client ===' -ForegroundColor Cyan
+$distExists = Test-Path (Join-Path $PSScriptRoot 'dist\index.html')
+if ($Build -or (-not $distExists -and -not $SkipBuild)) {
+  Write-Host '=== Building client (vite build) ===' -ForegroundColor Cyan
   try {
     & $nodeExe $viteCli build
     $exitCode = $LASTEXITCODE
@@ -81,14 +87,14 @@ if (-not $SkipBuild -or $Build) {
     exit $exitCode 
   }
 } else {
-  Write-Host '=== Using existing client build ===' -ForegroundColor Cyan
+  Write-Host '=== Using existing client build in dist/ ===' -ForegroundColor Cyan
 }
 
-Write-Host '=== Starting client preview server ===' -ForegroundColor Cyan
+Write-Host '=== Starting client preview server (Port 4173) ===' -ForegroundColor Cyan
 Write-Host 'Press Ctrl+C to stop.'
 
 try {
-  & $nodeExe $viteCli preview
+  & $nodeExe $viteCli preview --host 0.0.0.0 --port 4173
   $exitCode = $LASTEXITCODE
 } catch {
   Write-Host "Error running preview: $_" -ForegroundColor Red

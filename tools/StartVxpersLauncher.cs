@@ -1,364 +1,441 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
-using System.Management;
+using System.Net.NetworkInformation;
+using System.ServiceProcess;
+using System.Threading;
 using System.Windows.Forms;
 
 public sealed class LauncherForm : Form
 {
     private readonly string root;
     private readonly string stateDir;
-    private readonly string serverPidFile;
-    private readonly string clientPidFile;
-    private readonly string mangaPidFile;
-    private readonly string tunnelPidFile;
+    private readonly string serverDir;
+    private readonly string clientDir;
+    private readonly string serverScript;
+    private readonly string clientScript;
 
-    private Process serverProcess;
-    private Process clientProcess;
-    private Process mangaProcess;
-    private Process tunnelProcess;
     private ComboBox serverMode;
     private ComboBox clientMode;
     private CheckBox installDeps;
     private CheckBox buildClient;
-    private CheckBox startTunnel;
+
     private Button startButton;
     private Button stopButton;
     private Button restartButton;
-    private Button openButton;
+    private Button openStoreButton;
     private Button clearButton;
+
     private Label serverStatus;
     private Label clientStatus;
-    private Label mangaStatus;
-    private Label tunnelStatus;
+    private Label redisStatus;
+    private Label dbStatus;
     private RichTextBox logBox;
+    private System.Windows.Forms.Timer statusTimer;
+
+    [STAThread]
+    public static void Main()
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        Application.Run(new LauncherForm());
+    }
 
     public LauncherForm()
     {
         root = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        if (!File.Exists(Path.Combine(root, "launcher.ps1")) && File.Exists(Path.Combine(root, "..", "launcher.ps1")))
+        {
+            root = Path.GetFullPath(Path.Combine(root, ".."));
+        }
+
+        serverDir = Path.Combine(root, "server");
+        clientDir = Path.Combine(root, "client");
+        serverScript = Path.Combine(serverDir, "run-server.ps1");
+        clientScript = Path.Combine(clientDir, "run-client.ps1");
         stateDir = Path.Combine(root, ".script-state");
-        serverPidFile = Path.Combine(stateDir, "server.pid");
-        clientPidFile = Path.Combine(stateDir, "client.pid");
-        mangaPidFile = Path.Combine(stateDir, "mangaocr.pid");
-        tunnelPidFile = Path.Combine(stateDir, "tunnel.pid");
         Directory.CreateDirectory(stateDir);
+
         InitializeComponent();
-        Append("Launcher", "Ready. Start All launches API server, web client, MangaOCR, and Cloudflare Tunnel when configured.");
+        Append("SYSTEM", "✨ VxperS Control Center Ready. Click [Start All] to launch services.", Color.FromArgb(56, 189, 248));
+
+        statusTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        statusTimer.Tick += delegate { UpdateStatusIndicators(); };
+        statusTimer.Start();
+        UpdateStatusIndicators();
     }
 
     private void InitializeComponent()
     {
-        Text = "VxperS Launcher";
+        Text = "⚡ VxperS Control Center";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(760, 560);
-        ClientSize = new Size(900, 650);
-        BackColor = Color.FromArgb(15, 23, 42);
+        MinimumSize = new Size(860, 680);
+        ClientSize = new Size(960, 720);
+        BackColor = Color.FromArgb(2, 6, 23); // Slate 950
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 9F);
 
-        var title = new Label { Text = "VxperS Control Center", AutoSize = true, Font = new Font("Segoe UI", 18F, FontStyle.Bold), ForeColor = Color.White, Location = new Point(22, 18) };
-        var subtitle = new Label { Text = "Server, web client, and MangaOCR service", AutoSize = true, ForeColor = Color.FromArgb(148, 163, 184), Location = new Point(25, 52) };
-        Controls.Add(title);
-        Controls.Add(subtitle);
+        // Header Panel
+        var header = new Panel { Location = new Point(0, 0), Size = new Size(960, 80), Dock = DockStyle.Top, BackColor = Color.FromArgb(15, 23, 42) };
+        var title = new Label { Text = "⚡ VXPERS CONTROL CENTER", AutoSize = true, Font = new Font("Segoe UI", 16F, FontStyle.Bold), ForeColor = Color.FromArgb(6, 182, 212), Location = new Point(24, 16) };
+        var subtitle = new Label { Text = "Production & Dev Manager · Store & Storage Management", AutoSize = true, ForeColor = Color.FromArgb(148, 163, 184), Font = new Font("Segoe UI", 9F), Location = new Point(26, 48) };
+        header.Controls.Add(title);
+        header.Controls.Add(subtitle);
+        Controls.Add(header);
 
-        var settings = new GroupBox { Text = "Launch settings", ForeColor = Color.FromArgb(203, 213, 225), Location = new Point(22, 85), Size = new Size(856, 86) };
-        serverMode = NewComboBox(new[] { "dev", "start" }, 16, 34, "Server mode");
-        clientMode = NewComboBox(new[] { "dev", "preview" }, 170, 34, "Client mode");
-        clientMode.SelectedIndex = 1;
-        installDeps = new CheckBox { Text = "Install dependencies", AutoSize = true, ForeColor = Color.FromArgb(226, 232, 240), Location = new Point(340, 36) };
-        buildClient = new CheckBox { Text = "Build client", AutoSize = true, ForeColor = Color.FromArgb(226, 232, 240), Location = new Point(515, 36), Checked = true };
-        startTunnel = new CheckBox { Text = "Cloudflare tunnel", AutoSize = true, ForeColor = Color.FromArgb(226, 232, 240), Location = new Point(640, 36), Checked = File.Exists(Path.Combine(root, "cloudflare", "config.yml")) || !String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CLOUDFLARE_TUNNEL_TOKEN")) };
+        // Settings Box
+        var settings = new GroupBox { Text = " ⚙️ Configuration & Launch Modes ", ForeColor = Color.FromArgb(203, 213, 225), Location = new Point(24, 96), Size = new Size(912, 86), Font = new Font("Segoe UI", 9F, FontStyle.Bold) };
+        
+        var lblServer = new Label { Text = "Server:", AutoSize = true, ForeColor = Color.FromArgb(148, 163, 184), Location = new Point(16, 36) };
+        serverMode = NewComboBox(new[] { "start", "dev" }, 72, 32, "Server launch mode");
+        
+        var lblClient = new Label { Text = "Client:", AutoSize = true, ForeColor = Color.FromArgb(148, 163, 184), Location = new Point(220, 36) };
+        clientMode = NewComboBox(new[] { "preview (4173)", "dev (5173)" }, 272, 32, "Client launch mode");
+        
+        installDeps = new CheckBox { Text = "Install dependencies", AutoSize = true, ForeColor = Color.FromArgb(226, 232, 240), Location = new Point(440, 35), Font = new Font("Segoe UI", 9F) };
+        buildClient = new CheckBox { Text = "Rebuild client", AutoSize = true, ForeColor = Color.FromArgb(226, 232, 240), Location = new Point(610, 35), Checked = false, Font = new Font("Segoe UI", 9F) };
+        
+        settings.Controls.Add(lblServer);
         settings.Controls.Add(serverMode);
+        settings.Controls.Add(lblClient);
         settings.Controls.Add(clientMode);
         settings.Controls.Add(installDeps);
         settings.Controls.Add(buildClient);
-        settings.Controls.Add(startTunnel);
         Controls.Add(settings);
 
-        startButton = NewButton("Start All", Color.FromArgb(8, 145, 178), new Point(22, 188), StartAll);
-        stopButton = NewButton("Stop All", Color.FromArgb(190, 24, 93), new Point(142, 188), delegate { StopAll("requested by user"); });
-        restartButton = NewButton("Restart", Color.FromArgb(109, 40, 217), new Point(262, 188), delegate { StopAll("restarting"); StartAll(null, EventArgs.Empty); });
-        openButton = NewButton("Open Web App", Color.FromArgb(5, 150, 105), new Point(382, 188), delegate { OpenClient(); });
-        clearButton = NewButton("Clear Log", Color.FromArgb(71, 85, 105), new Point(522, 188), delegate { logBox.Clear(); });
-        Controls.Add(startButton); Controls.Add(stopButton); Controls.Add(restartButton); Controls.Add(openButton); Controls.Add(clearButton);
+        // Action Buttons Row
+        startButton = NewButton("🚀 Start All", Color.FromArgb(8, 145, 178), new Point(24, 196), StartAll);
+        stopButton = NewButton("🛑 Stop All", Color.FromArgb(190, 24, 93), new Point(164, 196), delegate { StopAll("requested by user"); });
+        restartButton = NewButton("🔄 Restart", Color.FromArgb(109, 40, 217), new Point(304, 196), delegate { StopAll("restarting"); StartAll(null, EventArgs.Empty); });
+        openStoreButton = NewButton("🛒 Web Store", Color.FromArgb(5, 150, 105), new Point(444, 196), delegate { OpenWebStore(); });
+        clearButton = NewButton("🧹 Clear Log", Color.FromArgb(51, 65, 85), new Point(584, 196), delegate { logBox.Clear(); });
 
-        serverStatus = NewStatus("API server · port 3001", 22, 246, Color.FromArgb(148, 163, 184));
-        clientStatus = NewStatus("Web client · port 5173 / 4173", 22, 278, Color.FromArgb(148, 163, 184));
-        mangaStatus = NewStatus("MangaOCR · port 9444", 22, 310, Color.FromArgb(34, 211, 238));
-        tunnelStatus = NewStatus("Cloudflare tunnel · vxpers.com", 22, 342, Color.FromArgb(56, 189, 248));
-        Controls.Add(serverStatus); Controls.Add(clientStatus); Controls.Add(mangaStatus); Controls.Add(tunnelStatus);
+        Controls.Add(startButton);
+        Controls.Add(stopButton);
+        Controls.Add(restartButton);
+        Controls.Add(openStoreButton);
+        Controls.Add(clearButton);
 
-        logBox = new RichTextBox { Location = new Point(22, 386), Size = new Size(856, 240), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right, ReadOnly = true, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.FromArgb(2, 6, 23), ForeColor = Color.FromArgb(203, 213, 225), Font = new Font("Cascadia Mono", 9F), DetectUrls = false };
+        // Status Indicators Panel
+        var statusPanel = new Panel { Location = new Point(24, 252), Size = new Size(912, 48), BackColor = Color.FromArgb(15, 23, 42) };
+        serverStatus = NewStatus("API Server (3001)", 16, 14);
+        clientStatus = NewStatus("Web Client (4173/5173)", 240, 14);
+        redisStatus = NewStatus("Redis Cache (6379)", 500, 14);
+        dbStatus = NewStatus("PostgreSQL (5432)", 710, 14);
+        statusPanel.Controls.Add(serverStatus);
+        statusPanel.Controls.Add(clientStatus);
+        statusPanel.Controls.Add(redisStatus);
+        statusPanel.Controls.Add(dbStatus);
+        Controls.Add(statusPanel);
+
+        // Log Console
+        logBox = new RichTextBox
+        {
+            Location = new Point(24, 312),
+            Size = new Size(912, 350),
+            Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
+            ReadOnly = true,
+            BorderStyle = BorderStyle.None,
+            BackColor = Color.FromArgb(10, 15, 30),
+            ForeColor = Color.FromArgb(203, 213, 225),
+            Font = new Font("Consolas", 9.5F),
+            DetectUrls = false
+        };
         Controls.Add(logBox);
-        FormClosing += delegate { StopAll("launcher closing"); };
+
+        FormClosing += delegate { StopAll("launcher exit"); };
     }
 
     private ComboBox NewComboBox(string[] values, int x, int y, string label)
     {
-        var combo = new ComboBox { Location = new Point(x, y), Width = 136, DropDownStyle = ComboBoxStyle.DropDownList, BackColor = Color.FromArgb(30, 41, 59), ForeColor = Color.White };
+        var combo = new ComboBox
+        {
+            Location = new Point(x, y),
+            Width = 130,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Color.FromArgb(30, 41, 59),
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 9F)
+        };
         combo.Items.AddRange(values);
         combo.SelectedIndex = 0;
-        var caption = new ToolTip();
-        caption.SetToolTip(combo, label);
         return combo;
     }
 
-    private Label NewStatus(string text, int x, int y, Color color)
+    private Label NewStatus(string text, int x, int y)
     {
-        return new Label { Text = "● " + text + " · stopped", AutoSize = true, Location = new Point(x, y), ForeColor = color, Font = new Font("Segoe UI", 10F, FontStyle.Bold) };
+        return new Label
+        {
+            Text = "○ " + text,
+            AutoSize = true,
+            Location = new Point(x, y),
+            ForeColor = Color.FromArgb(148, 163, 184),
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold)
+        };
     }
 
     private Button NewButton(string text, Color color, Point location, EventHandler handler)
     {
-        var button = new Button { Text = text, Location = location, Size = new Size(108, 36), FlatStyle = FlatStyle.Flat, BackColor = color, ForeColor = Color.White, Font = new Font("Segoe UI", 9F, FontStyle.Bold) };
+        var button = new Button
+        {
+            Text = text,
+            Location = location,
+            Size = new Size(130, 42),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = color,
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+            Cursor = Cursors.Hand
+        };
         button.FlatAppearance.BorderSize = 0;
         button.Click += handler;
         return button;
     }
 
-    private void StartAll(object sender, EventArgs args)
+    private bool IsPortListening(int port)
     {
-        if (!File.Exists(Path.Combine(root, "server", "run-server.ps1")) || !File.Exists(Path.Combine(root, "manga_ocr_server", "run_manga_ocr.ps1")))
-        {
-            Append("Launcher", "Cannot find project scripts. Run this executable from the project root.");
-            return;
-        }
-        StopAll("starting a new session");
-        FreeListeningPorts(new[] { 3001, 5173, 4173, 9444 });
-        startButton.Enabled = false;
         try
         {
-            string install = installDeps.Checked ? " -Install" : "";
-            string serverArgs = "-Mode " + QuoteArg(serverMode.SelectedItem.ToString()) + install;
-            string clientArgs = "-Mode " + QuoteArg(clientMode.SelectedItem.ToString()) + install;
-            bool builtClient = false;
-            if (buildClient.Checked && !installDeps.Checked && RunOneShot("Client build", Path.Combine(root, "client"), "node.exe", Quote(Path.Combine("node_modules", "vite", "bin", "vite.js")) + " build"))
+            var ipProps = IPGlobalProperties.GetIPGlobalProperties();
+            var listeners = ipProps.GetActiveTcpListeners();
+            foreach (var ep in listeners)
             {
-                builtClient = true;
+                if (ep.Port == port) return true;
             }
-            else if (buildClient.Checked && !installDeps.Checked)
+        }
+        catch { }
+        return false;
+    }
+
+    private int GetActiveClientPort()
+    {
+        if (IsPortListening(4173)) return 4173;
+        if (IsPortListening(5173)) return 5173;
+        if (IsPortListening(5000)) return 5000;
+        return clientMode.SelectedItem != null && clientMode.SelectedItem.ToString().Contains("dev") ? 5173 : 4173;
+    }
+
+    private void UpdateStatusIndicators()
+    {
+        if (IsDisposed) return;
+
+        bool serverOn = IsPortListening(3001);
+        int clientPort = GetActiveClientPort();
+        bool clientOn = IsPortListening(4173) || IsPortListening(5173) || IsPortListening(5000);
+        bool redisOn = IsPortListening(6379);
+        bool dbOn = IsPortListening(5432);
+
+        if (serverStatus != null && !serverStatus.IsDisposed)
+        {
+            serverStatus.Text = (serverOn ? "● " : "○ ") + "API Server (3001)";
+            serverStatus.ForeColor = serverOn ? Color.FromArgb(34, 197, 94) : Color.FromArgb(148, 163, 184);
+        }
+
+        if (clientStatus != null && !clientStatus.IsDisposed)
+        {
+            clientStatus.Text = (clientOn ? "● " : "○ ") + "Web Client (" + clientPort + ")";
+            clientStatus.ForeColor = clientOn ? Color.FromArgb(34, 197, 94) : Color.FromArgb(148, 163, 184);
+        }
+
+        if (redisStatus != null && !redisStatus.IsDisposed)
+        {
+            redisStatus.Text = (redisOn ? "● " : "○ ") + "Redis Cache (6379)";
+            redisStatus.ForeColor = redisOn ? Color.FromArgb(244, 63, 94) : Color.FromArgb(148, 163, 184);
+        }
+
+        if (dbStatus != null && !dbStatus.IsDisposed)
+        {
+            dbStatus.Text = (dbOn ? "● " : "○ ") + "PostgreSQL (5432)";
+            dbStatus.ForeColor = dbOn ? Color.FromArgb(56, 189, 248) : Color.FromArgb(148, 163, 184);
+        }
+    }
+
+    private void Append(string tag, string message, Color? color = null)
+    {
+        if (IsDisposed) return;
+        if (InvokeRequired)
+        {
+            try
             {
-                Append("Launcher", "Client build failed; no services were started.");
-                return;
+                Invoke(new Action(() => Append(tag, message, color)));
             }
-            if (builtClient && clientMode.SelectedItem.ToString() == "preview")
+            catch { }
+            return;
+        }
+
+        var timeStr = "[" + DateTime.Now.ToString("HH:mm:ss") + "] ";
+        logBox.SelectionStart = logBox.TextLength;
+        logBox.SelectionLength = 0;
+        logBox.SelectionColor = Color.FromArgb(100, 116, 139);
+        logBox.AppendText(timeStr);
+
+        logBox.SelectionColor = color ?? Color.FromArgb(56, 189, 248);
+        logBox.AppendText("[" + tag + "] ");
+
+        logBox.SelectionColor = Color.FromArgb(226, 232, 240);
+        logBox.AppendText(message + "\n");
+        logBox.ScrollToCaret();
+    }
+
+    private void StartAll(object sender, EventArgs args)
+    {
+        StopAll("starting new session");
+        Append("LAUNCHER", "🚀 Starting all services...", Color.FromArgb(6, 182, 212));
+
+        string cMode = clientMode.SelectedItem.ToString().Contains("dev") ? "dev" : "preview";
+        string sMode = serverMode.SelectedItem.ToString();
+        string installArg = installDeps.Checked ? " -Install" : "";
+        string buildArg = buildClient.Checked ? " -Build" : "";
+
+        // 1. Start Server
+        try
+        {
+            var serverPsi = new ProcessStartInfo
             {
-                clientArgs += " -SkipBuild";
-            }
-            mangaProcess = StartCommand("MangaOCR", Path.Combine(root, "manga_ocr_server"), Path.Combine(root, "manga_ocr_server", "run_manga_ocr.ps1"), install, mangaPidFile);
-            serverProcess = StartCommand("Server", Path.Combine(root, "server"), Path.Combine(root, "server", "run-server.ps1"), serverArgs, serverPidFile);
-            clientProcess = StartCommand("Client", Path.Combine(root, "client"), Path.Combine(root, "client", "run-client.ps1"), clientArgs, clientPidFile);
-            if (startTunnel.Checked)
-            {
-                string tunnelConfig = Path.Combine(root, "cloudflare", "config.yml");
-                string tunnelToken = Environment.GetEnvironmentVariable("CLOUDFLARE_TUNNEL_TOKEN");
-                if (File.Exists(tunnelConfig) || !String.IsNullOrWhiteSpace(tunnelToken))
-                {
-                    tunnelProcess = StartCommand("Tunnel", Path.Combine(root, "cloudflare"), Path.Combine(root, "cloudflare", "run-tunnel.ps1"), "", tunnelPidFile);
-                    tunnelStatus.Text = "● Cloudflare tunnel · vxpers.com · starting";
-                }
-                else
-                {
-                    Append("Launcher", "Cloudflare tunnel skipped: add cloudflare/config.yml or set CLOUDFLARE_TUNNEL_TOKEN.");
-                    tunnelStatus.Text = "● Cloudflare tunnel · vxpers.com · not configured";
-                }
-            }
-            else
-            {
-                tunnelStatus.Text = "● Cloudflare tunnel · vxpers.com · disabled";
-            }
-            serverStatus.Text = "● API server · port 3001 · starting";
-            clientStatus.Text = "● Web client · " + (clientMode.SelectedItem.ToString() == "dev" ? "port 5173" : "port 4173") + " · starting";
-            mangaStatus.Text = "● MangaOCR · port 9444 · starting";
-            Append("Launcher", "All services have been started. OCR backend logs are prefixed [MangaOCR]. Tunnel logs use [Tunnel].");
+                FileName = "powershell.exe",
+                Arguments = "-NoExit -ExecutionPolicy Bypass -File \"" + serverScript + "\" -Mode " + sMode + installArg,
+                WindowStyle = ProcessWindowStyle.Minimized,
+                WorkingDirectory = serverDir
+            };
+            Process.Start(serverPsi);
+            Append("SERVER", "Backend API server launching on http://localhost:3001", Color.FromArgb(34, 197, 94));
         }
         catch (Exception ex)
         {
-            Append("Launcher", "Start failed: " + ex.Message);
-            StopAll("start failure");
+            Append("SERVER", "Failed to start server: " + ex.Message, Color.FromArgb(244, 63, 94));
         }
-        finally { startButton.Enabled = true; }
-    }
 
-    private Process StartCommand(string label, string workingDirectory, string script, string scriptArgs, string pidFile)
-    {
-        var info = new ProcessStartInfo
+        // 2. Start Client
+        try
         {
-            FileName = "powershell.exe",
-            Arguments = "-NoProfile -ExecutionPolicy Bypass -File " + Quote(script) + " " + scriptArgs,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // Vite enables keyboard shortcuts only for a TTY. A GUI launcher
-            // has no console input; give the child a stable pipe instead of
-            // inheriting a broken console handle (which causes Node EPIPE).
-            RedirectStandardInput = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = System.Text.Encoding.UTF8,
-            StandardErrorEncoding = System.Text.Encoding.UTF8
-        };
-        var process = new Process { StartInfo = info, EnableRaisingEvents = true };
-        process.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!String.IsNullOrWhiteSpace(e.Data)) Append(label, e.Data); };
-        process.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!String.IsNullOrWhiteSpace(e.Data)) Append(label + " error", e.Data); };
-        process.Exited += delegate { BeginInvoke((Action)delegate { Append(label, "process exited"); UpdateStatus(label, false); }); };
-        if (!process.Start()) throw new InvalidOperationException("Unable to start " + label);
-        File.WriteAllText(pidFile, process.Id.ToString());
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        Append("Launcher", label + " started (PID " + process.Id + ").");
-        return process;
-    }
-
-    private bool RunOneShot(string label, string workingDirectory, string fileName, string arguments)
-    {
-        var info = new ProcessStartInfo
-        {
-            FileName = fileName,
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        using (var process = new Process { StartInfo = info })
-        {
-            process.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!String.IsNullOrWhiteSpace(e.Data)) Append(label, e.Data); };
-            process.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!String.IsNullOrWhiteSpace(e.Data)) Append(label + " error", e.Data); };
-            Append("Launcher", label + " started.");
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            process.WaitForExit();
-            return process.ExitCode == 0;
+            var clientPsi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoExit -ExecutionPolicy Bypass -File \"" + clientScript + "\" -Mode " + cMode + installArg + buildArg,
+                WindowStyle = ProcessWindowStyle.Minimized,
+                WorkingDirectory = clientDir
+            };
+            Process.Start(clientPsi);
+            string expectedPort = (cMode == "dev") ? "5173" : "4173";
+            Append("CLIENT", "Web client launching on port " + expectedPort, Color.FromArgb(34, 197, 94));
         }
+        catch (Exception ex)
+        {
+            Append("CLIENT", "Failed to start client: " + ex.Message, Color.FromArgb(244, 63, 94));
+        }
+
+        // 3. Background Async Waiter for Ready State
+        var bg = new BackgroundWorker();
+        bg.DoWork += delegate
+        {
+            int targetClientPort = (cMode == "dev") ? 5173 : 4173;
+            bool serverReady = false;
+            bool clientReady = false;
+
+            for (int i = 0; i < 30; i++)
+            {
+                Thread.Sleep(500);
+                if (!serverReady && IsPortListening(3001)) serverReady = true;
+                if (!clientReady && IsPortListening(targetClientPort)) clientReady = true;
+                if (serverReady && clientReady) break;
+            }
+
+            if (serverReady && clientReady)
+            {
+                Append("READY", "✨ All services are ONLINE! Web: http://localhost:" + targetClientPort + " | API: http://localhost:3001", Color.FromArgb(34, 197, 94));
+            }
+            else if (serverReady)
+            {
+                Append("READY", "⚡ Backend server is ready on http://localhost:3001 (Client is initializing...)", Color.FromArgb(245, 158, 11));
+            }
+            else
+            {
+                Append("READY", "⏳ Services are starting in background.", Color.FromArgb(56, 189, 248));
+            }
+        };
+        bg.RunWorkerAsync();
     }
 
     private void StopAll(string reason)
     {
-        StopTrackedProcess(serverProcess, serverPidFile, "Server", reason);
-        StopTrackedProcess(clientProcess, clientPidFile, "Client", reason);
-        StopTrackedProcess(mangaProcess, mangaPidFile, "MangaOCR", reason);
-        StopTrackedProcess(tunnelProcess, tunnelPidFile, "Tunnel", reason);
-        serverProcess = null; clientProcess = null; mangaProcess = null; tunnelProcess = null;
-        serverStatus.Text = "● API server · port 3001 · stopped";
-        clientStatus.Text = "● Web client · port 5173 / 4173 · stopped";
-        mangaStatus.Text = "● MangaOCR · port 9444 · stopped";
-        tunnelStatus.Text = "● Cloudflare tunnel · vxpers.com · stopped";
-    }
+        Append("LAUNCHER", "🛑 Stopping project services (" + reason + ")...", Color.FromArgb(245, 158, 11));
 
-    private void StopTrackedProcess(Process process, string pidFile, string label, string reason)
-    {
-        int pid = 0;
-        if (process != null) pid = process.Id;
-        if (pid == 0 && File.Exists(pidFile)) Int32.TryParse(File.ReadAllText(pidFile).Trim(), out pid);
-        if (pid > 0) StopProcessTree(pid, label, reason);
-        if (File.Exists(pidFile)) File.Delete(pidFile);
-    }
-
-    private void StopProcessTree(int pid, string label, string reason)
-    {
-        foreach (int childPid in GetChildProcessIds(pid)) StopProcessTree(childPid, label, reason);
+        // 1. Stop saved PIDs from state directory if valid
         try
         {
-            var process = Process.GetProcessById(pid);
-            if (!process.HasExited) { Append("Launcher", "Stopping " + label + " (PID " + pid + "): " + reason); process.Kill(); }
-        }
-        catch (ArgumentException) { }
-        catch (InvalidOperationException) { }
-    }
-
-    private void FreeListeningPorts(int[] ports)
-    {
-        foreach (int port in ports)
-        {
-            foreach (int pid in GetListeningProcessIds(port))
+            var pidFiles = new[] { "server.pid", "client.pid", "tunnel.pid" };
+            foreach (var file in pidFiles)
             {
-                if (pid <= 0) continue;
-                Append("Launcher", "Freeing port " + port + " (PID " + pid + ").");
-                StopProcessTree(pid, "Port " + port, "port in use");
+                var full = Path.Combine(stateDir, file);
+                if (File.Exists(full))
+                {
+                    try
+                    {
+                        var raw = File.ReadAllText(full).Trim();
+                        int pid;
+                        if (int.TryParse(raw, out pid))
+                        {
+                            var proc = Process.GetProcessById(pid);
+                            if (proc != null && !proc.HasExited)
+                            {
+                                proc.Kill();
+                            }
+                        }
+                    }
+                    catch { }
+                    try { File.Delete(full); } catch { }
+                }
             }
         }
-    }
+        catch { }
 
-    private IEnumerable<int> GetListeningProcessIds(int port)
-    {
-        var pids = new HashSet<int>();
-        var info = new ProcessStartInfo
+        // 2. Stop processes listening specifically on project ports (3001, 5173, 5000, 4173)
+        var ports = new[] { 3001, 5173, 5000, 4173 };
+        foreach (var port in ports)
         {
-            FileName = "netstat.exe",
-            Arguments = "-ano -p TCP",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            CreateNoWindow = true
-        };
-        using (var process = Process.Start(info))
-        {
-            string output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-            string portSuffix = ":" + port;
-            foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            try
             {
-                if (line.IndexOf("LISTENING", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                string[] parts = line.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length < 5) continue;
-                string localAddress = parts[1];
-                if (!localAddress.EndsWith(portSuffix, StringComparison.Ordinal)) continue;
-                int pid;
-                if (Int32.TryParse(parts[parts.Length - 1], out pid) && pid > 0) pids.Add(pid);
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = "-Command \"Get-NetTCPConnection -LocalPort " + port + " -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\"",
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    CreateNoWindow = true
+                };
+                var p = Process.Start(psi);
+                if (p != null) p.WaitForExit(1500);
             }
+            catch { }
         }
-        foreach (int pid in pids) yield return pid;
+
+        Append("LAUNCHER", "✅ Project services stopped cleanly.", Color.FromArgb(34, 197, 94));
+        UpdateStatusIndicators();
     }
 
-    private IEnumerable<int> GetChildProcessIds(int parentPid)
+    private void OpenWebStore()
     {
-        using (var searcher = new ManagementObjectSearcher("SELECT ProcessId FROM Win32_Process WHERE ParentProcessId = " + parentPid))
-        using (var rows = searcher.Get())
+        int port = GetActiveClientPort();
+        if (!IsPortListening(port) && !IsPortListening(3001))
         {
-            foreach (ManagementObject row in rows) yield return Convert.ToInt32((uint)row["ProcessId"]);
+            Append("BROWSER", "⚠️ Services are offline. Please click [🚀 Start All] first.", Color.FromArgb(245, 158, 11));
+            return;
         }
+        OpenUrl("http://localhost:" + port);
     }
 
-    private void OpenClient()
+    private void OpenUrl(string url)
     {
-        string url = "https://www.vxpers.com";
-        if (!startTunnel.Checked || (!File.Exists(Path.Combine(root, "cloudflare", "config.yml")) && String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("CLOUDFLARE_TUNNEL_TOKEN"))))
+        try
         {
-            url = clientMode.SelectedItem != null && clientMode.SelectedItem.ToString() == "preview" ? "http://localhost:4173" : "http://localhost:5173";
+            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+            Append("BROWSER", "Opened " + url, Color.FromArgb(56, 189, 248));
         }
-        try { Process.Start(url); } catch (Exception ex) { Append("Launcher", "Could not open browser: " + ex.Message); }
-    }
-
-    private void UpdateStatus(string label, bool running)
-    {
-        Label target = label == "Server" ? serverStatus : label == "Client" ? clientStatus : label == "Tunnel" ? tunnelStatus : mangaStatus;
-        target.Text = target.Text.Split('·')[0] + "· " + (running ? "running" : "stopped");
-    }
-
-    private void Append(string source, string message)
-    {
-        if (IsDisposed) return;
-        if (InvokeRequired) { BeginInvoke((Action)delegate { Append(source, message); }); return; }
-        logBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] [" + source + "] " + message + Environment.NewLine);
-        logBox.SelectionStart = logBox.TextLength;
-        logBox.ScrollToCaret();
-    }
-
-    private static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
-    private static string QuoteArg(string value) { return value.IndexOf(' ') >= 0 ? Quote(value) : value; }
-}
-
-internal static class Program
-{
-    [STAThread]
-    private static void Main()
-    {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new LauncherForm());
+        catch (Exception ex)
+        {
+            Append("BROWSER", "Could not open browser: " + ex.Message, Color.FromArgb(244, 63, 94));
+        }
     }
 }

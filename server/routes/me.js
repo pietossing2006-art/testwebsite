@@ -13,10 +13,14 @@ import {
   listMyOrders,
   listMyInbox,
   claimInboxItem,
+  claimAllInboxItems,
   listMySiteMessages,
   countUnreadSiteMessages,
   markSiteMessageRead,
   markAllSiteMessagesRead,
+  deleteMySiteMessage,
+  listMyDirectMessages,
+  markDirectMessagesRead,
   listMySupportTickets,
   createSupportTicket,
   getMySupportTicket,
@@ -26,8 +30,23 @@ import {
   getMyOrderDetail,
   removeUserOwnAccount,
   checkPassword,
+  setUserEmailVerified,
+  getUser2FASecret,
+  enableUserTotp2FA,
+  enableUserEmail2FA,
+  disableUser2FA,
+  updateUserBackupCodes,
 } from '../db.js'
 import { requireAuth, rateLimitMiddleware } from '../lib/auth.js'
+import { requestEmailOtp, verifyEmailOtp } from '../lib/emailOtp.js'
+import {
+  generateTotpSecret,
+  generateTotpUri,
+  generateTotpQrDataUrl,
+  verifyTotpToken,
+  generateBackupCodes,
+  verifyAndConsumeBackupCode,
+} from '../lib/totp.js'
 import { decodeDataUrlImage, sanitizeAvatarImage } from '../lib/image.js'
 import { AvatarUploadBodySchema, PasswordChangeBodySchema, ProfileBodySchema } from '../lib/requestSchemas.js'
 import { validateBody } from '../lib/validation.js'
@@ -55,6 +74,11 @@ router.get('/api/me', requireAuth, async (req, res) => {
         role: typeof req.user?.role === 'string' && req.user.role.trim() ? req.user.role.trim().toLowerCase() : 'user',
         display_name: u?.display_name ?? null,
         avatar_url: u?.avatar_url ?? null,
+        is_email_verified: Boolean(u?.is_email_verified),
+        email_verified_at: u?.email_verified_at ?? null,
+        two_factor_enabled: Boolean(u?.two_factor_enabled),
+        two_factor_type: u?.two_factor_type || 'none',
+        created_at: u?.created_at ?? null,
       },
       wallet,
     })
@@ -88,22 +112,21 @@ router.put('/api/me/profile', requireAuth, async (req, res) => {
 })
 
 router.post('/api/me/delete-account', requireAuth, async (req, res) => {
-  const { password, discord_code } = req.body ?? {}
+  const { password, discord_code, email_code } = req.body ?? {}
   try {
+    const user = await getUserById(req.user.id)
+    if (!user) return res.status(404).json({ error: 'user_not_found' })
     const discordLink = await getDiscordLinkForUser(req.user.id)
-    if (discordLink) {
-      if (typeof discord_code !== 'string' || !discord_code.trim()) {
-        return res.status(400).json({ error: 'discord_code_required' })
-      }
-      verifyDiscordPasswordResetCode({ userId: req.user.id, code: discord_code })
-    } else {
-      if (typeof password !== 'string' || !password) {
-        return res.status(400).json({ error: 'password_required' })
-      }
-      const user = await getUserById(req.user.id)
-      if (!user) return res.status(404).json({ error: 'user_not_found' })
+
+    if (typeof email_code === 'string' && email_code.trim()) {
+      await verifyEmailOtp({ email: user.email, purpose: 'delete_account_2fa', code: email_code.trim() })
+    } else if (discordLink && typeof discord_code === 'string' && discord_code.trim()) {
+      verifyDiscordPasswordResetCode({ userId: req.user.id, code: discord_code.trim() })
+    } else if (typeof password === 'string' && password) {
       const isMatch = await checkPassword(password, user.password_hash)
       if (!isMatch) return res.status(400).json({ error: 'invalid_password' })
+    } else {
+      return res.status(400).json({ error: 'verification_required', message: 'กรุณากรอกรหัสผ่าน หรือ รหัส OTP จาก Gmail / Discord' })
     }
 
     await removeUserOwnAccount(req.user.id)
@@ -112,36 +135,82 @@ router.post('/api/me/delete-account', requireAuth, async (req, res) => {
     res.json({ ok: true })
   } catch (e) {
     const msg = String(e?.message ?? '')
-    if (msg === 'discord_code_required') return res.status(400).json({ error: 'discord_code_required' })
-    if (msg === 'discord_code_invalid') return res.status(400).json({ error: 'discord_code_invalid' })
-    if (msg === 'discord_code_expired') return res.status(400).json({ error: 'discord_code_expired' })
+    if (msg === 'otp_expired_or_not_found' || msg === 'discord_code_expired') return res.status(400).json({ error: 'code_expired', message: 'รหัสยืนยันหมดอายุ' })
+    if (msg === 'otp_too_many_attempts') return res.status(429).json({ error: 'code_too_many_attempts', message: 'กรอกรหัสผิดเกินกำหนด กรุณาขอรหัสใหม่' })
+    if (msg === 'otp_invalid' || msg === 'discord_code_invalid') return res.status(400).json({ error: 'code_invalid', message: 'รหัสยืนยันไม่ถูกต้อง' })
     if (msg === 'cannot_remove_last_owner') return res.status(400).json({ error: 'cannot_remove_last_owner' })
     res.status(500).json({ error: 'delete_failed' })
   }
 })
 
+router.post('/api/me/delete-account/email-code', requireAuth, rateLimitMiddleware({ windowMs: 60_000, max: 3, keyPrefix: 'del_acc_email_code' }), async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id)
+    if (!user?.email) return res.status(400).json({ error: 'no_email' })
+    const result = await requestEmailOtp({
+      email: user.email,
+      purpose: 'delete_account_2fa',
+      accountLabel: user.display_name || user.username || user.email,
+    })
+    res.json({ ok: true, ...result })
+  } catch {
+    res.status(500).json({ error: 'email_code_send_failed' })
+  }
+})
+
 router.post('/api/me/password', requireAuth, async (req, res) => {
-  const parsed = validateBody(PasswordChangeBodySchema, req.body)
-  if (!parsed.ok) return res.status(400).json({ error: parsed.error })
-  const { old_password, new_password, discord_code } = parsed.data
+  const { old_password, new_password, discord_code, email_code } = req.body ?? {}
+  if (typeof old_password !== 'string' || !old_password) return res.status(400).json({ error: 'old_password_required' })
+  if (typeof new_password !== 'string' || new_password.length < 8) return res.status(400).json({ error: 'new_password_too_short' })
 
   try {
+    const user = await getUserById(req.user.id)
     const discordLink = await getDiscordLinkForUser(req.user.id)
-    if (discordLink) {
-      if (typeof discord_code !== 'string' || !discord_code.trim()) return res.status(400).json({ error: 'discord_code_required' })
-      verifyDiscordPasswordResetCode({ userId: req.user.id, code: discord_code })
+
+    // 2FA Verification: accept either email_code OR discord_code
+    if (typeof email_code === 'string' && email_code.trim()) {
+      await verifyEmailOtp({ email: user.email, purpose: 'change_password_2fa', code: email_code.trim() })
+    } else if (discordLink && typeof discord_code === 'string' && discord_code.trim()) {
+      verifyDiscordPasswordResetCode({ userId: req.user.id, code: discord_code.trim() })
+    } else if (discordLink) {
+      return res.status(400).json({ error: '2fa_code_required', message: 'กรุณากรอกรหัส OTP จาก Gmail หรือ Discord' })
     }
+
     await changeUserPassword({ userId: req.user.id, oldPassword: old_password, newPassword: new_password })
     res.json({ ok: true })
   } catch (e) {
-    if (String(e?.message ?? '') === 'invalid_old_password') return res.status(400).json({ error: 'invalid_old_password' })
-    if (String(e?.message ?? '') === 'discord_code_required') return res.status(400).json({ error: 'discord_code_required' })
-    if (String(e?.message ?? '') === 'discord_code_invalid') return res.status(400).json({ error: 'discord_code_invalid' })
-    if (String(e?.message ?? '') === 'discord_code_expired') return res.status(400).json({ error: 'discord_code_expired' })
-    if (String(e?.message ?? '') === 'user_not_found') return res.status(404).json({ error: 'not_found' })
+    const msg = String(e?.message ?? '')
+    if (msg === 'invalid_old_password') return res.status(400).json({ error: 'invalid_old_password' })
+    if (msg === 'otp_expired_or_not_found' || msg === 'discord_code_expired') return res.status(400).json({ error: 'code_expired', message: 'รหัสยืนยันหมดอายุ กรุณากดส่งรหัสใหม่อีกครั้ง' })
+    if (msg === 'otp_too_many_attempts') return res.status(429).json({ error: 'code_too_many_attempts', message: 'กรอกรหัสผิดเกินกำหนด กรุณาขอรหัสใหม่' })
+    if (msg === 'otp_invalid' || msg === 'discord_code_invalid') return res.status(400).json({ error: 'code_invalid', message: 'รหัสยืนยันไม่ถูกต้อง' })
+    if (msg === 'discord_code_required' || msg === '2fa_code_required') return res.status(400).json({ error: '2fa_code_required', message: 'กรุณากรอกรหัส OTP จาก Gmail หรือ Discord' })
+    if (msg === 'user_not_found') return res.status(404).json({ error: 'not_found' })
     res.status(500).json({ error: 'db_error' })
   }
 })
+
+router.post(
+  '/api/me/password/email-code',
+  requireAuth,
+  rateLimitMiddleware({ windowMs: 60_000, max: 3, keyPrefix: 'email_password_code' }),
+  async (req, res) => {
+    try {
+      const user = await getUserById(req.user.id)
+      if (!user?.email) return res.status(400).json({ error: 'no_email' })
+
+      const result = await requestEmailOtp({
+        email: user.email,
+        purpose: 'change_password_2fa',
+        accountLabel: user.display_name || user.username || user.email,
+      })
+
+      res.json({ ok: true, ...result })
+    } catch {
+      res.status(500).json({ error: 'email_code_send_failed' })
+    }
+  },
+)
 
 router.post(
   '/api/me/password/discord-code',
@@ -169,6 +238,205 @@ router.post(
     }
   },
 )
+
+router.post('/api/me/email/send-code', requireAuth, rateLimitMiddleware({ windowMs: 60_000, max: 3, keyPrefix: 'email_verify_send' }), async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id)
+    if (!user?.email) return res.status(400).json({ error: 'no_email' })
+
+    const result = await requestEmailOtp({
+      email: user.email,
+      purpose: 'verify_email',
+      accountLabel: user.display_name || user.username || user.email,
+    })
+
+    res.json({ ok: true, ...result })
+  } catch {
+    res.status(500).json({ error: 'email_send_failed' })
+  }
+})
+
+router.post('/api/me/email/verify', requireAuth, async (req, res) => {
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim() : ''
+  if (!code) return res.status(400).json({ error: 'code_required' })
+  try {
+    const user = await getUserById(req.user.id)
+    await verifyEmailOtp({ email: user.email, purpose: 'verify_email', code })
+    await setUserEmailVerified(req.user.id)
+    res.json({ ok: true, is_email_verified: true })
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg === 'otp_expired_or_not_found') return res.status(400).json({ error: 'code_expired', message: 'รหัส OTP หมดอายุ' })
+    if (msg === 'otp_too_many_attempts') return res.status(429).json({ error: 'code_too_many_attempts', message: 'กรอกรหัสผิดเกินกำหนด กรุณาขอรหัสใหม่' })
+    if (msg === 'otp_invalid') return res.status(400).json({ error: 'code_invalid', message: 'รหัส OTP ไม่ถูกต้อง' })
+    res.status(500).json({ error: 'verify_failed' })
+  }
+})
+
+// ── 2FA MANAGEMENT ENDPOINTS ──
+
+router.get('/api/me/2fa/status', requireAuth, async (req, res) => {
+  try {
+    const sec = await getUser2FASecret(req.user.id)
+    const backupCodes = Array.isArray(sec?.two_factor_backup_codes) ? sec.two_factor_backup_codes : []
+    res.json({
+      ok: true,
+      two_factor_enabled: Boolean(sec?.two_factor_enabled),
+      two_factor_type: sec?.two_factor_type || 'none',
+      backup_codes_count: backupCodes.length,
+      confirmed_at: sec?.two_factor_confirmed_at || null,
+    })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/me/2fa/totp/setup', requireAuth, async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id)
+    const secret = generateTotpSecret()
+    const otpauthUri = generateTotpUri({ email: user.email, secret })
+    const qrDataUrl = await generateTotpQrDataUrl(otpauthUri)
+    const { plainCodes, hashedCodes } = generateBackupCodes(8)
+
+    res.json({
+      ok: true,
+      secret,
+      qr_code_url: qrDataUrl,
+      otpauth_uri: otpauthUri,
+      backup_codes: plainCodes,
+      backup_codes_hashed: hashedCodes,
+    })
+  } catch (err) {
+    console.error('[2FA TOTP SETUP ERROR]', err)
+    res.status(500).json({ error: 'totp_setup_failed' })
+  }
+})
+
+router.post('/api/me/2fa/totp/enable', requireAuth, async (req, res) => {
+  const { code, secret, backup_codes_hashed } = req.body ?? {}
+  if (!code || !secret) {
+    return res.status(400).json({ error: 'code_and_secret_required', message: 'กรุณากรอกรหัส 6 หลักจากแอป' })
+  }
+
+  const isValid = verifyTotpToken({ token: code, secret })
+  if (!isValid) {
+    return res.status(400).json({ error: 'invalid_code', message: 'รหัส 6 หลักไม่ถูกต้อง หรือเวลาในอุปกรณ์ไม่ตรง' })
+  }
+
+  try {
+    await enableUserTotp2FA({
+      userId: req.user.id,
+      secret,
+      backupCodesHashed: Array.isArray(backup_codes_hashed) ? backup_codes_hashed : [],
+    })
+
+    res.json({ ok: true, message: 'totp_enabled' })
+  } catch (err) {
+    console.error('[2FA TOTP ENABLE ERROR]', err)
+    res.status(500).json({ error: 'enable_failed' })
+  }
+})
+
+router.post('/api/me/2fa/email/send-code', requireAuth, rateLimitMiddleware({ windowMs: 60_000, max: 3, keyPrefix: '2fa_email_send' }), async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id)
+    if (!user?.email) return res.status(400).json({ error: 'no_email' })
+
+    const result = await requestEmailOtp({
+      email: user.email,
+      purpose: 'enable_2fa_email',
+      accountLabel: user.display_name || user.username || user.email,
+    })
+
+    res.json({ ok: true, ...result })
+  } catch {
+    res.status(500).json({ error: 'email_send_failed' })
+  }
+})
+
+router.post('/api/me/2fa/email/enable', requireAuth, async (req, res) => {
+  const { code, backup_codes_hashed } = req.body ?? {}
+  if (!code) return res.status(400).json({ error: 'code_required', message: 'กรุณากรอกรหัส OTP' })
+
+  try {
+    const user = await getUserById(req.user.id)
+    await verifyEmailOtp({ email: user.email, purpose: 'enable_2fa_email', code })
+
+    await enableUserEmail2FA({
+      userId: req.user.id,
+      backupCodesHashed: Array.isArray(backup_codes_hashed) ? backup_codes_hashed : [],
+    })
+
+    res.json({ ok: true, message: 'email_2fa_enabled' })
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg === 'otp_expired_or_not_found') return res.status(400).json({ error: 'code_expired', message: 'รหัส OTP หมดอายุ' })
+    if (msg === 'otp_too_many_attempts') return res.status(429).json({ error: 'code_too_many_attempts', message: 'กรอกรหัสผิดเกินกำหนด กรุณาขอรหัสใหม่' })
+    if (msg === 'otp_invalid') return res.status(400).json({ error: 'code_invalid', message: 'รหัส OTP ไม่ถูกต้อง' })
+    res.status(500).json({ error: 'enable_failed' })
+  }
+})
+
+router.post('/api/me/2fa/disable', requireAuth, async (req, res) => {
+  const { password, code } = req.body ?? {}
+  try {
+    const user = await getUserById(req.user.id)
+    const sec = await getUser2FASecret(req.user.id)
+
+    if (!sec?.two_factor_enabled) {
+      return res.status(400).json({ error: '2fa_not_enabled', message: 'บัญชียังไม่ได้เปิด 2FA' })
+    }
+
+    // Disabling 2FA requires BOTH the password AND the second factor itself —
+    // password alone must never be enough, or 2FA gives no protection against
+    // a stolen password.
+    if (typeof password !== 'string' || !password || !(await checkPassword(password, user.password_hash))) {
+      return res.status(400).json({ error: 'auth_failed', message: 'รหัสผ่านหรือรหัส OTP 2FA ไม่ถูกต้อง' })
+    }
+
+    let codeVerified = false
+    if (typeof code === 'string' && code.trim()) {
+      if (sec.two_factor_type === 'totp' && sec.two_factor_secret) {
+        codeVerified = verifyTotpToken({ token: code.trim(), secret: sec.two_factor_secret })
+      } else if (sec.two_factor_type === 'email') {
+        try {
+          await verifyEmailOtp({ email: user.email, purpose: 'disable_2fa_email', code: code.trim() })
+          codeVerified = true
+        } catch {}
+      }
+    }
+
+    if (!codeVerified) {
+      return res.status(400).json({ error: 'auth_failed', message: 'รหัสผ่านหรือรหัส OTP 2FA ไม่ถูกต้อง' })
+    }
+
+    await disableUser2FA(req.user.id)
+    res.json({ ok: true, message: '2fa_disabled' })
+  } catch (err) {
+    console.error('[2FA DISABLE ERROR]', err)
+    res.status(500).json({ error: 'disable_failed' })
+  }
+})
+
+router.post('/api/me/2fa/backup-codes/regenerate', requireAuth, async (req, res) => {
+  const { password } = req.body ?? {}
+  if (!password) return res.status(400).json({ error: 'password_required', message: 'กรุณากรอกรหัสผ่านเพื่อยืนยัน' })
+
+  try {
+    const user = await getUserById(req.user.id)
+    const match = await checkPassword(password, user.password_hash)
+    if (!match) return res.status(400).json({ error: 'invalid_password', message: 'รหัสผ่านไม่ถูกต้อง' })
+
+    const { plainCodes, hashedCodes } = generateBackupCodes(8)
+    await updateUserBackupCodes(req.user.id, hashedCodes)
+
+    res.json({ ok: true, backup_codes: plainCodes })
+  } catch (err) {
+    console.error('[2FA REGENERATE CODES ERROR]', err)
+    res.status(500).json({ error: 'regenerate_failed' })
+  }
+})
 
 router.post('/api/me/avatar-upload', requireAuth, async (req, res) => {
   const parsed = validateBody(AvatarUploadBodySchema, req.body, { fallbackError: 'invalid_image_data' })
@@ -264,6 +532,15 @@ router.post('/api/me/inbox/:id/claim', requireAuth, async (req, res) => {
   }
 })
 
+router.post('/api/me/inbox/claim-all', requireAuth, async (req, res) => {
+  try {
+    const result = await claimAllInboxItems({ userId: req.user.id })
+    res.json(result)
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
 router.get('/api/me/messages', requireAuth, async (req, res) => {
   try {
     const limit = req.query.limit ? Number(req.query.limit) : 50
@@ -296,9 +573,40 @@ router.post('/api/me/messages/:id/read', requireAuth, async (req, res) => {
   }
 })
 
+router.delete('/api/me/messages/:id', requireAuth, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' })
+  try {
+    await deleteMySiteMessage(req.user.id, id)
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
 router.post('/api/me/messages/read-all', requireAuth, async (req, res) => {
   try {
     await markAllSiteMessagesRead(req.user.id)
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+// ── User Direct Messages Stream (from Staff) ──
+
+router.get('/api/me/direct-messages', requireAuth, async (req, res) => {
+  try {
+    const messages = await listMyDirectMessages(req.user.id)
+    res.json({ ok: true, messages })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/me/direct-messages/read', requireAuth, async (req, res) => {
+  try {
+    await markDirectMessagesRead(req.user.id)
     res.json({ ok: true })
   } catch {
     res.status(500).json({ error: 'db_error' })
@@ -321,9 +629,17 @@ router.get('/api/me/support-tickets', requireAuth, async (req, res) => {
 })
 
 router.post('/api/me/support-tickets', requireAuth, async (req, res) => {
-  const { subject, message, attachments } = req.body ?? {}
+  const { subject, message, attachments, order_id, priority, category } = req.body ?? {}
   try {
-    const ticket = await createSupportTicket({ userId: req.user.id, subject, message, attachments })
+    const ticket = await createSupportTicket({
+      userId: req.user.id,
+      subject,
+      message,
+      attachments,
+      orderId: order_id,
+      priority,
+      category,
+    })
     publishSupportEvent({
       kind: 'ticket_created',
       ticket_id: Number(ticket?.id) || null,
@@ -337,6 +653,7 @@ router.post('/api/me/support-tickets', requireAuth, async (req, res) => {
     if (msg === 'invalid_subject_too_long') return res.status(400).json({ error: 'invalid_subject_too_long' })
     if (msg === 'invalid_message') return res.status(400).json({ error: 'invalid_message' })
     if (msg === 'invalid_message_too_long') return res.status(400).json({ error: 'invalid_message_too_long' })
+    if (msg === 'invalid_order_id') return res.status(400).json({ error: 'invalid_order_id' })
     if (msg === 'invalid_attachments') return res.status(400).json({ error: 'invalid_attachments' })
     if (msg === 'too_many_attachments') return res.status(400).json({ error: 'too_many_attachments' })
     if (msg === 'attachment_too_large') return res.status(400).json({ error: 'attachment_too_large' })
