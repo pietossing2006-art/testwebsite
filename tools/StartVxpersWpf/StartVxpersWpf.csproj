@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    SDK-style project (the modern .csproj format) targeting classic .NET Framework 4.8.
+    This is what current Visual Studio expects for new WPF projects — much shorter than the
+    old verbose format, and NuGet packages (like WPF-UI below) "just work" via PackageReference,
+    no packages.config needed.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>StartVxpersWpf</RootNamespace>
+    <!-- Named start-vxpers (not start-vxpers-wpf) on purpose: this is now the primary launcher,
+         copied to the repo root as start-vxpers.exe after every build (see target below). -->
+    <AssemblyName>start-vxpers</AssemblyName>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Fluent (Windows 11 style) theme + controls for WPF — this is the "assets" library
+         discussed: rounded cards, modern buttons, light/dark theming, all ready-made. -->
+    <PackageReference Include="WPF-UI" Version="3.0.5" />
+  </ItemGroup>
+
+  <!-- Unlike the old WinForms build, this app depends on Wpf.Ui.dll (a real NuGet dependency —
+       classic .NET Framework has no single-file publish option), so the exe alone isn't runnable
+       on its own. Copy the exe + its config + Wpf.Ui.dll to the repo root together. -->
+  <Target Name="CopyLauncherToRepoRoot" AfterTargets="Build">
+    <ItemGroup>
+      <LauncherRuntimeFiles Include="$(OutDir)start-vxpers.exe" />
+      <LauncherRuntimeFiles Include="$(OutDir)start-vxpers.exe.config" />
+      <LauncherRuntimeFiles Include="$(OutDir)Wpf.Ui.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LauncherRuntimeFiles)" DestinationFolder="$(MSBuildProjectDirectory)\..\..\" />
+  </Target>
+
+</Project>
