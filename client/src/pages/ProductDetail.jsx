@@ -10,6 +10,8 @@ import UserAvatar from '../components/UserAvatar.jsx'
 import { normalizeReviewSummary } from '../components/growth/growthDisplayUtils.js'
 import { DEFAULT_UI_IMAGE_SETTINGS, normalizeUiImageSettings } from '../uiImageSettings.js'
 
+const REVIEWS_PAGE_SIZE = 20
+
 function fmt(value) {
   return Math.round(Number(value) || 0).toLocaleString()
 }
@@ -113,7 +115,16 @@ function getReviewErrorMessage(error) {
   if (code === 'invalid_rating') return 'กรุณาให้คะแนน 1-5 ดาว'
   if (code === 'invalid_comment') return 'กรุณาเขียนรีวิวอย่างน้อย 2 ตัวอักษร'
   if (code === 'invalid_comment_too_long') return 'รีวิวยาวเกินไป'
+  if (code === 'not_found') return 'ไม่พบรีวิวนี้ อาจถูกลบไปแล้ว'
   return 'ส่งรีวิวไม่สำเร็จ กรุณาลองใหม่อีกครั้ง'
+}
+
+function myReviewStatusBadge(status) {
+  if (status === 'approved') return { text: 'แสดงผลแล้ว', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
+  if (status === 'pending') return { text: 'รอตรวจสอบ', className: 'border-amber-200 bg-amber-50 text-amber-700' }
+  if (status === 'hidden') return { text: 'ถูกซ่อนโดยแอดมิน', className: 'border-slate-200 bg-slate-100 text-slate-600' }
+  if (status === 'rejected') return { text: 'ถูกปฏิเสธ', className: 'border-rose-200 bg-rose-50 text-rose-700' }
+  return { text: status || '-', className: 'border-slate-200 bg-slate-100 text-slate-600' }
 }
 
 export default function ProductDetail() {
@@ -147,6 +158,10 @@ export default function ProductDetail() {
   const [mysteryRecentWins, setMysteryRecentWins] = useState([])
   const [wishlist, setWishlist] = useState({ followed: false, loaded: false })
   const [reviews, setReviews] = useState({ summary: null, reviews: [] })
+  const [reviewsLoadingMore, setReviewsLoadingMore] = useState(false)
+  const reviewsSummaryData = useMemo(() => normalizeReviewSummary(reviews.summary), [reviews.summary])
+  const [myReview, setMyReview] = useState(null)
+  const [myReviewBusy, setMyReviewBusy] = useState(false)
   const [reviewForm, setReviewForm] = useState({ reviewer_name: '', rating: 5, comment: '' })
   const [reviewStatus, setReviewStatus] = useState('idle')
   const [reviewMessage, setReviewMessage] = useState('')
@@ -217,40 +232,43 @@ export default function ProductDetail() {
     }
   }, [])
 
-  const loadReviews = useCallback(async () => {
+  const loadReviews = useCallback(async (offset = 0, { append = false } = {}) => {
     if (!id) return
+    if (append) setReviewsLoadingMore(true)
     try {
-      const data = await fetchJson(`/api/products/${id}/reviews`)
-      setReviews({
-        summary: data?.summary ?? null,
-        reviews: Array.isArray(data?.reviews) ? data.reviews : [],
-      })
+      const data = await fetchJson(`/api/products/${id}/reviews?limit=${REVIEWS_PAGE_SIZE}&offset=${offset}`)
+      const nextItems = Array.isArray(data?.reviews) ? data.reviews : []
+      setReviews((prev) => ({
+        summary: data?.summary ?? (append ? prev.summary : null),
+        reviews: append ? [...prev.reviews, ...nextItems] : nextItems,
+      }))
     } catch {
-      setReviews({ summary: null, reviews: [] })
+      if (!append) setReviews({ summary: null, reviews: [] })
+    } finally {
+      if (append) setReviewsLoadingMore(false)
     }
   }, [id])
 
+  const loadMyReview = useCallback(async () => {
+    if (!id || !isAuthed) {
+      setMyReview(null)
+      return
+    }
+    try {
+      const data = await fetchJson(`/api/products/${id}/reviews/mine`)
+      setMyReview(data?.review || null)
+    } catch {
+      setMyReview(null)
+    }
+  }, [id, isAuthed])
+
   useEffect(() => {
-    let cancelled = false
-    async function load() {
-      if (!id) return
-      try {
-        const data = await fetchJson(`/api/products/${id}/reviews`)
-        if (!cancelled) {
-          setReviews({
-            summary: data?.summary ?? null,
-            reviews: Array.isArray(data?.reviews) ? data.reviews : [],
-          })
-        }
-      } catch {
-        if (!cancelled) setReviews({ summary: null, reviews: [] })
-      }
-    }
-    load()
-    return () => {
-      cancelled = true
-    }
-  }, [id])
+    loadMyReview()
+  }, [loadMyReview])
+
+  useEffect(() => {
+    loadReviews(0)
+  }, [loadReviews])
 
   useEffect(() => {
     let cancelled = false
@@ -521,26 +539,56 @@ export default function ProductDetail() {
 
     setReviewStatus('submitting')
     setReviewMessage('')
+    const isEditing = Boolean(myReview?.id)
     try {
       const reviewerName = reviewForm.reviewer_name.trim() || currentUser?.display_name || currentUser?.username || 'ผู้ซื้อ'
-      await fetchJson(`/api/products/${product.id}/reviews`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reviewer_name: reviewerName,
-          rating: Number(reviewForm.rating || 5),
-          comment: reviewForm.comment.trim(),
-        }),
-      })
+      const body = {
+        reviewer_name: reviewerName,
+        rating: Number(reviewForm.rating || 5),
+        comment: reviewForm.comment.trim(),
+      }
+      await fetchJson(
+        isEditing ? `/api/me/reviews/${myReview.id}` : `/api/products/${product.id}/reviews`,
+        { method: isEditing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      )
       setReviewForm({ reviewer_name: '', rating: 5, comment: '' })
       setReviewStatus('success')
-      setReviewMessage('🎉 ขอบคุณสำหรับรีวิว! ระบบบันทึกรีวิวของคุณเรียบร้อยแล้ว')
+      setReviewMessage(isEditing
+        ? '✅ แก้ไขรีวิวแล้ว รีวิวจะแสดงอีกครั้งหลังผ่านการตรวจสอบ'
+        : '🎉 ขอบคุณสำหรับรีวิว! ระบบจะตรวจสอบก่อนแสดงผลสาธารณะ')
       setWriteReviewOpen(false)
-      await loadReviews()
+      await Promise.all([loadReviews(), loadMyReview()])
     } catch (error) {
       setReviewStatus('error')
       setReviewMessage(getReviewErrorMessage(error))
     }
+  }
+
+  async function deleteMyReview() {
+    if (!myReview?.id) return
+    if (!window.confirm('ลบรีวิวของคุณใช่หรือไม่?')) return
+    setMyReviewBusy(true)
+    try {
+      await fetchJson(`/api/me/reviews/${myReview.id}`, { method: 'DELETE' })
+      setMyReview(null)
+      await loadReviews()
+    } catch (error) {
+      setReviewMessage(getReviewErrorMessage(error))
+    } finally {
+      setMyReviewBusy(false)
+    }
+  }
+
+  function openEditReview() {
+    if (!myReview) return
+    setReviewForm({
+      reviewer_name: myReview.reviewer_name || '',
+      rating: myReview.rating || 5,
+      comment: myReview.comment || '',
+    })
+    setReviewStatus('idle')
+    setReviewMessage('')
+    setWriteReviewOpen(true)
   }
 
   async function buy() {
@@ -670,6 +718,7 @@ export default function ProductDetail() {
   const successPicks = Array.isArray(successData?.picks) ? successData.picks : []
   const successItems = successPicks.length > 0 ? successPicks : []
   const reviewItems = Array.isArray(reviews.reviews) ? reviews.reviews : []
+  const reviewsHasMore = reviewsSummaryData.reviewCount > reviewItems.length
 
   return (
     <div className="mx-auto max-w-7xl space-y-6 fade-in-up">
@@ -879,7 +928,32 @@ export default function ProductDetail() {
                 <div className="mt-0.5 text-xs text-slate-500">รีวิวที่ผ่านการยืนยันคำสั่งซื้อจริงเท่านั้น</div>
               </div>
 
-              {isAuthed ? (
+              {isAuthed && myReview ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${myReviewStatusBadge(myReview.status).className}`}>
+                    รีวิวของคุณ: {myReviewStatusBadge(myReview.status).text}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => (writeReviewOpen ? setWriteReviewOpen(false) : openEditReview())}
+                    className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-black transition-all ${
+                      writeReviewOpen
+                        ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        : 'bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-md shadow-sky-500/20 hover:from-sky-600 hover:to-cyan-600'
+                    }`}
+                  >
+                    <span>{writeReviewOpen ? '✕ ปิดแบบฟอร์ม' : '✏️ แก้ไขรีวิว'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deleteMyReview}
+                    disabled={myReviewBusy}
+                    className="inline-flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-black text-rose-700 transition-all hover:bg-rose-100 disabled:opacity-60"
+                  >
+                    <span>{myReviewBusy ? 'กำลังลบ...' : '🗑️ ลบรีวิว'}</span>
+                  </button>
+                </div>
+              ) : isAuthed ? (
                 <button
                   type="button"
                   onClick={() => setWriteReviewOpen((prev) => !prev)}
@@ -1062,7 +1136,7 @@ export default function ProductDetail() {
                       disabled={reviewStatus === 'submitting'}
                       className="rounded-xl bg-sky-500 px-5 py-2 text-xs font-black text-white shadow-md shadow-sky-500/20 hover:bg-sky-600 disabled:opacity-60"
                     >
-                      {reviewStatus === 'submitting' ? 'กำลังบันทึก...' : 'ส่งรีวิวทันที'}
+                      {reviewStatus === 'submitting' ? 'กำลังบันทึก...' : myReview?.id ? 'บันทึกการแก้ไข' : 'ส่งรีวิวทันที'}
                     </button>
                   </div>
                 </div>
@@ -1074,12 +1148,12 @@ export default function ProductDetail() {
               <div className="flex flex-wrap items-center gap-2 border-b border-sky-100 pb-3">
                 <span className="text-xs font-bold text-slate-500 mr-1">ตัวกรอง:</span>
                 {[
-                  { id: 'all', label: `ทั้งหมด (${reviewItems.length})` },
-                  { id: '5', label: `5 ดาว (${reviewItems.filter((r) => r.rating === 5).length})` },
-                  { id: '4', label: `4 ดาว (${reviewItems.filter((r) => r.rating === 4).length})` },
-                  { id: '3', label: `3 ดาว (${reviewItems.filter((r) => r.rating === 3).length})` },
-                  { id: '2', label: `2 ดาว (${reviewItems.filter((r) => r.rating === 2).length})` },
-                  { id: '1', label: `1 ดาว (${reviewItems.filter((r) => r.rating === 1).length})` },
+                  { id: 'all', label: `ทั้งหมด (${reviewsSummaryData.reviewCount})` },
+                  { id: '5', label: `5 ดาว (${reviewsSummaryData.stars5})` },
+                  { id: '4', label: `4 ดาว (${reviewsSummaryData.stars4})` },
+                  { id: '3', label: `3 ดาว (${reviewsSummaryData.stars3})` },
+                  { id: '2', label: `2 ดาว (${reviewsSummaryData.stars2})` },
+                  { id: '1', label: `1 ดาว (${reviewsSummaryData.stars1})` },
                 ].map(({ id: fId, label }) => (
                   <button
                     key={fId}
@@ -1161,6 +1235,19 @@ export default function ProductDetail() {
                 ))
               })()}
             </div>
+
+            {reviewsHasMore ? (
+              <div className="flex justify-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => loadReviews(reviewItems.length, { append: true })}
+                  disabled={reviewsLoadingMore}
+                  className="rounded-2xl border border-sky-200 bg-sky-50/60 px-5 py-2 text-xs font-black text-sky-700 hover:bg-sky-100 disabled:opacity-60"
+                >
+                  {reviewsLoadingMore ? 'กำลังโหลด...' : `โหลดรีวิวเพิ่มเติม (${reviewsSummaryData.reviewCount - reviewItems.length} รายการ)`}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 

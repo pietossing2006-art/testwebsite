@@ -122,6 +122,35 @@ export function createGrowthRouter({ store = db, auth = defaultAuth() } = {}) {
     }
   })
 
+  router.get('/api/products/:id/reviews/mine', auth.requireAuth, async (req, res) => {
+    try {
+      let productId = Number(req.params.id)
+      if (!Number.isFinite(productId) && store.getProductById) {
+        const p = await store.getProductById(req.params.id)
+        if (p) productId = p.id
+      }
+      if (!Number.isFinite(productId)) return res.status(400).json({ error: 'invalid_product_id' })
+      const review = await store.getMyReviewForProduct({ userId: req.user.id, productId })
+      res.json({ ok: true, review: review || null })
+    } catch (error) {
+      mapError(res, error)
+    }
+  })
+
+  router.patch('/api/me/reviews/:id(\\d+)', auth.requireAuth, async (req, res) => {
+    const parsed = validateBody(ReviewBodySchema, req.body)
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error })
+    return callStore(
+      res,
+      () => store.updateMyReview({ userId: req.user.id, reviewId: Number(req.params.id), ...parsed.data }),
+      (review) => res.json({ ok: true, review }),
+    )
+  })
+
+  router.delete('/api/me/reviews/:id(\\d+)', auth.requireAuth, async (req, res) => {
+    return callStore(res, () => store.deleteMyReview({ userId: req.user.id, reviewId: Number(req.params.id) }), () => res.json({ ok: true }))
+  })
+
   router.get('/api/growth-campaigns/active', async (req, res) => {
     try {
       const data = await store.listActiveGrowthCampaigns({ targetType: req.query.target_type, targetId: req.query.target_id })

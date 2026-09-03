@@ -806,6 +806,19 @@ export async function initDbPg() {
   `)
   await query(`ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS reviewer_name TEXT`)
   await query(`CREATE INDEX IF NOT EXISTS product_reviews_product_status_idx ON product_reviews (product_id, status, created_at DESC)`)
+  // Drop pre-existing duplicate (user_id, product_id) reviews (from before this was enforced),
+  // keeping the earliest one per pair, so the unique index below can be created.
+  await query(`
+    DELETE FROM product_reviews pr
+    USING product_reviews pr2
+    WHERE pr.user_id = pr2.user_id
+      AND pr.product_id = pr2.product_id
+      AND pr.id > pr2.id
+  `)
+  // One review per user per product, regardless of which order_item it's attached to —
+  // the per-order_item UNIQUE above still allows a user with two orders of the same
+  // product to slip in two reviews without this.
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS product_reviews_user_product_uidx ON product_reviews (user_id, product_id)`)
 
   await query(`
     CREATE TABLE IF NOT EXISTS growth_campaigns (

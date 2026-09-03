@@ -1,8 +1,8 @@
 import { resolveDiscountQuote } from '../lib/growthDiscounts.js'
-import { buildGrowthEventKey, normalizeNotificationPreferences, renderGrowthNotification } from '../lib/growthNotifications.js'
+import { buildGrowthEventKey, filterGrowthNotificationChannels, normalizeNotificationPreferences, renderGrowthNotification } from '../lib/growthNotifications.js'
 import { all, get, pool, query } from './pool.js'
 import { getBundleById, getProductById, resolveProductOption } from './catalog.js'
-import { cleanupExpiredAdminEntries } from './support.js'
+import { cleanupExpiredAdminEntries, sendPushToUser } from './support.js'
 
 function growthPositiveInt(value, errorCode = 'invalid_id') {
   const n = Number(value)
@@ -833,6 +833,11 @@ export async function listProductReviewsPublic({ productId, limit = 20, offset =
   const pid = growthPositiveInt(productId, 'invalid_product_id')
   const lim = growthLimit(limit, 20, 100)
   const off = growthOffset(offset)
+
+  // A delisted product's reviews/rating shouldn't remain fetchable by hitting the id directly.
+  const product = await get('SELECT id FROM products WHERE id = $1 AND is_hidden = false', [pid])
+  if (!product) return { summary: null, reviews: [] }
+
   const reviews = await all(
     `SELECT pr.id, pr.rating, pr.comment, pr.created_at,
             COALESCE(NULLIF(pr.reviewer_name, ''), u.display_name, u.username, 'ผู้ซื้อ') AS reviewer_name,
@@ -873,38 +878,32 @@ export async function createProductReview({ userId, productId, reviewer_name, ra
   const user = await get('SELECT display_name, username FROM users WHERE id = $1', [uid])
   const reviewerName = String(reviewer_name || user?.display_name || user?.username || 'ผู้ซื้อ').trim().slice(0, 80)
 
+  // One review per user per product — checked up front regardless of which order_item
+  // the eventual review attaches to, since a user can hold several paid order_items for
+  // the same product (repeat purchase of a digital good).
+  const alreadyReviewed = await get(
+    'SELECT id FROM product_reviews WHERE product_id = $1 AND user_id = $2 LIMIT 1',
+    [pid, uid],
+  )
+  if (alreadyReviewed) throw new Error('review_exists')
+
   const eligible = await get(
     `SELECT oi.id, oi.order_id
      FROM order_items oi
      JOIN orders o ON o.id = oi.order_id
-     LEFT JOIN product_reviews pr ON pr.order_item_id = oi.id
      WHERE oi.product_id = $1
        AND o.user_id = $2
        AND o.status IN ('paid', 'completed')
-       AND pr.id IS NULL
      ORDER BY oi.id DESC
      LIMIT 1`,
     [pid, uid],
   )
-  if (!eligible) {
-    const reviewed = await get(
-      `SELECT pr.id
-       FROM product_reviews pr
-       JOIN order_items oi ON oi.id = pr.order_item_id
-       JOIN orders o ON o.id = oi.order_id
-       WHERE oi.product_id = $1
-         AND o.user_id = $2
-         AND o.status IN ('paid', 'completed')
-       LIMIT 1`,
-      [pid, uid],
-    )
-    if (reviewed) throw new Error('review_exists')
-    throw new Error('review_not_allowed')
-  }
+  if (!eligible) throw new Error('review_not_allowed')
+
   try {
     return await get(
       `INSERT INTO product_reviews (user_id, product_id, order_id, order_item_id, reviewer_name, rating, comment, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'approved')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
        RETURNING id, status, created_at`,
       [uid, pid, eligible.order_id, eligible.id, reviewerName, Math.trunc(rate), text],
     )
@@ -912,6 +911,55 @@ export async function createProductReview({ userId, productId, reviewer_name, ra
     if (error?.code === '23505') throw new Error('review_exists')
     throw error
   }
+}
+
+
+export async function updateMyReview({ userId, reviewId, reviewer_name, rating, comment }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const rid = growthPositiveInt(reviewId, 'invalid_id')
+  const rate = Number(rating)
+  const text = String(comment || '').trim()
+  if (!Number.isFinite(rate) || rate < 1 || rate > 5) throw new Error('invalid_rating')
+  if (!text) throw new Error('invalid_comment')
+  const reviewerName = String(reviewer_name || '').trim().slice(0, 80)
+
+  // Edited content needs re-moderation, same as a brand-new review — clear the prior
+  // moderation decision rather than leaving a stale 'approved'/'hidden' status attached
+  // to different content.
+  const res = await query(
+    `UPDATE product_reviews
+     SET reviewer_name = $3, rating = $4, comment = $5, status = 'pending',
+         admin_note = NULL, moderated_by = NULL, moderated_at = NULL, updated_at = now()
+     WHERE id = $1 AND user_id = $2
+     RETURNING id, status, rating, comment, reviewer_name, created_at, updated_at`,
+    [rid, uid, reviewerName, Math.trunc(rate), text],
+  )
+  if ((res.rowCount ?? 0) < 1) throw new Error('not_found')
+  return res.rows[0]
+}
+
+
+export async function deleteMyReview({ userId, reviewId }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const rid = growthPositiveInt(reviewId, 'invalid_id')
+  const res = await query('DELETE FROM product_reviews WHERE id = $1 AND user_id = $2', [rid, uid])
+  if ((res.rowCount ?? 0) < 1) throw new Error('not_found')
+  return { ok: true }
+}
+
+
+// The public reviews list only ever contains 'approved' rows, so a user whose review is
+// still pending (or was hidden/rejected) wouldn't otherwise see it anywhere on the page —
+// this lets the product page show "your review" separately, with its real status.
+export async function getMyReviewForProduct({ userId, productId }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const pid = growthPositiveInt(productId, 'invalid_product_id')
+  return get(
+    `SELECT id, product_id, rating, comment, reviewer_name, status, admin_note, created_at, updated_at
+     FROM product_reviews
+     WHERE user_id = $1 AND product_id = $2`,
+    [uid, pid],
+  )
 }
 
 
@@ -1173,10 +1221,76 @@ export async function adminListReviews({ status, limit = 100, offset = 0 } = {})
 }
 
 
+// Delivers one notification to a user through whichever channels their preferences and
+// push-subscription state allow, following the same event/site-message/delivery write
+// pattern as adminSendGrowthNotificationTest (the only other place this ever worked).
+async function deliverGrowthNotification({ userId, eventType, targetType, targetId, payload, senderId = null }) {
+  const uid = growthPositiveInt(userId, 'invalid_user_id')
+  const preferences = await getNotificationPreferences(uid)
+  const channels = filterGrowthNotificationChannels({ eventType, preferences, hasPushSubscription: true })
+  if (channels.length === 0) return null
+
+  const rendered = renderGrowthNotification({ eventType, payload })
+  const eventKey = buildGrowthEventKey({ eventType, targetType, targetId, version: `${uid}:${Date.now()}` })
+
+  const client = await pool.connect()
+  let eventId = null
+  let siteMessageId = null
+  try {
+    await client.query('BEGIN')
+    const eventRes = await client.query(
+      `INSERT INTO growth_notification_events (event_key, event_type, target_type, target_id, audience_type, payload_json, status, processed_at)
+       VALUES ($1,$2,$3,$4,'direct',$5::jsonb,'processed',now())
+       ON CONFLICT (event_key) DO UPDATE SET processed_at = now()
+       RETURNING id`,
+      [eventKey, eventType, targetType, targetId, JSON.stringify(payload || {})],
+    )
+    eventId = eventRes.rows[0].id
+
+    if (channels.includes('inbox')) {
+      const siteMessageRes = await client.query(
+        `INSERT INTO site_messages (sender_id, target_type, target_user_id, title, body)
+         VALUES ($1,'individual',$2,$3,$4)
+         RETURNING id`,
+        [senderId ? Number(senderId) : null, uid, rendered.title, rendered.body],
+      )
+      siteMessageId = siteMessageRes.rows[0].id
+      await client.query(
+        `INSERT INTO growth_notification_deliveries (event_id, user_id, channel, status, site_message_id, delivered_at)
+         VALUES ($1,$2,'inbox','delivered',$3,now())
+         ON CONFLICT (event_id, user_id, channel)
+         DO UPDATE SET status = 'delivered', site_message_id = EXCLUDED.site_message_id, delivered_at = now()`,
+        [eventId, uid, siteMessageId],
+      )
+    }
+    await client.query('COMMIT')
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    throw error
+  } finally {
+    client.release()
+  }
+
+  if (channels.includes('push')) {
+    sendPushToUser(uid, { title: rendered.title, body: rendered.push_body || rendered.body, link: rendered.link }).catch(() => {})
+  }
+
+  return { ok: true, event_id: eventId, site_message_id: siteMessageId }
+}
+
+
 export async function adminModerateReview({ id, status, adminNote, moderatorId }) {
   const reviewId = growthPositiveInt(id, 'invalid_id')
   const nextStatus = String(status || '').trim()
   if (!['pending', 'approved', 'hidden', 'rejected'].includes(nextStatus)) throw new Error('invalid_status')
+
+  const previous = await get('SELECT status FROM product_reviews WHERE id = $1', [reviewId])
+  if (!previous) throw new Error('not_found')
+
   const res = await query(
     `UPDATE product_reviews
      SET status = $2,
@@ -1189,7 +1303,20 @@ export async function adminModerateReview({ id, status, adminNote, moderatorId }
     [reviewId, nextStatus, adminNote == null ? null : String(adminNote), moderatorId ? Number(moderatorId) : null],
   )
   if ((res.rowCount ?? 0) < 1) throw new Error('not_found')
-  return res.rows[0]
+  const review = res.rows[0]
+
+  if (previous.status !== nextStatus) {
+    deliverGrowthNotification({
+      userId: review.user_id,
+      eventType: 'review_moderated',
+      targetType: 'review',
+      targetId: review.id,
+      payload: { review_id: review.id, status: nextStatus },
+      senderId: moderatorId,
+    }).catch(() => {})
+  }
+
+  return review
 }
 
 

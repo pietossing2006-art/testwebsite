@@ -55,6 +55,9 @@ function createFakeStore() {
       reviews: [{ id: 1, rating: 5, comment: 'good' }],
     }),
     createProductReview: async () => ({ id: 11, status: 'pending' }),
+    getMyReviewForProduct: async () => null,
+    updateMyReview: async ({ reviewId, rating, comment }) => ({ id: reviewId, status: 'pending', rating, comment }),
+    deleteMyReview: async () => ({ ok: true }),
     listActiveGrowthCampaigns: async () => ({ campaigns: [] }),
     getMyVip: async () => ({ tier: null, points_spent: 0 }),
     adminListGrowthCampaigns: async () => ({ campaigns: [] }),
@@ -136,5 +139,90 @@ test('review submission accepts reviewer name instead of order item number', asy
     assert.equal(body.review.id, 12)
     assert.equal(submitted.reviewer_name, 'ชื่อ')
     assert.equal('order_item_id' in submitted, false)
+  })
+})
+
+test('my-review lookup requires auth and returns null when the user has not reviewed the product', async () => {
+  const app = express()
+  app.use(express.json())
+  app.use(createGrowthRouter({ store: createFakeStore(), auth: createFakeAuth('user') }))
+
+  await withServer(app, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/products/42/reviews/mine`)
+    const body = await res.json()
+    assert.equal(res.status, 200)
+    assert.equal(body.review, null)
+  })
+})
+
+test('editing a review re-submits it for moderation through the store', async () => {
+  const app = express()
+  app.use(express.json())
+  let updated = null
+  const store = {
+    ...createFakeStore(),
+    updateMyReview: async (payload) => {
+      updated = payload
+      return { id: payload.reviewId, status: 'pending', rating: payload.rating, comment: payload.comment }
+    },
+  }
+  app.use(createGrowthRouter({ store, auth: createFakeAuth('user') }))
+
+  await withServer(app, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/me/reviews/9`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewer_name: 'ชื่อ', rating: 3, comment: 'แก้ไขแล้ว' }),
+    })
+    const body = await res.json()
+    assert.equal(res.status, 200)
+    assert.equal(body.review.status, 'pending')
+    assert.equal(updated.reviewId, 9)
+    assert.equal(updated.userId, 7)
+    assert.equal(updated.rating, 3)
+  })
+})
+
+test('editing a review that is not the caller\'s own maps to 404', async () => {
+  const app = express()
+  app.use(express.json())
+  const store = {
+    ...createFakeStore(),
+    updateMyReview: async () => {
+      throw new Error('not_found')
+    },
+  }
+  app.use(createGrowthRouter({ store, auth: createFakeAuth('user') }))
+
+  await withServer(app, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/me/reviews/999`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reviewer_name: 'ชื่อ', rating: 3, comment: 'แก้ไขแล้ว' }),
+    })
+    assert.equal(res.status, 404)
+  })
+})
+
+test('deleting a review calls the store with the caller\'s user id', async () => {
+  const app = express()
+  app.use(express.json())
+  let deleted = null
+  const store = {
+    ...createFakeStore(),
+    deleteMyReview: async (payload) => {
+      deleted = payload
+      return { ok: true }
+    },
+  }
+  app.use(createGrowthRouter({ store, auth: createFakeAuth('user') }))
+
+  await withServer(app, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/me/reviews/9`, { method: 'DELETE' })
+    const body = await res.json()
+    assert.equal(res.status, 200)
+    assert.equal(body.ok, true)
+    assert.equal(deleted.reviewId, 9)
+    assert.equal(deleted.userId, 7)
   })
 })
