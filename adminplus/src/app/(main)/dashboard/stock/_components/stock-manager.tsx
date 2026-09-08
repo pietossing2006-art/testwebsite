@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { FormDialog } from "@/components/adminplus/form-dialog";
@@ -19,7 +19,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { adminApi, getErrorMessage } from "@/lib/adminplus/api-client";
 import { formatDateTime, formatNumber } from "@/lib/adminplus/format";
 
+import { LowStockManager } from "./low-stock-panel";
 import { MysteryBoxManager } from "./mystery-box-manager";
+import { OptionBindingsManager } from "./option-bindings-manager";
 
 export type StockProduct = {
   id: number;
@@ -29,6 +31,7 @@ export type StockProduct = {
   low_stock_threshold?: number | null;
   fulfillment_type: string;
   category_name?: string | null;
+  product_options?: unknown;
 };
 
 export type StockPool = {
@@ -73,6 +76,8 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
   const [stockText, setStockText] = useState("");
   const [allowDuplicates, setAllowDuplicates] = useState(false);
   const [threshold, setThreshold] = useState("");
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const [exportOptions, setExportOptions] = useState({ status: "available", format: "csv", mask: false });
 
   // Pools
   const [selectedPoolId, setSelectedPoolId] = useState("");
@@ -147,6 +152,67 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
       setStockText("");
       await loadProductItems(selectedProductId);
       await reloadProducts();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Sends the file's text to /stock/import rather than reusing the plain /stock
+   * endpoint, so the import lands in the audit log as stock.import with its
+   * original filename. The route accepts multipart or a JSON `text` field.
+   */
+  async function importStockFile(file: File) {
+    if (!selectedProductId) return toast.error("กรุณาเลือกสินค้า");
+    setBusy(true);
+    try {
+      const text = await file.text();
+      if (splitStockLines(text).length === 0) return toast.error("ไฟล์นี้ไม่มีข้อมูลสต็อก");
+      const res = await adminApi.post<{ result: { inserted: number; duplicates_in_batch: number; duplicates_in_db: number } }>(
+        "/stock/import",
+        { product_id: Number(selectedProductId), text, allow_duplicates: allowDuplicates },
+      );
+      const r = res.result;
+      toast.success(
+        `นำเข้า ${r?.inserted ?? 0} รายการจาก ${file.name} (ซ้ำในไฟล์ ${r?.duplicates_in_batch ?? 0}, ซ้ำในระบบ ${r?.duplicates_in_db ?? 0})`,
+      );
+      await loadProductItems(selectedProductId);
+      await reloadProducts();
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  }
+
+  /**
+   * The export endpoint answers with a file body, so pull the text through the
+   * proxy and hand the browser a blob — that keeps the filename ours instead of
+   * relying on a Content-Disposition header surviving the hop.
+   */
+  async function exportStock() {
+    if (!selectedProductId) return toast.error("กรุณาเลือกสินค้า");
+    setBusy(true);
+    try {
+      const { status, format, mask } = exportOptions;
+      const text = await adminApi.getText(
+        `/stock/export?product_id=${selectedProductId}&status=${status}&format=${format}&mask=${mask}`,
+      );
+      if (!text.trim()) {
+        toast.error("ไม่มีข้อมูลให้ส่งออกตามเงื่อนไขนี้");
+        return;
+      }
+      const blob = new Blob([text], { type: format === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `stock-export-product-${selectedProductId}.${format}`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("ส่งออกสต็อกเรียบร้อย");
     } catch (err) {
       toast.error(getErrorMessage(err));
     } finally {
@@ -264,6 +330,8 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
         <TabsTrigger value="products">สต็อกสินค้า</TabsTrigger>
         <TabsTrigger value="pools">Stock pools</TabsTrigger>
         <TabsTrigger value="mystery">กล่องสุ่ม</TabsTrigger>
+        <TabsTrigger value="bindings">ผูกตัวเลือก</TabsTrigger>
+        <TabsTrigger value="low">สต็อกต่ำ</TabsTrigger>
       </TabsList>
 
       <TabsContent value="products" className="pt-4">
@@ -369,6 +437,64 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
               <Button size="sm" onClick={addProductStock} disabled={busy || !selectedProductId || !stockText.trim()}>
                 เพิ่มสต็อก ({splitStockLines(stockText).length} รายการ)
               </Button>
+
+              <div className="grid gap-3 rounded-lg border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={importFileRef}
+                    type="file"
+                    accept=".txt,.csv,text/plain,text/csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) importStockFile(file);
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || !selectedProductId}
+                    onClick={() => importFileRef.current?.click()}
+                  >
+                    <Upload /> นำเข้าจากไฟล์
+                  </Button>
+                  <span className="text-muted-foreground text-xs">รองรับ .txt / .csv บรรทัดละ 1 รายการ</span>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-2">
+                  <Field label="สถานะที่ส่งออก">
+                    <NativeSelect
+                      value={exportOptions.status}
+                      onChange={(e) => setExportOptions((prev) => ({ ...prev, status: e.target.value }))}
+                      disabled={busy}
+                    >
+                      <NativeSelectOption value="available">พร้อมขาย</NativeSelectOption>
+                      <NativeSelectOption value="used">ใช้แล้ว</NativeSelectOption>
+                      <NativeSelectOption value="all">ทั้งหมด</NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Field label="รูปแบบไฟล์">
+                    <NativeSelect
+                      value={exportOptions.format}
+                      onChange={(e) => setExportOptions((prev) => ({ ...prev, format: e.target.value }))}
+                      disabled={busy}
+                    >
+                      <NativeSelectOption value="csv">CSV</NativeSelectOption>
+                      <NativeSelectOption value="txt">TXT</NativeSelectOption>
+                    </NativeSelect>
+                  </Field>
+                  <Button size="sm" variant="outline" onClick={exportStock} disabled={busy || !selectedProductId}>
+                    <Download /> ส่งออก
+                  </Button>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={exportOptions.mask}
+                    onCheckedChange={(c) => setExportOptions((prev) => ({ ...prev, mask: Boolean(c) }))}
+                  />
+                  ปิดบังข้อมูลบางส่วนในไฟล์ที่ส่งออก
+                </label>
+              </div>
 
               {selectedProductId && (
                 <>
@@ -609,6 +735,14 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
 
       <TabsContent value="mystery" className="pt-4">
         <MysteryBoxManager products={products} />
+      </TabsContent>
+
+      <TabsContent value="bindings" className="pt-4">
+        <OptionBindingsManager products={products} pools={pools} />
+      </TabsContent>
+
+      <TabsContent value="low" className="pt-4">
+        <LowStockManager onStockChanged={reloadProducts} />
       </TabsContent>
     </Tabs>
   );

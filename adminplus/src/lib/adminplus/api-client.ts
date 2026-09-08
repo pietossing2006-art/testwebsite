@@ -45,7 +45,26 @@ function createApi(prefix: string) {
       request<T>(path, { method: "PUT", body: body !== undefined ? JSON.stringify(body) : undefined }, prefix),
     patch: <T>(path: string, body?: unknown) =>
       request<T>(path, { method: "PATCH", body: body !== undefined ? JSON.stringify(body) : undefined }, prefix),
-    delete: <T>(path: string) => request<T>(path, { method: "DELETE" }, prefix),
+    // A couple of splitwise endpoints (e.g. product-option-stock-bindings) read
+    // their target from a DELETE body rather than the path.
+    delete: <T>(path: string, body?: unknown) =>
+      request<T>(path, { method: "DELETE", body: body !== undefined ? JSON.stringify(body) : undefined }, prefix),
+    /** For endpoints that answer with a file (CSV/TXT) instead of JSON. */
+    getText: async (path: string) => {
+      const res = await fetch(`${prefix}${path}`, { method: "GET" });
+      const text = await res.text();
+      if (!res.ok) {
+        let data: unknown = {};
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { raw: text };
+        }
+        const errorCode = typeof (data as { error?: unknown })?.error === "string" ? (data as { error: string }).error : `request_failed_${res.status}`;
+        throw new AdminApiError(errorCode, res.status, data);
+      }
+      return text;
+    },
   };
 }
 
