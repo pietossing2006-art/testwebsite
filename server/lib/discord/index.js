@@ -206,16 +206,53 @@ async function registerCommands(client) {
 }
 
 async function replyInteractionError(interaction, err, logLabel) {
-  console.error(`[Discord] ${logLabel}`, err)
-  const payload = { embeds: [ctx.errorEmbed('Interaction Failed', 'This action failed. Please try again.')], flags: ctx.EPHEMERAL }
-  if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: payload.embeds }).catch(() => {})
-  else await interaction.reply(payload).catch(() => {})
+  // A short reference the user can quote so staff can find the matching log line.
+  const ref = Math.random().toString(36).slice(2, 8).toUpperCase()
+  console.error(`[Discord] ${logLabel} (ref ${ref})`, err)
+
+  const embed = ctx.errorEmbed(
+    'Interaction Failed',
+    'ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง หากยังไม่ได้ แจ้งทีมงานพร้อมรหัสอ้างอิงด้านล่าง',
+    [{ name: 'Reference', value: `\`${ref}\``, inline: true }],
+  )
+  const payload = { embeds: [embed], flags: ctx.EPHEMERAL }
+
+  try {
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [embed] })
+    else await interaction.reply(payload)
+  } catch (replyErr) {
+    // The interaction token can already be dead (>3s with no ack, or expired) —
+    // nothing more we can show the user, but it must not take the process down.
+    console.error(`[Discord] could not deliver error reply (ref ${ref})`, replyErr)
+  }
+}
+
+/**
+ * Gateway/websocket problems surface as 'error' on the client. Node throws when an
+ * 'error' event has no listener, which would take the whole API server down with the
+ * bot, so these listeners are what keep a Discord hiccup from being an outage.
+ */
+function attachClientDiagnostics(client) {
+  client.on('error', (err) => console.error('[Discord] client error', err))
+  client.on('shardError', (err, shardId) => console.error(`[Discord] shard ${shardId} error`, err))
+  client.on('shardDisconnect', (event, shardId) =>
+    console.warn(`[Discord] shard ${shardId} disconnected (code ${event?.code ?? 'unknown'})`),
+  )
+  client.on('shardReconnecting', (shardId) => console.log(`[Discord] shard ${shardId} reconnecting...`))
+  client.on('shardResume', (shardId) => console.log(`[Discord] shard ${shardId} resumed`))
+  client.on('invalidated', () => console.error('[Discord] session invalidated — the bot needs a restart to come back'))
 }
 
 async function handleInteraction(interaction) {
-  const componentHandled = await routeComponentInteraction(interaction, handlers, replyInteractionError)
-  if (componentHandled !== null) return
-  await routeChatCommand(interaction, handlers, replyInteractionError)
+  try {
+    const componentHandled = await routeComponentInteraction(interaction, handlers, replyInteractionError)
+    if (componentHandled !== null) return
+    await routeChatCommand(interaction, handlers, replyInteractionError)
+  } catch (err) {
+    // Last resort: the routers normally handle their own errors, but an throw from
+    // routing itself must not become an unhandled rejection.
+    await replyInteractionError(interaction, err, 'interaction routing failed')
+  }
 }
 
 export async function startDiscordBot() {
@@ -228,6 +265,7 @@ export async function startDiscordBot() {
   if (discordClientPromise) return discordClientPromise
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds] })
+  attachClientDiagnostics(client)
   client.once('clientReady', async () => {
     console.log(`[Discord] logged in as ${client.user?.tag || client.user?.id || 'bot'}`)
     try {
