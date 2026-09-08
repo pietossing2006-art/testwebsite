@@ -19,6 +19,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { adminApi, getErrorMessage } from "@/lib/adminplus/api-client";
 import { formatDateTime, formatNumber } from "@/lib/adminplus/format";
 
+import { MysteryBoxManager } from "./mystery-box-manager";
+
 export type StockProduct = {
   id: number;
   name: string;
@@ -261,6 +263,7 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
       <TabsList>
         <TabsTrigger value="products">สต็อกสินค้า</TabsTrigger>
         <TabsTrigger value="pools">Stock pools</TabsTrigger>
+        <TabsTrigger value="mystery">กล่องสุ่ม</TabsTrigger>
       </TabsList>
 
       <TabsContent value="products" className="pt-4">
@@ -602,6 +605,10 @@ export function StockManager({ initialProducts, initialPools }: { initialProduct
                 </div>
           </FormDialog>
         </>
+      </TabsContent>
+
+      <TabsContent value="mystery" className="pt-4">
+        <MysteryBoxManager products={products} />
       </TabsContent>
     </Tabs>
   );
