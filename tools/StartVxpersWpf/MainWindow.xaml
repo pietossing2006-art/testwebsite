@@ -47,9 +47,11 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- ── Status row: two cards side by side ── -->
+            <!-- ── Status row: three cards side by side ── -->
             <Grid Grid.Row="0" Margin="0,0,0,14">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="14" />
                     <ColumnDefinition Width="*" />
@@ -71,6 +73,16 @@
                         <StackPanel>
                             <TextBlock Text="Web Client" FontWeight="SemiBold" FontSize="13" />
                             <TextBlock x:Name="ClientCaption" Text="Offline" FontSize="11.5" Opacity="0.6" />
+                        </StackPanel>
+                    </StackPanel>
+                </ui:Card>
+
+                <ui:Card Grid.Column="4" Padding="16,14">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="AdminplusDot" Style="{StaticResource StatusDot}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <StackPanel>
+                            <TextBlock Text="Admin+" FontWeight="SemiBold" FontSize="13" />
+                            <TextBlock x:Name="AdminplusCaption" Text="Offline" FontSize="11.5" Opacity="0.6" />
                         </StackPanel>
                     </StackPanel>
                 </ui:Card>
@@ -96,7 +108,7 @@
 
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <ui:ToggleSwitch x:Name="InstallDepsCheck" Content="Install dependencies (npm install)" Margin="0,0,0,8" />
-                            <ui:ToggleSwitch x:Name="BuildCheck" Content="Rebuild client before preview" />
+                            <ui:ToggleSwitch x:Name="BuildCheck" Content="Rebuild client &amp; Admin+ before preview" />
                         </StackPanel>
                     </Grid>
                 </StackPanel>
@@ -108,7 +120,8 @@
                     <ui:Button x:Name="StartButton" Content="Start All" Icon="{ui:SymbolIcon Play24}" Appearance="Primary" Click="OnStartClick" Padding="16,8" />
                     <ui:Button x:Name="StopButton" Content="Stop" Icon="{ui:SymbolIcon Stop24}" Click="OnStopClick" Padding="16,8" Margin="8,0,0,0" />
                     <ui:Button x:Name="RestartButton" Content="Restart" Icon="{ui:SymbolIcon ArrowSync24}" Click="OnRestartClick" Padding="16,8" Margin="8,0,0,0" />
-                    <ui:Button x:Name="OpenBrowserButton" Content="Open in Browser" Icon="{ui:SymbolIcon Globe24}" Click="OnOpenBrowserClick" Padding="16,8" Margin="8,0,0,0" />
+                    <ui:Button x:Name="OpenBrowserButton" Content="Open Store" Icon="{ui:SymbolIcon Globe24}" Click="OnOpenBrowserClick" Padding="16,8" Margin="8,0,0,0" />
+                    <ui:Button x:Name="OpenAdminplusButton" Content="Open Admin+" Icon="{ui:SymbolIcon ShieldTask24}" Click="OnOpenAdminplusClick" Padding="16,8" Margin="8,0,0,0" />
 
                     <Border Width="1" Background="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="12,4" />
 

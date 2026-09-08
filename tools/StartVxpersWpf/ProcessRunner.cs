@@ -152,12 +152,13 @@ namespace StartVxpersWpf
         public void Dispose() => _process?.Dispose();
     }
 
-    /// <summary>Locates the Node.js toolchain and this repo's server/client directories on disk.</summary>
+    /// <summary>Locates the Node.js toolchain and this repo's server/client/adminplus directories on disk.</summary>
     internal static class ToolPaths
     {
         public static readonly string RepoRoot;
         public static readonly string ServerDir;
         public static readonly string ClientDir;
+        public static readonly string AdminplusDir;
         public static readonly string NodeExe;
         public static readonly string NpmCmd;
 
@@ -166,6 +167,7 @@ namespace StartVxpersWpf
             RepoRoot = LocateRepoRoot();
             ServerDir = Path.Combine(RepoRoot, "server");
             ClientDir = Path.Combine(RepoRoot, "client");
+            AdminplusDir = Path.Combine(RepoRoot, "adminplus");
             NodeExe = FindOnPath("node.exe") ?? "node.exe";
             NpmCmd = FindOnPath("npm.cmd") ?? "npm.cmd";
         }
@@ -209,6 +211,13 @@ namespace StartVxpersWpf
         public static bool ClientDepsInstalled => Directory.Exists(Path.Combine(ClientDir, "node_modules"));
         public static string ViteCli => Path.Combine(ClientDir, "node_modules", "vite", "bin", "vite.js");
         public static bool ClientBuilt => File.Exists(Path.Combine(ClientDir, "dist", "index.html"));
+
+        // ── Admin+ (adminplus/) — the Next.js admin panel that replaces the old AdminV3 screens ──
+        public static bool AdminplusPresent => Directory.Exists(AdminplusDir);
+        public static bool AdminplusDepsInstalled => Directory.Exists(Path.Combine(AdminplusDir, "node_modules"));
+        public static string NextCli => Path.Combine(AdminplusDir, "node_modules", "next", "dist", "bin", "next");
+        /// <summary>next build writes BUILD_ID last, so its presence means a usable production build exists.</summary>
+        public static bool AdminplusBuilt => File.Exists(Path.Combine(AdminplusDir, ".next", "BUILD_ID"));
     }
 
     internal static class PortCheck

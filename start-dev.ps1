@@ -1,4 +1,4 @@
-# Dev stack starter: API server & web client.
+# Dev stack starter: API server, web client & Admin+ panel.
 # Uses the same client/server launch flow as start-server-and-client.ps1.
 
 param(
@@ -15,11 +15,15 @@ $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $serverDir = Join-Path $root 'server'
 $clientDir = Join-Path $root 'client'
+$adminplusDir = Join-Path $root 'adminplus'
 $serverScript = Join-Path $serverDir 'run-server.ps1'
 $clientScript = Join-Path $clientDir 'run-client.ps1'
+$adminplusScript = Join-Path $adminplusDir 'run-adminplus.ps1'
 $stateDir = Join-Path $root '.script-state'
 $serverPidFile = Join-Path $stateDir 'server.pid'
 $clientPidFile = Join-Path $stateDir 'client.pid'
+$adminplusPidFile = Join-Path $stateDir 'adminplus.pid'
+$adminplusPort = 3010
 
 function Stop-ProcessTree {
   param(
@@ -138,6 +142,9 @@ if ((-not $hasServerDeps -or -not $hasClientDeps) -and -not $Install) {
   exit 1
 }
 
+# Admin+ is part of the stack — it runs whenever adminplus/ is checked out.
+$runAdminplus = Test-Path -LiteralPath $adminplusScript
+
 if ($Install) {
   Write-Host '=== Installing Server ===' -ForegroundColor Cyan
   Set-Location $serverDir
@@ -145,6 +152,11 @@ if ($Install) {
   Write-Host '=== Installing Client ===' -ForegroundColor Cyan
   Set-Location $clientDir
   npm install
+  if ($runAdminplus) {
+    Write-Host '=== Installing Admin+ ===' -ForegroundColor Cyan
+    Set-Location $adminplusDir
+    npm install
+  }
   Set-Location $root
 }
 
@@ -152,6 +164,9 @@ $installFlag = if ($Install) { '-Install' } else { '' }
 $buildFlag = if ($Build) { '-Build' } else { '' }
 $clientPort = if ($ClientMode -eq 'dev') { 5173 } else { 4173 }
 $clientUrl = "http://localhost:$clientPort"
+# Admin+ mirrors the client: dev server while the client is in dev, production build otherwise.
+$adminplusMode = if ($ClientMode -eq 'dev') { 'dev' } else { 'start' }
+$adminplusUrl = "http://localhost:$adminplusPort"
 
 if (-not (Test-Path -LiteralPath $stateDir)) {
   New-Item -ItemType Directory -Path $stateDir | Out-Null
@@ -159,19 +174,24 @@ if (-not (Test-Path -LiteralPath $stateDir)) {
 
 Stop-ManagedProcess -PidFile $serverPidFile -Label 'server'
 Stop-ManagedProcess -PidFile $clientPidFile -Label 'client'
+Stop-ManagedProcess -PidFile $adminplusPidFile -Label 'adminplus'
 Stop-ManagedWindowsByScriptPath -ScriptPath $serverScript -Label 'server'
 Stop-ManagedWindowsByScriptPath -ScriptPath $clientScript -Label 'client'
+Stop-ManagedWindowsByScriptPath -ScriptPath $adminplusScript -Label 'adminplus'
 
 Stop-ProcessOnPort -Port 3001 -Label 'server'
 Stop-ProcessOnPort -Port $clientPort -Label 'client'
 Stop-ProcessOnPort -Port 5173 -Label 'client-dev'
 Stop-ProcessOnPort -Port 4173 -Label 'client-preview'
+Stop-ProcessOnPort -Port $adminplusPort -Label 'adminplus'
 
 Write-Host '=== Starting Dev Stack ===' -ForegroundColor Green
 Write-Host "- ServerMode: $ServerMode"
 Write-Host "- ClientMode: $ClientMode (port $clientPort)"
+if ($runAdminplus) { Write-Host "- Admin+: $adminplusMode (port $adminplusPort)" }
 Write-Host "Server: http://localhost:3001"
 Write-Host "Client: $clientUrl"
+if ($runAdminplus) { Write-Host "Admin+: $adminplusUrl" }
 foreach ($ip in Get-LanIPv4) {
   Write-Host "LAN client: http://${ip}:$clientPort" -ForegroundColor Cyan
 }
@@ -180,16 +200,23 @@ Write-Host ''
 
 $serverArgs = "-NoExit -ExecutionPolicy Bypass -File `"$serverScript`" -Mode $ServerMode $installFlag"
 $clientArgs = "-NoExit -ExecutionPolicy Bypass -File `"$clientScript`" -Mode $ClientMode $installFlag $buildFlag"
+$adminplusArgs = "-NoExit -ExecutionPolicy Bypass -File `"$adminplusScript`" -Mode $adminplusMode $installFlag $buildFlag"
 
 $serverProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $serverArgs -WorkingDirectory $serverDir -PassThru
 Start-Sleep -Seconds 2
 $clientProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $clientArgs -WorkingDirectory $clientDir -PassThru
+$adminplusProc = $null
+if ($runAdminplus) {
+  $adminplusProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $adminplusArgs -WorkingDirectory $adminplusDir -PassThru
+}
 
 Set-Content -LiteralPath $serverPidFile -Value $serverProc.Id
 Set-Content -LiteralPath $clientPidFile -Value $clientProc.Id
+if ($adminplusProc) { Set-Content -LiteralPath $adminplusPidFile -Value $adminplusProc.Id }
 
 Write-Host "Server PID: $($serverProc.Id)"
 Write-Host "Client PID: $($clientProc.Id)"
+if ($adminplusProc) { Write-Host "Admin+ PID: $($adminplusProc.Id)" }
 Write-Host ''
 
 pause
@@ -197,6 +224,7 @@ pause
 Write-Host "`nStopping services..." -ForegroundColor Yellow
 Stop-ProcessTree -RootPid $serverProc.Id -Label 'server' -Reason 'script exit'
 Stop-ProcessTree -RootPid $clientProc.Id -Label 'client' -Reason 'script exit'
+if ($adminplusProc) { Stop-ProcessTree -RootPid $adminplusProc.Id -Label 'adminplus' -Reason 'script exit' }
 
 Remove-Item -LiteralPath $serverPidFile -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $clientPidFile -Force -ErrorAction SilentlyContinue

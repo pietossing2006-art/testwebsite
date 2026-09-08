@@ -18,12 +18,14 @@ namespace StartVxpersWpf
         private const int ServerPort = 3001;
         private const int ClientDevPort = 5173;
         private const int ClientPreviewPort = 4173;
+        private const int AdminplusPort = 3010;
 
         private static readonly SolidColorBrush OnlineDot = new SolidColorBrush(Color.FromRgb(0x22, 0xC5, 0x5E));
         private static readonly SolidColorBrush OfflineDot = new SolidColorBrush(Color.FromRgb(0xCB, 0xD5, 0xE1));
 
         private readonly ProcessRunner _server = new ProcessRunner("SERVER");
         private readonly ProcessRunner _client = new ProcessRunner("CLIENT");
+        private readonly ProcessRunner _adminplus = new ProcessRunner("ADMIN+");
         private readonly DispatcherTimer _statusTimer;
         private bool _busy;
         private bool _devMode = true;
@@ -40,6 +42,10 @@ namespace StartVxpersWpf
             _client.OutputLine += line => AppendLogAsync("CLIENT", line);
             _client.ErrorLine += line => AppendLogAsync("CLIENT", line);
             _client.Exited += code => AppendLogAsync("CLIENT", $"process exited (code {code})");
+
+            _adminplus.OutputLine += line => AppendLogAsync("ADMIN+", line);
+            _adminplus.ErrorLine += line => AppendLogAsync("ADMIN+", line);
+            _adminplus.Exited += code => AppendLogAsync("ADMIN+", $"process exited (code {code})");
 
             AppendLog("SYSTEM", "VxperS Control Center (WPF) ready.");
             AppendLog("SYSTEM", "Root: " + ToolPaths.RepoRoot);
@@ -58,6 +64,7 @@ namespace StartVxpersWpf
         private void OnStopClick(object sender, RoutedEventArgs e) => StopAll("stop requested");
         private void OnRestartClick(object sender, RoutedEventArgs e) { StopAll("restarting"); StartAll(); }
         private void OnOpenBrowserClick(object sender, RoutedEventArgs e) => OpenBrowser();
+        private void OnOpenAdminplusClick(object sender, RoutedEventArgs e) => OpenAdminplus();
         private void OnClearLogClick(object sender, RoutedEventArgs e) => LogBox.Clear();
         private void OnDevModeClick(object sender, RoutedEventArgs e) => SetMode(devMode: true);
         private void OnPreviewModeClick(object sender, RoutedEventArgs e) => SetMode(devMode: false);
@@ -87,6 +94,8 @@ namespace StartVxpersWpf
             var devMode = _devMode;
             var installDeps = InstallDepsCheck.IsChecked == true;
             var rebuildClient = BuildCheck.IsChecked == true;
+            // Admin+ is part of the stack, not an option — the store can't be administered without it.
+            var startAdminplus = ToolPaths.AdminplusPresent;
 
             Task.Run(() =>
             {
@@ -96,6 +105,7 @@ namespace StartVxpersWpf
                     {
                         RunInstall("SERVER", ToolPaths.ServerDir);
                         RunInstall("CLIENT", ToolPaths.ClientDir);
+                        if (startAdminplus) RunInstall("ADMIN+", ToolPaths.AdminplusDir);
                     }
 
                     if (!ToolPaths.ServerDepsInstalled)
@@ -141,12 +151,47 @@ namespace StartVxpersWpf
                         }
                     });
 
+                    if (startAdminplus) StartAdminplus(devMode, rebuildClient);
+
                     WaitThenAutoOpen(devMode ? ClientDevPort : ClientPreviewPort);
                 }
                 finally
                 {
                     Dispatcher.Invoke(() => SetBusy(false));
                 }
+            });
+        }
+
+        /// <summary>
+        /// Starts the Admin+ Next.js panel: `next dev` in dev mode, or `next build` (when needed)
+        /// followed by `next start` in preview mode. Never aborts the rest of the session — if
+        /// adminplus can't start, the store client is still up.
+        /// </summary>
+        private void StartAdminplus(bool devMode, bool forceRebuild)
+        {
+            if (!ToolPaths.AdminplusDepsInstalled)
+            {
+                AppendLogAsync("ADMIN+", "adminplus/node_modules missing — check 'Install dependencies' and try again.");
+                return;
+            }
+
+            if (!devMode && (forceRebuild || !ToolPaths.AdminplusBuilt))
+            {
+                AppendLogAsync("SYSTEM", "Building Admin+ (next build)...");
+                var code = new ProcessRunner("ADMIN+BUILD").RunToCompletion(ToolPaths.NodeExe, $"\"{ToolPaths.NextCli}\" build", ToolPaths.AdminplusDir);
+                if (code != 0)
+                {
+                    AppendLogAsync("SYSTEM", $"Admin+ build failed (exit {code}) — skipping Admin+ start.");
+                    return;
+                }
+                AppendLogAsync("SYSTEM", "Admin+ build complete.");
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                var command = devMode ? "dev" : "start";
+                _adminplus.Start(ToolPaths.NodeExe, $"\"{ToolPaths.NextCli}\" {command} -H 0.0.0.0 -p {AdminplusPort}", ToolPaths.AdminplusDir);
+                AppendLog("SYSTEM", $"Admin+ panel ({command}) launching on http://localhost:{AdminplusPort}");
             });
         }
 
@@ -180,6 +225,7 @@ namespace StartVxpersWpf
             AppendLog("SYSTEM", $"Stopping services ({reason})...");
             _server.Stop();
             _client.Stop();
+            _adminplus.Stop();
         }
 
         private void SetBusy(bool busy)
@@ -207,6 +253,16 @@ namespace StartVxpersWpf
             OpenUrl($"http://localhost:{port}");
         }
 
+        private void OpenAdminplus()
+        {
+            if (!PortCheck.IsListening(AdminplusPort))
+            {
+                AppendLog("SYSTEM", "Admin+ isn't running yet — click Start All first.");
+                return;
+            }
+            OpenUrl($"http://localhost:{AdminplusPort}");
+        }
+
         private void OpenUrl(string url)
         {
             try
@@ -231,6 +287,12 @@ namespace StartVxpersWpf
             var clientOn = devOn || previewOn;
             ClientDot.Fill = clientOn ? OnlineDot : OfflineDot;
             ClientCaption.Text = devOn ? $"Online (dev) — :{ClientDevPort}" : previewOn ? $"Online (preview) — :{ClientPreviewPort}" : "Offline";
+
+            var adminplusOn = PortCheck.IsListening(AdminplusPort);
+            AdminplusDot.Fill = adminplusOn ? OnlineDot : OfflineDot;
+            AdminplusCaption.Text = adminplusOn ? $"Online — :{AdminplusPort}"
+                : ToolPaths.AdminplusPresent ? "Offline"
+                : "Not installed";
 
             if (!_busy) StatusText.Text = "Idle";
         }
