@@ -9,6 +9,7 @@ import {
   TextInputStyle,
 } from 'discord.js'
 import { openTopupsPanel } from './topups.js'
+import { deferEphemeral, respondEphemeral } from '../utils/interactionReply.js'
 
 export const commandName = "globalpanel"
 
@@ -79,15 +80,17 @@ function buildPasswordConfirmRows() {
 async function getPanelProfileOrReply(ctx, interaction) {
   const profile = await ctx.getDiscordLinkedUserByDiscordId(interaction.user.id)
   if (profile && !Boolean(profile.is_banned)) return profile
-  await interaction.reply({ embeds: [ctx.linkedRequiredEmbed()], flags: ctx.EPHEMERAL })
+  await respondEphemeral(interaction, { embeds: [ctx.linkedRequiredEmbed()], flags: ctx.EPHEMERAL })
   return null
 }
 
 export function createGlobalPanelHandlers(ctx) {
   async function handleGlobalPanel(interaction) {
+    await deferEphemeral(interaction)
+
     const subcommand = interaction.options.getSubcommand(false)
     if (subcommand !== 'setup') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.errorEmbed('Unsupported Panel Command', 'Use `/globalpanel setup` to send the panel.')],
         flags: ctx.EPHEMERAL,
       })
@@ -95,7 +98,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.errorEmbed('Permission Denied', 'You need Manage Server permission to setup this panel.')],
         flags: ctx.EPHEMERAL,
       })
@@ -104,7 +107,7 @@ export function createGlobalPanelHandlers(ctx) {
 
     const targetChannel = interaction.options.getChannel('channel', true)
     if (!targetChannel || typeof targetChannel.send !== 'function') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.errorEmbed('Invalid Channel', 'Please select a text channel where the bot can send messages.')],
         flags: ctx.EPHEMERAL,
       })
@@ -117,7 +120,7 @@ export function createGlobalPanelHandlers(ctx) {
       components: buildGlobalPanelRows(ctx, panelEmoji),
     })
 
-    await interaction.reply({
+    await respondEphemeral(interaction, {
       embeds: [ctx.successEmbed('Global Panel Sent', `The global command panel has been sent to ${targetChannel}.`)],
       flags: ctx.EPHEMERAL,
     })
@@ -126,13 +129,16 @@ export function createGlobalPanelHandlers(ctx) {
   async function handleGlobalPanelButton(interaction) {
     const customId = String(interaction.customId || '')
 
-    if (customId === 'vx_panel_password') {
-      await handlePasswordRequest(interaction)
+    // showModal() cannot run on a deferred interaction, so this branch stays before the defer.
+    if (customId === 'vx_panel_password_confirm') {
+      await handlePasswordConfirm(interaction)
       return
     }
 
-    if (customId === 'vx_panel_password_confirm') {
-      await handlePasswordConfirm(interaction)
+    await deferEphemeral(interaction)
+
+    if (customId === 'vx_panel_password') {
+      await handlePasswordRequest(interaction)
       return
     }
 
@@ -148,11 +154,11 @@ export function createGlobalPanelHandlers(ctx) {
       if (!profile) return
       const orders = await ctx.listMyOrders(profile.user_id, { limit: 5, offset: 0 })
       if (!orders.length) {
-        await interaction.reply({ embeds: [ctx.warningEmbed('Recent Orders', 'This account has no recent orders yet.')], flags: ctx.EPHEMERAL })
+        await respondEphemeral(interaction, { embeds: [ctx.warningEmbed('Recent Orders', 'This account has no recent orders yet.')], flags: ctx.EPHEMERAL })
         return
       }
       const orderEmoji = await ctx.getTopupEmoji(interaction.guild)
-      await interaction.reply({ embeds: ctx.buildOrdersEmbeds({ profile, orders, emoji: orderEmoji }), flags: ctx.EPHEMERAL })
+      await respondEphemeral(interaction, { embeds: ctx.buildOrdersEmbeds({ profile, orders, emoji: orderEmoji }), flags: ctx.EPHEMERAL })
       return
     }
 
@@ -160,7 +166,7 @@ export function createGlobalPanelHandlers(ctx) {
       const profile = await getPanelProfileOrReply(ctx, interaction)
       if (!profile) return
       const wallet = await ctx.getWallet(profile.user_id)
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [
           ctx.infoEmbed('Wallet Balance', 'Latest wallet balance for your account.', [
             { name: 'Account', value: ctx.profileName(profile), inline: true },
@@ -173,7 +179,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (customId === 'vx_global_link') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.infoEmbed('Link Account', 'สร้าง code จากหน้า Profile บนเว็บ แล้วใช้คำสั่งนี้ใน Discord', [{ name: 'Command', value: '`/link code:<code>`' }])],
         flags: ctx.EPHEMERAL,
       })
@@ -181,7 +187,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (customId === 'vx_global_unlink') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.warningEmbed('Unlink Account', 'ใช้คำสั่งนี้เพื่อตัดการลิงก์ Discord ออกจากบัญชีเว็บ', [{ name: 'Command', value: '`/unlink`' }])],
         flags: ctx.EPHEMERAL,
       })
@@ -189,7 +195,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (customId === 'vx_global_verify_slip') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [
           ctx.infoEmbed('Verify PromptPay Slip', 'หลังสร้าง QR จาก `/topups` และโอนเงินแล้ว ให้แนบรูปสลิปผ่านคำสั่งนี้', [
             { name: 'Command', value: '`/topup verify-slip topup_id:<id> slip:<image>`' },
@@ -201,7 +207,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (customId === 'vx_global_admin') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [
           ctx.warningEmbed('Admin Commands', 'คำสั่งนี้ใช้ได้เฉพาะคนที่มี Manage Server และบัญชีเว็บ role owner/admin/finance', [
             { name: 'Adjust Points', value: '`/points adjust user_id:<id> points:<amount> reason:<reason>`' },
@@ -209,10 +215,20 @@ export function createGlobalPanelHandlers(ctx) {
         ],
         flags: ctx.EPHEMERAL,
       })
+      return
     }
+
+    // The interaction is already deferred, so an unrecognised id still needs an answer.
+    await respondEphemeral(interaction, {
+      embeds: [ctx.warningEmbed('Unknown Action', 'ปุ่มนี้ใช้ไม่ได้แล้ว กรุณาเปิดแผงควบคุมใหม่อีกครั้ง')],
+      flags: ctx.EPHEMERAL,
+    })
   }
 
   async function handleGlobalPanelSelect(interaction) {
+    // No branch here opens a modal, so the whole handler can be deferred.
+    await deferEphemeral(interaction)
+
     const value = String(interaction.values?.[0] || '')
 
     if (value === 'topups') {
@@ -223,7 +239,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (value === 'verify_slip') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [
           ctx.infoEmbed('Verify PromptPay Slip', 'หลังสร้าง QR จาก `/topups` และโอนเงินแล้ว ให้แนบรูปสลิปผ่านคำสั่งนี้', [
             { name: 'Command', value: '`/topup verify-slip topup_id:<id> slip:<image>`' },
@@ -235,7 +251,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (value === 'link') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.infoEmbed('Link Account', 'สร้าง code จากหน้า Profile บนเว็บ แล้วใช้คำสั่งนี้ใน Discord', [{ name: 'Command', value: '`/link code:<code>`' }])],
         flags: ctx.EPHEMERAL,
       })
@@ -243,7 +259,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (value === 'unlink') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.warningEmbed('Unlink Account', 'ใช้คำสั่งนี้เพื่อตัดการลิงก์ Discord ออกจากบัญชีเว็บ', [{ name: 'Command', value: '`/unlink`' }])],
         flags: ctx.EPHEMERAL,
       })
@@ -251,7 +267,7 @@ export function createGlobalPanelHandlers(ctx) {
     }
 
     if (value === 'admin') {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [
           ctx.warningEmbed('Admin Commands', 'คำสั่งนี้ใช้ได้เฉพาะคนที่มี Manage Server และบัญชีเว็บ role owner/admin/finance', [
             { name: 'Adjust Points', value: '`/points adjust user_id:<id> points:<amount> reason:<reason>`' },
@@ -259,7 +275,14 @@ export function createGlobalPanelHandlers(ctx) {
         ],
         flags: ctx.EPHEMERAL,
       })
+      return
     }
+
+    // The interaction is already deferred, so an unrecognised value still needs an answer.
+    await respondEphemeral(interaction, {
+      embeds: [ctx.warningEmbed('Unknown Action', 'ตัวเลือกนี้ใช้ไม่ได้แล้ว กรุณาเปิดแผงควบคุมใหม่อีกครั้ง')],
+      flags: ctx.EPHEMERAL,
+    })
   }
 
   async function handlePasswordRequest(interaction) {
@@ -285,14 +308,14 @@ export function createGlobalPanelHandlers(ctx) {
       })
     } catch {
       ctx.passwordVerifications.delete(String(interaction.user.id))
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.errorEmbed('DM Failed', 'I could not send you a DM. Please enable DMs from server members and try again.')],
         flags: ctx.EPHEMERAL,
       })
       return
     }
 
-    await interaction.reply({
+    await respondEphemeral(interaction, {
       embeds: [
         ctx.infoEmbed('Check Your DM', 'A verification code has been sent to your DM. Come back here and press the confirm button below to enter the code and your new password.', [
           { name: 'Account', value: ctx.profileName(profile), inline: true },
@@ -307,7 +330,7 @@ export function createGlobalPanelHandlers(ctx) {
   async function handlePasswordConfirm(interaction) {
     const state = ctx.passwordVerifications.get(String(interaction.user.id))
     if (!state || Number(state.expiresAt || 0) <= Date.now()) {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.warningEmbed('Code Expired', 'The verification code has expired. Press Change Password again to request a new code.')],
         flags: ctx.EPHEMERAL,
       })
@@ -335,26 +358,28 @@ export function createGlobalPanelHandlers(ctx) {
   }
 
   async function handlePasswordModal(interaction) {
+    await deferEphemeral(interaction)
+
     const state = ctx.passwordVerifications.get(String(interaction.user.id))
     const code = interaction.fields.getTextInputValue('code').trim()
     const newPassword = interaction.fields.getTextInputValue('new_password')
 
     if (!state || Number(state.expiresAt || 0) <= Date.now()) {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.warningEmbed('Code Expired', 'The verification code has expired. Press Change Password again to request a new code.')],
         flags: ctx.EPHEMERAL,
       })
       return
     }
     if (code !== state.code) {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.errorEmbed('Invalid Code', 'The verification code is incorrect. Check your DM and try again.')],
         flags: ctx.EPHEMERAL,
       })
       return
     }
     if (!/^[\x20-\x7E]+$/.test(newPassword) || newPassword.length < 8) {
-      await interaction.reply({
+      await respondEphemeral(interaction, {
         embeds: [ctx.errorEmbed('Weak Password', 'The new password must be at least 8 characters and use printable ASCII characters.')],
         flags: ctx.EPHEMERAL,
       })
@@ -364,9 +389,9 @@ export function createGlobalPanelHandlers(ctx) {
     try {
       await ctx.setUserPassword({ userId: state.userId, password: newPassword })
       ctx.passwordVerifications.delete(String(interaction.user.id))
-      await interaction.reply({ embeds: [ctx.successEmbed('Password Changed', 'Your website password has been changed successfully.')], flags: ctx.EPHEMERAL })
+      await respondEphemeral(interaction, { embeds: [ctx.successEmbed('Password Changed', 'Your website password has been changed successfully.')], flags: ctx.EPHEMERAL })
     } catch {
-      await interaction.reply({ embeds: [ctx.errorEmbed('Password Change Failed', 'Could not change your password. Please try again.')], flags: ctx.EPHEMERAL })
+      await respondEphemeral(interaction, { embeds: [ctx.errorEmbed('Password Change Failed', 'Could not change your password. Please try again.')], flags: ctx.EPHEMERAL })
     }
   }
 

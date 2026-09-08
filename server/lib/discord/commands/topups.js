@@ -9,6 +9,7 @@ import {
   TextInputStyle,
 } from 'discord.js'
 import { isTopupMethodEnabled, topupMethodDisabledMessage } from '../../topupSettings.js'
+import { deferEphemeral, respondEphemeral } from '../utils/interactionReply.js'
 
 export const commandName = "topups"
 
@@ -99,25 +100,25 @@ export function buildTopupsPanelEmbed(ctx, profile, emoji, topupSettings = null)
   return embed
 }
 
-async function resolveLinkedProfile(ctx, interaction, { deferred = false } = {}) {
+async function resolveLinkedProfile(ctx, interaction) {
   const profile = await ctx.getDiscordLinkedUserByDiscordId(interaction.user.id)
   if (profile && !Boolean(profile.is_banned)) return profile
 
-  if (deferred) await interaction.editReply({ embeds: [ctx.linkedRequiredEmbed()] })
-  else await interaction.reply({ embeds: [ctx.linkedRequiredEmbed()], flags: ctx.EPHEMERAL })
+  await respondEphemeral(interaction, { embeds: [ctx.linkedRequiredEmbed()] })
   return null
 }
 
 export async function openTopupsPanel(ctx, interaction, profile = null) {
+  await deferEphemeral(interaction)
+
   const linkedProfile = profile || await resolveLinkedProfile(ctx, interaction)
   if (!linkedProfile) return
 
   const topupSettings = await ctx.getTopupSettings()
   const topupEmoji = await ctx.getTopupEmoji(interaction.guild)
-  await interaction.reply({
+  await respondEphemeral(interaction, {
     embeds: [buildTopupsPanelEmbed(ctx, linkedProfile, topupEmoji, topupSettings)],
     components: await buildTopupPanelRows(ctx, topupEmoji, topupSettings),
-    flags: ctx.EPHEMERAL,
   })
 }
 
@@ -158,17 +159,6 @@ function friendlyPromptpayError(err) {
   if (msg === 'already_paid') return 'This topup has already been paid.'
   if (msg === 'invalid_topup' || msg === 'invalid_topup_status') return 'This topup is not ready for slip verification.'
   return 'Could not process this PromptPay topup. Please try again.'
-}
-
-async function ensureTopupMethodAvailable(ctx, interaction, method) {
-  const settings = await ctx.getTopupSettings()
-  if (isTopupMethodEnabled(settings, method)) return true
-
-  await interaction.reply({
-    embeds: [ctx.errorEmbed('Top Up Unavailable', topupMethodDisabledMessage(method))],
-    flags: ctx.EPHEMERAL,
-  })
-  return false
 }
 
 async function redeemCouponForInteraction(ctx, profile, code) {
@@ -247,13 +237,12 @@ export function createTopupsHandlers(ctx) {
     await openTopupsPanel(ctx, interaction)
   }
 
+  // This handler ends in showModal(), which rules out deferReply() — so it must not
+  // touch the database first or a slow query costs us the 3s interaction deadline.
+  // The account link and the per-method enabled check are re-run in each modal handler.
   async function handleTopupSelect(interaction) {
-    const profile = await resolveLinkedProfile(ctx, interaction)
-    if (!profile) return
-
     const value = String(interaction.values?.[0] || '')
     if (!['promptpay', 'coupon', 'angpao'].includes(value)) return
-    if (!(await ensureTopupMethodAvailable(ctx, interaction, value))) return
 
     if (value === 'promptpay') {
       const modal = new ModalBuilder().setCustomId('vx_topups_promptpay_modal').setTitle('PromptPay Topup')
@@ -303,7 +292,7 @@ export function createTopupsHandlers(ctx) {
 
   async function handleTopupsPromptpayModal(interaction) {
     await interaction.deferReply({ flags: ctx.EPHEMERAL })
-    const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
+    const profile = await resolveLinkedProfile(ctx, interaction)
     if (!profile) return
 
     const settings = await ctx.getTopupSettings()
@@ -322,7 +311,7 @@ export function createTopupsHandlers(ctx) {
 
   async function handleTopupsAngpaoModal(interaction) {
     await interaction.deferReply({ flags: ctx.EPHEMERAL })
-    const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
+    const profile = await resolveLinkedProfile(ctx, interaction)
     if (!profile) return
 
     const settings = await ctx.getTopupSettings()
@@ -352,7 +341,7 @@ export function createTopupsHandlers(ctx) {
 
   async function handleTopupsCouponModal(interaction) {
     await interaction.deferReply({ flags: ctx.EPHEMERAL })
-    const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
+    const profile = await resolveLinkedProfile(ctx, interaction)
     if (!profile) return
 
     const settings = await ctx.getTopupSettings()
@@ -379,7 +368,7 @@ export function createTopupsHandlers(ctx) {
     }
 
     await interaction.deferReply({ flags: ctx.EPHEMERAL })
-    const profile = await resolveLinkedProfile(ctx, interaction, { deferred: true })
+    const profile = await resolveLinkedProfile(ctx, interaction)
     if (!profile) return
 
     const settings = await ctx.getTopupSettings()
