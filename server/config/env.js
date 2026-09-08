@@ -22,10 +22,20 @@ function normalizeOriginValue(value) {
 }
 
 const rawOrigins = process.env.CLIENT_ORIGINS || process.env.CLIENT_ORIGIN || 'http://localhost:5173,https://www.vxpers.com,https://key.vxpers.com'
-const clientOrigins = rawOrigins
+const baseOrigins = rawOrigins
   .split(',')
   .map(normalizeOriginValue)
   .filter(Boolean)
+
+const originSet = new Set(baseOrigins)
+for (const orig of baseOrigins) {
+  if (orig.startsWith('https://')) {
+    originSet.add('http://' + orig.slice(8))
+  } else if (orig.startsWith('http://') && !orig.includes('localhost') && !orig.includes('127.0.0.1')) {
+    originSet.add('https://' + orig.slice(7))
+  }
+}
+const clientOrigins = Array.from(originSet)
 
 export const env = Object.freeze({
   NODE_ENV: process.env.NODE_ENV || 'development',
