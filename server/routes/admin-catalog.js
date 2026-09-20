@@ -73,6 +73,8 @@ import {
   adminAddUnifiedStockBatch,
   adminGetUnifiedStockItems,
   adminDeleteStockItemsBatch,
+  processBackInStockAlerts,
+  fulfillPreorders,
 } from '../db.js'
 import { requireAuth, requireAdmin, requireFinance } from '../lib/auth.js'
 import { CategoryBodySchema, ProductBodySchema, StockItemsBodySchema } from '../lib/requestSchemas.js'
@@ -511,6 +513,10 @@ router.post('/api/admin/stock', requireAuth, requireAdmin, async (req, res) => {
     } catch {
       // ignore
     }
+    if (result?.inserted > 0) {
+      processBackInStockAlerts(productId, null).catch(() => {})
+      fulfillPreorders(productId, null).catch(() => {})
+    }
     const summary = await adminGetDigitalStockSummary(productId)
     res.json({ ok: true, result, summary })
   } catch (e) {
@@ -557,6 +563,10 @@ router.post('/api/admin/stock/import', requireAuth, requireAdmin, stockUploadMul
       })
     } catch {
       // ignore
+    }
+    if (result?.inserted > 0) {
+      processBackInStockAlerts(productId, null).catch(() => {})
+      fulfillPreorders(productId, null).catch(() => {})
     }
     const summary = await adminGetDigitalStockSummary(productId)
     res.json({ ok: true, result, summary })
@@ -673,6 +683,10 @@ router.post('/api/admin/stock/quick-add', requireAuth, requireAdmin, stockUpload
       })
     } catch {
       // ignore
+    }
+    if (result?.inserted > 0 && productId) {
+      processBackInStockAlerts(productId, optionId || null).catch(() => {})
+      fulfillPreorders(productId, optionId || null).catch(() => {})
     }
     res.json({ ok: true, result })
   } catch (e) {
@@ -943,6 +957,23 @@ router.post('/api/admin/stock-pool-items', requireAuth, requireAdmin, async (req
     const result = await adminAddStockPoolItems({ poolId, items: arr, allowDuplicates })
     const summary = await adminGetStockPoolSummary(poolId)
     res.json({ ok: true, result, summary })
+
+    // Fire back-in-stock alerts & preorder fulfillment asynchronously
+    if (result?.added > 0) {
+      ;(async () => {
+        try {
+          const { all: allDb } = await import('../db.js')
+          const bindings = await allDb(
+            'SELECT product_id, product_option_id FROM product_option_stock_bindings WHERE pool_id = $1',
+            [poolId],
+          )
+          for (const binding of bindings) {
+            await processBackInStockAlerts(binding.product_id, binding.product_option_id).catch(() => {})
+            await fulfillPreorders(binding.product_id, binding.product_option_id).catch(() => {})
+          }
+        } catch { /* best-effort */ }
+      })()
+    }
   } catch (e) {
     const msg = String(e?.message ?? '')
     if (msg === 'invalid_pool_id') return res.status(400).json({ error: 'invalid_pool_id' })

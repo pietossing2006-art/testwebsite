@@ -19,6 +19,11 @@ import {
   toggleMark,
   verifyRoomPassword,
 } from '../lib/trackerStore.js'
+import {
+  clearInspection,
+  saveInspection,
+  updateIssueStatus,
+} from '../lib/trackerInspections.js'
 import { emitTrackerEvent } from '../lib/socket.js'
 import {
   clearTrackerAuthCookie,
@@ -243,6 +248,47 @@ router.post('/rooms/:roomId/marked/:unit/toggle', loadRoomForAccess, async (req,
   } catch (err) {
     if (err instanceof TrackerError) return errorResponse(res, err.message, err.statusCode)
     console.error('[tracker] toggle room mark failed', err)
+    errorResponse(res, 'Internal server error', 500)
+  }
+})
+
+router.put('/rooms/:roomId/inspections', loadRoomForAccess, async (req, res) => {
+  try {
+    const { session, unitNumber } = parseRoomUnit(req.body?.unit, req.trackerRoom)
+    const user = await optionalTrackerUser(req)
+    const inspector = user?.email || String(req.body?.inspector || '').trim().slice(0, 80) || null
+    const result = await saveInspection(session, unitNumber, req.body?.checklist, { inspectedBy: inspector })
+    const unitLabel = formatUnitLabel(unitNumber, session.prefix, session.total_rooms)
+    await touchRoom(session.id)
+    await okState(res, session.id, { unit: unitLabel, result }, true)
+  } catch (err) {
+    if (err instanceof TrackerError) return errorResponse(res, err.message, err.statusCode)
+    console.error('[tracker] save inspection failed', err)
+    errorResponse(res, 'Internal server error', 500)
+  }
+})
+
+router.delete('/rooms/:roomId/inspections/:unit', loadRoomForAccess, async (req, res) => {
+  try {
+    const { session, unitNumber } = parseRoomUnit(req.params.unit, req.trackerRoom)
+    await clearInspection(session, unitNumber)
+    await touchRoom(session.id)
+    await okState(res, session.id, {}, true)
+  } catch (err) {
+    if (err instanceof TrackerError) return errorResponse(res, err.message, err.statusCode)
+    console.error('[tracker] clear inspection failed', err)
+    errorResponse(res, 'Internal server error', 500)
+  }
+})
+
+router.patch('/rooms/:roomId/issues/:issueId', loadRoomForAccess, async (req, res) => {
+  try {
+    const issue = await updateIssueStatus(req.trackerRoom, req.params.issueId, req.body?.status)
+    await touchRoom(req.trackerRoom.id)
+    await okState(res, req.trackerRoom.id, { issue }, true)
+  } catch (err) {
+    if (err instanceof TrackerError) return errorResponse(res, err.message, err.statusCode)
+    console.error('[tracker] update issue failed', err)
     errorResponse(res, 'Internal server error', 500)
   }
 })

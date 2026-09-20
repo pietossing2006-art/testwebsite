@@ -34,11 +34,12 @@ export async function createTopup({
 }
 
 
-export async function listTopups({ limit = 50, offset = 0, providerRef = '' } = {}) {
+export async function listTopups({ limit = 50, offset = 0, providerRef = '', status = '' } = {}) {
   const ref = String(providerRef ?? '').trim().slice(0, 120)
+  const statusFilter = String(status ?? '').trim().slice(0, 40)
   if (ref) {
     return all(
-      `SELECT t.*, u.email
+      `SELECT t.*, u.email, u.username, u.display_name
        FROM topups t
        JOIN users u ON u.id = t.user_id
        WHERE t.provider_ref ILIKE $1
@@ -48,8 +49,20 @@ export async function listTopups({ limit = 50, offset = 0, providerRef = '' } = 
     )
   }
 
+  if (statusFilter) {
+    return all(
+      `SELECT t.*, u.email, u.username, u.display_name
+       FROM topups t
+       JOIN users u ON u.id = t.user_id
+       WHERE t.status = $1
+       ORDER BY t.id DESC
+       LIMIT $2 OFFSET $3`,
+      [statusFilter, limit, offset],
+    )
+  }
+
   return all(
-    `SELECT t.*, u.email
+    `SELECT t.*, u.email, u.username, u.display_name
      FROM topups t
      JOIN users u ON u.id = t.user_id
      ORDER BY t.id DESC
@@ -115,6 +128,22 @@ export async function updateTopupProviderRef({ topupId, providerRef }) {
      WHERE id = $1`,
     [tid, ref],
   )
+}
+
+
+export async function attachTopupSlipEvidence({ topupId, slipImageUrl, slipAmount } = {}) {
+  const tid = Number(topupId)
+  if (!Number.isFinite(tid) || tid <= 0) throw new Error('invalid_topup_id')
+  const amount = Number(slipAmount)
+  await query(
+    `UPDATE topups
+     SET slip_image_url = COALESCE($2, slip_image_url),
+         slip_amount = COALESCE($3, slip_amount),
+         updated_at = now()
+     WHERE id = $1`,
+    [tid, slipImageUrl || null, Number.isFinite(amount) ? amount : null],
+  )
+  return { ok: true }
 }
 
 

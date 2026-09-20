@@ -32,11 +32,13 @@ import {
   adminUpdateUserAccount,
   adminSetUserVipTier,
   creditPointsForTopup,
+  adminCancelTopup,
   listTopups,
   listTopupLogs,
   logAuditEvent,
   setTopupPointsForApproval,
   setUserPassword,
+  deleteAllUserSessionsExcept,
   setUserBanned,
   setUserRole,
   staffClockIn,
@@ -567,9 +569,52 @@ router.post('/api/admin/support-tickets/:id(\\d+)/status', requireAuth, requireS
 router.get('/api/admin/topups', requireAuth, requireFinance, async (req, res) => {
   try {
     const providerRef = String(req.query?.provider_ref ?? '').trim()
-    const items = await listTopups({ providerRef })
+    const status = String(req.query?.status ?? '').trim()
+    const items = await listTopups({ providerRef, status })
     res.json({ ok: true, topups: items })
   } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+// Slips waiting for a human to compare them against the shop's bank account.
+router.get('/api/admin/topups/review-queue', requireAuth, requireFinance, async (req, res) => {
+  try {
+    const [pendingReview, recent] = await Promise.all([
+      listTopups({ status: 'pending_review', limit: 100 }),
+      listTopups({ limit: 30 }),
+    ])
+    res.json({ ok: true, pending: pendingReview, recent })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/admin/topups/:id/reject', requireAuth, requireFinance, async (req, res) => {
+  const topupId = Number(req.params.id)
+  if (!Number.isFinite(topupId)) return res.status(400).json({ error: 'invalid_id' })
+
+  try {
+    const result = await adminCancelTopup({ topupId })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'topup.reject',
+        entityType: 'topup',
+        entityId: String(topupId),
+        detail: { reason: String(req.body?.reason ?? '').slice(0, 300) },
+        status: 'success',
+        severity: 'warning',
+      })
+    } catch {
+      // ignore
+    }
+    res.json({ ok: true, result })
+  } catch (e) {
+    const msg = String(e?.message ?? '')
+    if (msg === 'topup_not_found') return res.status(404).json({ error: 'not_found' })
+    if (msg === 'already_paid') return res.status(409).json({ error: 'already_paid' })
     res.status(500).json({ error: 'db_error' })
   }
 })
@@ -600,6 +645,20 @@ router.post('/api/admin/topups/:id/approve', requireAuth, requireFinance, async 
       refType: 'admin_approve',
       refId: String(topupId),
     })
+    try {
+      await logAuditEvent({
+        actorUserId: req.user?.id,
+        actorEmail: req.user?.email,
+        action: 'topup.approve',
+        entityType: 'topup',
+        entityId: String(topupId),
+        detail: { credited: Boolean(result?.credited), points: points ?? null },
+        status: 'success',
+        severity: 'warning',
+      })
+    } catch {
+      // ignore
+    }
     res.json({ ok: true, result })
   } catch (e) {
     if (String(e?.message ?? '') === 'topup_not_found') return res.status(404).json({ error: 'not_found' })
@@ -777,6 +836,7 @@ router.post('/api/admin/users/:id/password', requireAuth, requireAdmin, async (r
 
   try {
     await setUserPassword({ userId, password })
+    await deleteAllUserSessionsExcept(userId, '')
     try {
       await logAuditEvent({
         actorUserId: req.user?.id,
@@ -784,7 +844,7 @@ router.post('/api/admin/users/:id/password', requireAuth, requireAdmin, async (r
         action: 'user.password_reset',
         entityType: 'user',
         entityId: String(userId),
-        detail: {},
+        detail: { sessions_revoked: true },
       })
     } catch {
       // ignore

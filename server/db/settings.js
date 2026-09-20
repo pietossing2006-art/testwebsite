@@ -213,6 +213,7 @@ const DEFAULT_SITE_SETTINGS = {
   social_links: [],
   announcements: [],
   tos_content: '',
+  privacy_content: '',
 }
 
 
@@ -228,6 +229,7 @@ function normalizeSiteSettings(input) {
     social_links: normalizeSocialLinks(s.social_links),
     announcements: normalizeAnnouncements(s.announcements),
     tos_content: txt(s.tos_content, DEFAULT_SITE_SETTINGS.tos_content, 50000),
+    privacy_content: txt(s.privacy_content, DEFAULT_SITE_SETTINGS.privacy_content, 50000),
   }
 }
 
@@ -262,12 +264,18 @@ export async function getUiSettings() {
   const homepageStored = await getAppSettingJson('homepage_settings')
   const siteStored = await getAppSettingJson('site_settings')
   const topupStored = await getAppSettingJson('topup_settings')
+  const topupNormalized = normalizeTopupSettings(topupStored)
   return {
     image_settings: normalizeUiImageSettings(imageStored),
     branding_settings: normalizeUiBrandingSettings(brandingStored),
     homepage_settings: normalizeHomepageSettings(homepageStored),
     site_settings: normalizeSiteSettings(siteStored),
-    topup_settings: normalizeTopupSettings(topupStored),
+    topup_settings: {
+      ...topupNormalized,
+      truemoney_phone: topupNormalized.truemoney_phone || (typeof process.env.TW_VOUCHER_PHONE === 'string' ? process.env.TW_VOUCHER_PHONE.trim() : ''),
+      promptpay_target: topupNormalized.promptpay_target || String(process.env.PROMPTPAY_ID || process.env.PROMPTPAY_PHONE || process.env.PROMPTPAY_TARGET || process.env.TW_VOUCHER_PHONE || '').replace(/[\s-]/g, '').trim(),
+      promptpay_name: topupNormalized.promptpay_name || process.env.PROMPTPAY_NAME || process.env.PROMPTPAY_ACCOUNT_NAME || 'พร้อมเพย์ (PromptPay)',
+    },
   }
 }
 

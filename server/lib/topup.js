@@ -1,4 +1,7 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import jsQR from 'jsqr'
 import generatePromptpayPayload from 'promptpay-qr'
 import QRCode from 'qrcode'
@@ -6,23 +9,51 @@ import sharp from 'sharp'
 import { createWorker } from 'tesseract.js'
 import {
   cancelPendingTopupsByMethod,
+  attachTopupSlipEvidence,
   createTopup,
   creditPointsForTopup,
   getTopupById,
   getTopupByProviderRef,
   listMyTopups,
+  updateTopupProviderRef,
   updateTopupStatus,
 } from '../db.js'
-import { assertTopupMethodEnabledForRequest } from './topupSettings.js'
+import { assertTopupMethodEnabledForRequest, getEffectiveTopupConfig } from './topupSettings.js'
+import { isSlipAutoVerifyConfigured, verifySlipWithProvider } from './slipVerification.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const SLIP_UPLOADS_ROOT = path.join(__dirname, '..', 'uploads', 'slips')
+
+// Staff reviewing a slip by hand need to see the slip. Re-encode it through sharp so nothing
+// but pixels reaches the disk, and keep it readable enough to compare against a banking app.
+async function storeSlipImage(topupId, imageData) {
+  try {
+    const buffer = dataUrlToBuffer(imageData)
+    const sanitized = await sharp(buffer, { limitInputPixels: 24_000_000, failOn: 'none' })
+      .rotate()
+      .resize({ width: 1200, withoutEnlargement: true })
+      .webp({ quality: 82 })
+      .toBuffer()
+    await fs.promises.mkdir(SLIP_UPLOADS_ROOT, { recursive: true })
+    const filename = `${Date.now()}-${Number(topupId)}-${crypto.randomBytes(6).toString('hex')}.webp`
+    await fs.promises.writeFile(path.join(SLIP_UPLOADS_ROOT, filename), sanitized)
+    return `/uploads/slips/${filename}`
+  } catch (e) {
+    console.warn('[Slip review] could not store slip image', { topupId, message: String(e?.message || '') })
+    return ''
+  }
+}
 
 const PROMPTPAY_PROVIDER = 'promptpay_manual'
 const PROMPTPAY_METHOD = 'promptpay'
 const PROMPTPAY_PENDING_STATUS = 'pending_slip'
+export const PROMPTPAY_REVIEW_STATUS = 'pending_review'
 const PROMPTPAY_QR_TTL_MS = 10 * 60 * 1000
 
-function promptpayTarget() {
+function promptpayTarget(fallbackConfig = null) {
+  if (fallbackConfig?.promptpayTarget) return fallbackConfig.promptpayTarget
   return String(process.env.PROMPTPAY_ID || process.env.PROMPTPAY_PHONE || process.env.PROMPTPAY_TARGET || process.env.TW_VOUCHER_PHONE || '')
-    .replace(/\s+/g, '')
+    .replace(/[\s-]/g, '')
     .trim()
 }
 
@@ -58,7 +89,8 @@ async function expirePromptpayTopup(topup) {
 }
 
 async function buildPromptpayTopupResponse(topup) {
-  const target = promptpayTarget()
+  const config = await getEffectiveTopupConfig()
+  const target = promptpayTarget(config)
   if (!target) throw new Error('missing_promptpay_config')
 
   const amountPoints = normalizeTopupPoints(Number(topup.amount_points ?? topup.amount))
@@ -84,7 +116,7 @@ async function buildPromptpayTopupResponse(topup) {
     points: amountPoints,
     payableAmount: amountPoints,
     promptpayTarget: target,
-    promptpayName: process.env.PROMPTPAY_NAME || process.env.PROMPTPAY_ACCOUNT_NAME || 'พร้อมเพย์ (PromptPay)',
+    promptpayName: config.promptpayName || process.env.PROMPTPAY_NAME || process.env.PROMPTPAY_ACCOUNT_NAME || 'พร้อมเพย์ (PromptPay)',
     expiresAt: promptpayExpiresAt(topup).toISOString(),
     ttlSeconds: Math.max(0, Math.ceil((promptpayExpiresAt(topup).getTime() - Date.now()) / 1000)),
     qr: {
@@ -391,7 +423,8 @@ export async function redeemAngpaoVoucher({ userId, reference }) {
   const uid = Number(userId)
   if (!Number.isFinite(uid) || uid <= 0) throw new Error('invalid_user_id')
 
-  const phone = typeof process.env.TW_VOUCHER_PHONE === 'string' ? process.env.TW_VOUCHER_PHONE.trim() : ''
+  const config = await getEffectiveTopupConfig()
+  const phone = config.truemoneyPhone || (typeof process.env.TW_VOUCHER_PHONE === 'string' ? process.env.TW_VOUCHER_PHONE.trim() : '')
   if (!phone) throw new Error('missing_config')
 
   const { ref, voucherCode } = parseAngpaoReference(reference)
@@ -533,16 +566,41 @@ export async function verifyPromptpaySlip({ userId, topupId, slipImage }) {
 
   if (!parsed.transactionRef) throw new Error('slip_ref_not_found')
   if (parsed.referenceSource === 'qr_hash') {
-    const target = promptpayTarget()
+    const config = await getEffectiveTopupConfig()
+    const target = promptpayTarget(config)
     const orderPayload = target ? generatePromptpayPayload(target, { amount: expectedAmount }) : ''
     if (qrRaw === orderPayload) throw new Error('payment_qr_uploaded')
   }
+
+  // The image itself proves nothing - only an external verifier can confirm the transfer really
+  // happened and really landed on our account. Without one, park the topup for staff approval.
+  if (!isSlipAutoVerifyConfigured()) {
+    await updateTopupProviderRef({ topupId: tid, providerRef: parsed.transactionRef })
+    const slipImageUrl = await storeSlipImage(tid, slipImage)
+    await attachTopupSlipEvidence({ topupId: tid, slipImageUrl, slipAmount: parsed.amount })
+    await updateTopupStatus({
+      topupId: tid,
+      status: PROMPTPAY_REVIEW_STATUS,
+      onlyFromStatus: PROMPTPAY_PENDING_STATUS,
+    })
+    return {
+      ok: true,
+      topupId: tid,
+      status: PROMPTPAY_REVIEW_STATUS,
+      creditedPoints: 0,
+      transactionRef: parsed.transactionRef,
+      slipAmount: parsed.amount,
+      referenceSource: parsed.referenceSource,
+    }
+  }
+
+  const verified = await verifySlipWithProvider({ qrPayload: qrRaw, expectedAmount })
 
   const credit = await creditPointsForTopup({
     topupId: tid,
     approvedBy: null,
     refType: 'promptpay_slip',
-    refId: parsed.transactionRef,
+    refId: verified.transactionRef,
   })
 
   if (!credit?.credited) {
@@ -552,9 +610,10 @@ export async function verifyPromptpaySlip({ userId, topupId, slipImage }) {
 
   return {
     ok: true,
+    status: 'paid',
     topupId: tid,
     creditedPoints: expectedAmount,
-    transactionRef: parsed.transactionRef,
+    transactionRef: verified.transactionRef,
     referenceSource: parsed.referenceSource,
     slipAmount: parsed.amount,
   }

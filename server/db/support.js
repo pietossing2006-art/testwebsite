@@ -762,7 +762,7 @@ export async function removePushSubscription(userId, endpoint) {
 
 export async function sendPushToUser(userId, payload) {
   let webpush
-  try { webpush = await import('web-push') } catch { return }
+  try { const mod = await import('web-push'); webpush = mod.default || mod } catch { return }
   const vapidPublic = process.env.VAPID_PUBLIC_KEY
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY
   const vapidMail = process.env.VAPID_MAILTO || 'mailto:admin@example.com'

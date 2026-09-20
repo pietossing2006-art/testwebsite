@@ -9,6 +9,7 @@ export const MODULES = [
   { id: 'stock', label: 'สต็อก', icon: 'bi-archive-fill', section: 'operations' },
   { id: 'fulfillment', label: 'บริการงานจ้าง', icon: 'bi-truck', section: 'operations' },
   { id: 'orders', label: 'ติดตาม Orders', icon: 'bi-bag-check-fill', section: 'operations' },
+  { id: 'topups', label: 'ตรวจสลิปเติมเงิน', icon: 'bi-receipt-cutoff', section: 'operations' },
   { id: 'timesheet', label: 'ลงเวลางาน', icon: 'bi-clock-history', section: 'operations' },
   { id: 'automation', label: 'อัตโนมัติ', icon: 'bi-gear-wide-connected', section: 'operations' },
   { id: 'bundles', label: 'Bundle', icon: 'bi-gift-fill', section: 'business' },
@@ -30,9 +31,9 @@ export const MODULE_SECTIONS = [
 ]
 
 export const LOCAL_ROLE_MODULE_ACCESS = {
-  owner: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'logs', 'settings', 'owner'],
-  admin: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'settings'],
-  finance: ['dashboard', 'users', 'bundles', 'promotions', 'orders'],
+  owner: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'topups', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'logs', 'settings', 'owner'],
+  admin: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'topups', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'settings'],
+  finance: ['dashboard', 'users', 'bundles', 'promotions', 'orders', 'topups'],
   support: ['dashboard', 'support', 'timesheet', 'orders'],
   booster: ['dashboard', 'fulfillment', 'timesheet'],
 }
@@ -41,6 +42,7 @@ export const LOCAL_ROLE_ACTION_ACCESS = {
   'users.view': ['finance', 'admin', 'owner'],
   'users.edit': ['admin', 'owner'],
   'users.adjust_points': ['finance', 'admin', 'owner'],
+  'topups.manage': ['finance', 'admin', 'owner'],
   'support.manage': ['support', 'admin', 'owner'],
   'fulfillment.manage': ['booster', 'admin', 'owner'],
   'catalog.manage': ['admin', 'owner'],
@@ -118,7 +120,7 @@ export const DEFAULT_HOMEPAGE_SETTINGS = {
 
 export const DEFAULT_SITE_SETTINGS = {
   site_url: '', site_description: '', og_image_url: '', footer_tagline: '',
-  footer_links: [], social_links: [], announcements: [], tos_content: '',
+  footer_links: [], social_links: [], announcements: [], tos_content: '', privacy_content: '',
 }
 
 // ── Formatting ──
@@ -438,6 +440,7 @@ export function normalizeSiteSettings(input) {
     social_links: (Array.isArray(s.social_links) ? s.social_links : []).slice(0, 10).map((i) => ({ platform: String(i?.platform ?? '').slice(0, 30), url: String(i?.url ?? '').slice(0, 300) })).filter((i) => i.platform.trim() && i.url.trim()),
     announcements: (Array.isArray(s.announcements) ? s.announcements : []).slice(0, 10).map((i) => ({ enabled: i?.enabled === true, text: String(i?.text ?? '').slice(0, 300), link: String(i?.link ?? '').slice(0, 300), bg: String(i?.bg ?? '').slice(0, 200), push_to_inbox: i?.push_to_inbox === true })).filter((i) => i.text.trim()),
     tos_content: txt(s.tos_content, DEFAULT_SITE_SETTINGS.tos_content, 50000),
+    privacy_content: txt(s.privacy_content, DEFAULT_SITE_SETTINGS.privacy_content, 50000),
   }
 }
 
@@ -445,6 +448,9 @@ export const DEFAULT_TOPUP_SETTINGS = {
   angpao: true,
   coupon: true,
   promptpay: true,
+  truemoney_phone: '',
+  promptpay_target: '',
+  promptpay_name: '',
 }
 
 export function normalizeTopupSettings(input) {
@@ -453,6 +459,9 @@ export function normalizeTopupSettings(input) {
     angpao: source.angpao !== false,
     coupon: source.coupon !== false,
     promptpay: source.promptpay !== false,
+    truemoney_phone: String(source.truemoney_phone ?? '').trim(),
+    promptpay_target: String(source.promptpay_target ?? '').trim(),
+    promptpay_name: String(source.promptpay_name ?? '').trim(),
   }
 }
 

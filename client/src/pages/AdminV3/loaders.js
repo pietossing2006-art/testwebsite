@@ -305,6 +305,12 @@ export async function loadAutomationModule() {
   }
 }
 
+// ── Topups (slip review) ──
+export async function loadTopupsModule() {
+  const data = await fetchJson('/api/admin/topups/review-queue')
+  return { pending: data?.pending || [], recent: data?.recent || [] }
+}
+
 // ── Announcements ──
 export async function loadAnnouncementsModule() {
   const data = await fetchJson('/api/admin/announcements')

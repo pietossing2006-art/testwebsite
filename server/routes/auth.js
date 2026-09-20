@@ -10,8 +10,11 @@ import {
   getUserByUsername,
   registerUser,
   deleteSession,
+  getSession,
+  query,
   checkPassword,
   findOrCreateUserFromDiscord,
+  findOrCreateUserFromGoogle,
   getUserByEmail,
   savePasswordResetToken,
   getPasswordResetToken,
@@ -25,6 +28,11 @@ import {
   logAuditEvent,
   getUser2FASecret,
   updateUserBackupCodes,
+  createTrustedDevice,
+  verifyAndTouchTrustedDevice,
+  listTrustedDevices,
+  deleteTrustedDevice,
+  deleteAllTrustedDevices,
 } from '../db.js'
 import { redis } from '../lib/redis.js'
 import { sendEmail, buildHtmlEmailTemplate } from '../lib/email.js'
@@ -48,6 +56,9 @@ import {
   getConsentFromCookie,
   setCookieConsentCookie,
   chooseConsent,
+  setTrustedDeviceCookie,
+  clearTrustedDeviceCookie,
+  getTrustedDeviceToken,
 } from '../lib/cookies.js'
 import { getBearerToken, getCookieToken, requireAuth, rateLimitMiddleware } from '../lib/auth.js'
 import { LoginBodySchema, RegisterBodySchema, VALID_USERNAME_RE } from '../lib/requestSchemas.js'
@@ -58,6 +69,10 @@ const router = Router()
 const DISCORD_OAUTH_STATE_COOKIE = 'discord_oauth_state'
 const DISCORD_OAUTH_STATE_TTL_MS = 10 * 60 * 1000
 const pendingDiscordOauthStates = new Map()
+
+const GOOGLE_OAUTH_STATE_COOKIE = 'google_oauth_state'
+const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60 * 1000
+const pendingGoogleOauthStates = new Map()
 
 const LOCKOUT_MAX_ATTEMPTS = 5
 const LOCKOUT_DURATION_SECONDS = 10 * 60 // 10 minutes
@@ -188,7 +203,7 @@ function clientOriginFromRequest(req) {
     if (allowlist.has(candidate)) return candidate
     if (/^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/i.test(candidate)) return candidate
   }
-  return firstClientOrigin()
+  return preferredClientOrigin()
 }
 
 function absoluteUrl(req, path) {
@@ -202,16 +217,40 @@ function discordRedirectUri(req) {
   return envValue('DISCORD_REDIRECT_URI') || absoluteUrl(req, '/api/auth/discord/callback')
 }
 
+// Origin we are willing to put in an email or any other out-of-band message.
+function trustedSiteOrigin() {
+  const explicit = normalizeOriginValue(envValue('PUBLIC_SITE_URL') || envValue('OAUTH_LOGIN_REDIRECT'))
+  if (explicit) return explicit
+  const remote = allowedClientOrigins().find((o) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o))
+  if (remote && process.env.NODE_ENV === 'production') return remote
+  return firstClientOrigin()
+}
+
+function preferredClientOrigin() {
+  const explicit = normalizeOriginValue(
+    envValue('OAUTH_LOGIN_REDIRECT') || envValue('DISCORD_LOGIN_SUCCESS_REDIRECT') || envValue('PUBLIC_SITE_URL'),
+  )
+  if (explicit) return explicit
+  if (process.env.NODE_ENV === 'production') {
+    const remote = allowedClientOrigins().find((o) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o))
+    if (remote) return remote
+  }
+  return firstClientOrigin()
+}
+
 function redirectToClient(res, path = '/', originOverride = '') {
-  const base = originOverride || envValue('DISCORD_LOGIN_SUCCESS_REDIRECT') || firstClientOrigin()
+  const base = originOverride || preferredClientOrigin()
   const cleanBase = base.replace(/\/+$/, '')
   const cleanPath = String(path || '/').startsWith('/') ? String(path || '/') : '/'
   return res.redirect(`${cleanBase}${cleanPath}`)
 }
 
-function isLocalDiscordCallbackRequest(req) {
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase()
-  return /(^|:)(localhost|127\.0\.0\.1)(:\d+)?$/.test(host) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(firstClientOrigin())
+function isLocalOauthCallbackRequest(req) {
+  if (process.env.NODE_ENV === 'production') return false
+  // Deliberately ignores x-forwarded-host: that header is client-supplied on most proxies,
+  // so trusting it would let anyone re-open the state bypass from the public domain.
+  const host = String(req.headers.host || '').toLowerCase().split(',')[0].trim()
+  return /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host)
 }
 
 function normalizeReturnTo(raw) {
@@ -236,8 +275,8 @@ function base64UrlJson(value) {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')
 }
 
-function signOauthState(payload) {
-  return crypto.createHmac('sha256', oauthStateSecret()).update(payload).digest('base64url')
+function signOauthState(payload, secret = oauthStateSecret()) {
+  return crypto.createHmac('sha256', secret).update(payload).digest('base64url')
 }
 
 function createDiscordOauthState({ returnTo, remember, clientOrigin }) {
@@ -329,6 +368,81 @@ function discordAvatarUrl(user) {
   return `https://cdn.discordapp.com/avatars/${id}/${avatar}.${ext}?size=128`
 }
 
+function maskEmail(email) {
+  const parts = String(email || '').split('@')
+  return parts.length === 2 ? `${parts[0].slice(0, 2)}***@${parts[1]}` : String(email || '')
+}
+
+async function createTemp2faToken({ userId, remember, ipAddress, userAgent }) {
+  const tempToken = crypto.randomBytes(32).toString('hex')
+  const payload = {
+    userId,
+    remember: Boolean(remember),
+    ipAddress,
+    userAgent,
+    createdAt: Date.now(),
+  }
+
+  if (redis) {
+    try {
+      await redis.set(`temp2fa:${tempToken}`, JSON.stringify(payload), 'EX', 300)
+    } catch {
+      temp2faStore.set(tempToken, { ...payload, expiresAt: Date.now() + 300_000 })
+    }
+  } else {
+    temp2faStore.set(tempToken, { ...payload, expiresAt: Date.now() + 300_000 })
+  }
+
+  return tempToken
+}
+
+// Social logins must honour 2FA exactly like password logins do: instead of handing out a
+// session straight away, park the user id in a temp token and send the browser to the
+// existing /login challenge screen.
+async function oauth2faChallengePath({ req, user, remember, returnTo }) {
+  const sec = await getUser2FASecret(user.id)
+  if (!sec?.two_factor_enabled || !sec.two_factor_type || sec.two_factor_type === 'none') return ''
+
+  const ipAddress = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress
+  const userAgent = req.headers['user-agent']
+
+  const trustedToken = getTrustedDeviceToken(req)
+  if (trustedToken) {
+    const trustedDev = await verifyAndTouchTrustedDevice({
+      userId: user.id,
+      token: trustedToken,
+      ipAddress,
+      userAgent,
+    }).catch(() => null)
+    if (trustedDev) {
+      return '' // Trusted device verified, skip 2FA challenge!
+    }
+  }
+
+  const tempToken = await createTemp2faToken({ userId: user.id, remember, ipAddress, userAgent })
+
+  if (sec.two_factor_type === 'email') {
+    try {
+      await requestEmailOtp({
+        email: sec.email || user.email,
+        purpose: 'login_2fa',
+        accountLabel: user.display_name || user.username || user.email,
+      })
+    } catch (e) {
+      console.error('[2FA OAUTH EMAIL DISPATCH ERROR]', e)
+    }
+  }
+
+  const params = new URLSearchParams({
+    two_factor: '1',
+    temp_token: tempToken,
+    two_factor_type: sec.two_factor_type,
+    email_masked: maskEmail(sec.email || user.email),
+    return_to: normalizeReturnTo(returnTo),
+  })
+  return `/login?${params.toString()}`
+}
+
 router.get('/api/auth/check-username', async (req, res) => {
   const raw = String(req.query?.username ?? '').trim()
   if (raw.length < 6) return res.status(400).json({ error: 'invalid_username' })
@@ -389,7 +503,7 @@ router.get('/api/auth/discord/callback', rateLimitMiddleware({ windowMs: 60_000,
   const state = typeof req.query?.state === 'string' ? req.query.state.trim() : ''
   const rememberedState = takeRememberedDiscordOauthState(state)
   let signedState = rememberedState || parseDiscordOauthState(state)
-  const allowLocalStateBypass = !signedState && Boolean(code) && isLocalDiscordCallbackRequest(req)
+  const allowLocalStateBypass = !signedState && Boolean(code) && isLocalOauthCallbackRequest(req)
   if (!code || (!signedState && !allowLocalStateBypass)) {
     console.warn('[Discord OAuth] invalid callback state', {
       hasCode: Boolean(code),
@@ -415,7 +529,7 @@ router.get('/api/auth/discord/callback', rateLimitMiddleware({ windowMs: 60_000,
 
   const clientId = envValue('DISCORD_CLIENT_ID')
   const clientSecret = envValue('DISCORD_CLIENT_SECRET')
-  const clientOrigin = normalizeOriginValue(signedState?.client_origin) || normalizeOriginValue(cookieState?.client_origin) || firstClientOrigin()
+  const clientOrigin = normalizeOriginValue(signedState?.client_origin) || normalizeOriginValue(cookieState?.client_origin) || preferredClientOrigin()
   if (!clientId || !clientSecret) return redirectToClient(res, `/login?discord_error=${encodeDiscordError('not_configured')}`, clientOrigin)
 
   try {
@@ -463,10 +577,34 @@ router.get('/api/auth/discord/callback', rateLimitMiddleware({ windowMs: 60_000,
     })
     if (Boolean(user?.is_banned)) return redirectToClient(res, `/login?discord_error=${encodeDiscordError('banned')}`, clientOrigin)
 
-    const token = await createSession(user.id)
+    const remember = Boolean(signedState.remember ?? cookieState?.remember)
+    const returnTo = normalizeReturnTo(signedState.return_to || cookieState?.return_to)
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress
+    const userAgent = req.headers['user-agent']
+
+    const challengePath = await oauth2faChallengePath({ req, user, remember, returnTo })
+    if (challengePath) return redirectToClient(res, challengePath, clientOrigin)
+
+    const token = await createSession(user.id, { ipAddress: clientIp, userAgent, remember })
     const secure = isSecureCookie(req)
-    setAuthCookie(res, token, { remember: Boolean(signedState.remember ?? cookieState?.remember), secure })
-    return redirectToClient(res, normalizeReturnTo(signedState.return_to || cookieState?.return_to), clientOrigin)
+    setAuthCookie(res, token, { remember, secure })
+
+    try {
+      await logAuditEvent({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'auth.login',
+        entityType: 'user',
+        entityId: String(user.id),
+        detail: { provider: 'discord', remember },
+        ipAddress: clientIp,
+        userAgent,
+        status: 'success',
+        severity: 'info',
+      })
+    } catch {}
+
+    return redirectToClient(res, returnTo, clientOrigin)
   } catch (e) {
     const msg = String(e?.message || '')
     const code = String(e?.code || '').trim()
@@ -475,6 +613,268 @@ router.get('/api/auth/discord/callback', rateLimitMiddleware({ windowMs: 60_000,
     if (msg === 'user_already_linked') return redirectToClient(res, `/login?discord_error=${encodeDiscordError('user_already_linked')}`, clientOrigin)
     if (code === '23505') return redirectToClient(res, `/login?discord_error=${encodeDiscordError('db_unique_violation')}`, clientOrigin)
     return redirectToClient(res, `/login?discord_error=${encodeDiscordError('discord_login_failed')}`, clientOrigin)
+  }
+})
+
+// -- Google OAuth --
+function googleRedirectUri(req) {
+  return envValue('GOOGLE_REDIRECT_URI') || absoluteUrl(req, '/api/auth/google/callback')
+}
+
+export function encodeGoogleError(code, detail = '') {
+  const safeCode = String(code || 'google_login_failed').trim() || 'google_login_failed'
+  if (safeCode === 'google_login_failed') return safeCode
+  const safeDetail = String(detail || '').trim().slice(0, 120)
+  return safeDetail ? `${safeCode}:${encodeURIComponent(safeDetail)}` : safeCode
+}
+
+function googleOauthStateSecret() {
+  return envValue('GOOGLE_OAUTH_STATE_SECRET') || envValue('GOOGLE_CLIENT_SECRET') || 'google-oauth-state'
+}
+
+function createGoogleOauthState({ returnTo, remember, clientOrigin }) {
+  const payload = base64UrlJson({
+    n: crypto.randomBytes(16).toString('base64url'),
+    r: normalizeReturnTo(returnTo),
+    m: Boolean(remember),
+    o: normalizeOriginValue(clientOrigin),
+    t: Date.now(),
+  })
+  return `${payload}.${signOauthState(payload, googleOauthStateSecret())}`
+}
+
+function rememberGoogleOauthState(state, payload) {
+  const expiresAt = Date.now() + GOOGLE_OAUTH_STATE_TTL_MS
+  pendingGoogleOauthStates.set(state, { ...payload, expiresAt })
+  for (const [key, value] of pendingGoogleOauthStates) {
+    if (!value || Number(value.expiresAt || 0) <= Date.now()) {
+      pendingGoogleOauthStates.delete(key)
+    }
+  }
+}
+
+function takeRememberedGoogleOauthState(state) {
+  const value = typeof state === 'string' ? state.trim() : ''
+  if (!value) return null
+  const record = pendingGoogleOauthStates.get(value)
+  pendingGoogleOauthStates.delete(value)
+  if (!record) return null
+  if (Number(record.expiresAt || 0) <= Date.now()) return null
+  return {
+    return_to: normalizeReturnTo(record.return_to),
+    remember: Boolean(record.remember),
+    client_origin: normalizeOriginValue(record.client_origin),
+  }
+}
+
+function parseGoogleOauthState(raw) {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  const [payload, signature] = value.split('.')
+  if (!payload || !signature) return null
+  const expected = signOauthState(payload, googleOauthStateSecret())
+  const a = Buffer.from(signature)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+    if (!parsed || typeof parsed !== 'object') return null
+    if (Date.now() - Number(parsed.t || 0) > GOOGLE_OAUTH_STATE_TTL_MS) return null
+    return {
+      nonce: String(parsed.n || ''),
+      return_to: normalizeReturnTo(parsed.r),
+      remember: Boolean(parsed.m),
+      client_origin: normalizeOriginValue(parsed.o),
+    }
+  } catch {
+    return null
+  }
+}
+
+function readGoogleStateCookie(req) {
+  const raw = req.cookies?.[GOOGLE_OAUTH_STATE_COOKIE]
+  if (typeof raw !== 'string' || !raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function clearGoogleStateCookie(req, res) {
+  const secure = isSecureCookie(req)
+  res.clearCookie(GOOGLE_OAUTH_STATE_COOKIE, {
+    httpOnly: true,
+    sameSite: cookieSameSite(req, secure),
+    secure,
+    domain: cookieDomain(req),
+    path: '/',
+  })
+}
+
+function googleAvatarUrl(profile) {
+  const picture = String(profile?.picture || '').trim()
+  if (!/^https:\/\/([a-z0-9-]+\.)*(googleusercontent\.com|google\.com)\//.test(picture)) return null
+  return picture
+}
+
+router.get('/api/auth/google', rateLimitMiddleware({ windowMs: 60_000, max: 12, keyPrefix: 'google_oauth_start' }), (req, res) => {
+  const clientId = envValue('GOOGLE_CLIENT_ID')
+  const clientSecret = envValue('GOOGLE_CLIENT_SECRET')
+  if (!clientId || !clientSecret) return res.status(503).json({ error: 'google_login_not_configured' })
+
+  const returnTo = normalizeReturnTo(req.query?.return_to)
+  const remember = String(req.query?.remember || '').trim() !== '0'
+  const clientOrigin = clientOriginFromRequest(req)
+  const state = createGoogleOauthState({ returnTo, remember, clientOrigin })
+  const secure = isSecureCookie(req)
+  rememberGoogleOauthState(state, { return_to: returnTo, remember, client_origin: clientOrigin })
+
+  res.cookie(GOOGLE_OAUTH_STATE_COOKIE, JSON.stringify({ state, return_to: returnTo, remember, client_origin: clientOrigin }), {
+    httpOnly: true,
+    sameSite: cookieSameSite(req, secure),
+    secure,
+    domain: cookieDomain(req),
+    maxAge: GOOGLE_OAUTH_STATE_TTL_MS,
+    path: '/',
+  })
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: googleRedirectUri(req),
+    response_type: 'code',
+    scope: 'openid email profile',
+    access_type: 'online',
+    include_granted_scopes: 'true',
+    prompt: 'select_account',
+    state,
+  })
+  return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
+})
+
+router.get('/api/auth/google/callback', rateLimitMiddleware({ windowMs: 60_000, max: 20, keyPrefix: 'google_oauth_callback' }), async (req, res) => {
+  const cookieState = readGoogleStateCookie(req)
+  clearGoogleStateCookie(req, res)
+
+  const code = typeof req.query?.code === 'string' ? req.query.code.trim() : ''
+  const state = typeof req.query?.state === 'string' ? req.query.state.trim() : ''
+  const oauthError = typeof req.query?.error === 'string' ? req.query.error.trim() : ''
+  if (oauthError) {
+    return redirectToClient(res, `/login?google_error=${encodeGoogleError('access_denied', oauthError)}`, normalizeOriginValue(cookieState?.client_origin))
+  }
+
+  const rememberedState = takeRememberedGoogleOauthState(state)
+  let signedState = rememberedState || parseGoogleOauthState(state)
+  const allowLocalStateBypass = !signedState && Boolean(code) && isLocalOauthCallbackRequest(req)
+  if (!code || (!signedState && !allowLocalStateBypass)) {
+    console.warn('[Google OAuth] invalid callback state', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      hasCookieState: Boolean(cookieState?.state),
+      hasRememberedState: Boolean(rememberedState),
+      stateLength: state.length,
+    })
+    return redirectToClient(res, `/login?google_error=${encodeGoogleError('invalid_state')}`)
+  }
+  if (!signedState && allowLocalStateBypass) {
+    signedState = {
+      return_to: normalizeReturnTo(cookieState?.return_to),
+      remember: Boolean(cookieState?.remember),
+      client_origin: normalizeOriginValue(cookieState?.client_origin),
+    }
+    console.warn('[Google OAuth] accepting localhost callback without valid state')
+  }
+  if (cookieState?.state && cookieState.state !== state) {
+    console.warn('[Google OAuth] cookie state mismatch; accepting signed state fallback')
+  }
+
+  const clientId = envValue('GOOGLE_CLIENT_ID')
+  const clientSecret = envValue('GOOGLE_CLIENT_SECRET')
+  const clientOrigin = normalizeOriginValue(signedState?.client_origin) || normalizeOriginValue(cookieState?.client_origin) || preferredClientOrigin()
+  if (!clientId || !clientSecret) return redirectToClient(res, `/login?google_error=${encodeGoogleError('not_configured')}`, clientOrigin)
+
+  try {
+    const redirectUri = googleRedirectUri(req)
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+      }),
+    })
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text().catch(() => '')
+      console.warn('[Google OAuth] token exchange failed', { status: tokenRes.status, redirect_uri: redirectUri, body: errText.slice(0, 500) })
+      return redirectToClient(res, `/login?google_error=${encodeGoogleError('token_exchange_failed', tokenRes.status)}`, clientOrigin)
+    }
+    const tokenData = await tokenRes.json()
+    const accessToken = typeof tokenData?.access_token === 'string' ? tokenData.access_token : ''
+    if (!accessToken) {
+      console.warn('[Google OAuth] token exchange returned no access token')
+      return redirectToClient(res, `/login?google_error=${encodeGoogleError('token_exchange_failed', 'missing_access_token')}`, clientOrigin)
+    }
+
+    const userRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!userRes.ok) {
+      const errText = await userRes.text().catch(() => '')
+      console.warn('[Google OAuth] profile fetch failed', { status: userRes.status, body: errText.slice(0, 500) })
+      return redirectToClient(res, `/login?google_error=${encodeGoogleError('profile_failed', userRes.status)}`, clientOrigin)
+    }
+    const googleUser = await userRes.json()
+
+    const user = await findOrCreateUserFromGoogle({
+      googleUserId: googleUser?.sub,
+      email: googleUser?.email,
+      emailVerified: Boolean(googleUser?.email_verified),
+      displayName: googleUser?.name || googleUser?.given_name,
+      avatarUrl: googleAvatarUrl(googleUser),
+    })
+    if (Boolean(user?.is_banned)) return redirectToClient(res, `/login?google_error=${encodeGoogleError('banned')}`, clientOrigin)
+
+    const remember = Boolean(signedState.remember ?? cookieState?.remember)
+    const returnTo = normalizeReturnTo(signedState.return_to || cookieState?.return_to)
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress
+    const userAgent = req.headers['user-agent']
+
+    const challengePath = await oauth2faChallengePath({ req, user, remember, returnTo })
+    if (challengePath) return redirectToClient(res, challengePath, clientOrigin)
+
+    const token = await createSession(user.id, { ipAddress: clientIp, userAgent, remember })
+    const secure = isSecureCookie(req)
+    setAuthCookie(res, token, { remember, secure })
+
+    try {
+      await logAuditEvent({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: 'auth.login',
+        entityType: 'user',
+        entityId: String(user.id),
+        detail: { provider: 'google', remember },
+        ipAddress: clientIp,
+        userAgent,
+        status: 'success',
+        severity: 'info',
+      })
+    } catch {}
+
+    return redirectToClient(res, returnTo, clientOrigin)
+  } catch (e) {
+    const msg = String(e?.message || '')
+    const errCode = String(e?.code || '').trim()
+    console.warn('[Google OAuth] callback failed', { message: msg, code: errCode, stack: String(e?.stack || '').slice(0, 1000) })
+    if (msg === 'banned') return redirectToClient(res, `/login?google_error=${encodeGoogleError('banned')}`, clientOrigin)
+    if (msg === 'user_already_linked') return redirectToClient(res, `/login?google_error=${encodeGoogleError('user_already_linked')}`, clientOrigin)
+    if (msg === 'invalid_google_user') return redirectToClient(res, `/login?google_error=${encodeGoogleError('profile_failed', 'invalid_subject')}`, clientOrigin)
+    if (errCode === '23505') return redirectToClient(res, `/login?google_error=${encodeGoogleError('db_unique_violation')}`, clientOrigin)
+    return redirectToClient(res, `/login?google_error=${encodeGoogleError('google_login_failed')}`, clientOrigin)
   }
 })
 
@@ -594,24 +994,70 @@ router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 15, 
 
     // Check 2FA Requirement
     if (user.two_factor_enabled && user.two_factor_type && user.two_factor_type !== 'none') {
-      const tempToken = crypto.randomBytes(32).toString('hex')
-      const payload = {
-        userId: user.id,
-        remember: Boolean(remember),
-        ipAddress: clientIp,
-        userAgent,
-        createdAt: Date.now(),
+      const trustedToken = getTrustedDeviceToken(req)
+      const trustedDevice = trustedToken
+        ? await verifyAndTouchTrustedDevice({
+            userId: user.id,
+            token: trustedToken,
+            ipAddress: clientIp,
+            userAgent,
+          }).catch(() => null)
+        : null
+
+      if (trustedDevice) {
+        // Device is trusted: bypass 2FA challenge
+        const token = await createSession(user.id, {
+          ipAddress: clientIp,
+          userAgent,
+          remember: Boolean(remember),
+        })
+
+        const secure = isSecureCookie(req)
+        const consent = chooseConsent(req)
+        if (consent) setCookieConsentCookie(res, consent, { secure })
+        setAuthCookie(res, token, { remember: Boolean(remember), secure })
+        setTrustedDeviceCookie(res, trustedToken, { secure })
+
+        try {
+          await logAuditEvent({
+            actorUserId: user.id,
+            actorEmail: user.email,
+            action: 'auth.login_trusted_device',
+            entityType: 'user',
+            entityId: String(user.id),
+            detail: { remember: Boolean(remember), device_id: trustedDevice.id, device_name: trustedDevice.device_name },
+            ipAddress: clientIp,
+            userAgent,
+            status: 'success',
+            severity: 'info',
+          })
+        } catch {}
+
+        return res.json({
+          ok: true,
+          trusted_device: true,
+          trusted_device_token: trustedToken,
+          user: {
+            id: user.id,
+            email: user.email,
+            username: user.username ?? null,
+            role: typeof user?.role === 'string' && user.role.trim() ? user.role.trim().toLowerCase() : 'user',
+            display_name: user.display_name ?? null,
+            avatar_url: user.avatar_url ?? null,
+            is_email_verified: Boolean(user.is_email_verified),
+            two_factor_enabled: Boolean(user.two_factor_enabled),
+            two_factor_type: user.two_factor_type || 'none',
+          },
+          token,
+        })
       }
 
-      if (redis) {
-        try {
-          await redis.set(`temp2fa:${tempToken}`, JSON.stringify(payload), 'EX', 300)
-        } catch {
-          temp2faStore.set(tempToken, { ...payload, expiresAt: Date.now() + 300_000 })
-        }
-      } else {
-        temp2faStore.set(tempToken, { ...payload, expiresAt: Date.now() + 300_000 })
-      }
+      const tempToken = await createTemp2faToken({
+        userId: user.id,
+        remember,
+        ipAddress: clientIp,
+        userAgent,
+      })
 
       if (user.two_factor_type === 'email') {
         try {
@@ -625,16 +1071,11 @@ router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 15, 
         }
       }
 
-      const emailParts = (user.email || '').split('@')
-      const maskedEmail = emailParts.length === 2
-        ? `${emailParts[0].slice(0, 2)}***@${emailParts[1]}`
-        : user.email
-
       return res.json({
         two_factor_required: true,
         two_factor_type: user.two_factor_type,
         temp_token: tempToken,
-        email_masked: maskedEmail,
+        email_masked: maskEmail(user.email),
       })
     }
 
@@ -685,7 +1126,7 @@ router.post('/api/auth/login', rateLimitMiddleware({ windowMs: 60_000, max: 15, 
 })
 
 router.post('/api/auth/2fa/verify', rateLimitMiddleware({ windowMs: 60_000, max: 10, keyPrefix: '2fa_verify' }), async (req, res) => {
-  const { temp_token, code, is_backup_code } = req.body ?? {}
+  const { temp_token, code, is_backup_code, remember_device } = req.body ?? {}
   if (!temp_token || !code) {
     return res.status(400).json({ error: 'token_and_code_required', message: 'กรุณากรอกรหัสยืนยัน 2FA' })
   }
@@ -767,6 +1208,25 @@ router.post('/api/auth/2fa/verify', rateLimitMiddleware({ windowMs: 60_000, max:
     if (consent) setCookieConsentCookie(res, consent, { secure })
     setAuthCookie(res, token, { remember: Boolean(sessionData.remember), secure })
 
+    let trustedDeviceToken = null
+    if (Boolean(remember_device)) {
+      try {
+        trustedDeviceToken = crypto.randomBytes(32).toString('hex')
+        const devName = formatDeviceName(userAgent)
+        await createTrustedDevice({
+          userId: user.id,
+          token: trustedDeviceToken,
+          deviceName: devName,
+          ipAddress: clientIp,
+          userAgent,
+          days: 30,
+        })
+        setTrustedDeviceCookie(res, trustedDeviceToken, { secure })
+      } catch (err) {
+        console.error('[CREATE TRUSTED DEVICE ERROR]', err)
+      }
+    }
+
     try {
       await logAuditEvent({
         actorUserId: user.id,
@@ -774,7 +1234,11 @@ router.post('/api/auth/2fa/verify', rateLimitMiddleware({ windowMs: 60_000, max:
         action: 'auth.login_2fa_success',
         entityType: 'user',
         entityId: String(user.id),
-        detail: { two_factor_type: sec.two_factor_type, is_backup_code: Boolean(is_backup_code) },
+        detail: {
+          two_factor_type: sec.two_factor_type,
+          is_backup_code: Boolean(is_backup_code),
+          remember_device: Boolean(remember_device),
+        },
         ipAddress: clientIp,
         userAgent,
         status: 'success',
@@ -784,6 +1248,8 @@ router.post('/api/auth/2fa/verify', rateLimitMiddleware({ windowMs: 60_000, max:
 
     res.json({
       ok: true,
+      trusted_device: Boolean(remember_device && trustedDeviceToken),
+      trusted_device_token: trustedDeviceToken,
       user: {
         id: user.id,
         email: user.email,
@@ -886,20 +1352,60 @@ router.post('/api/auth/sessions/revoke-others', requireAuth, async (req, res) =>
   }
 })
 
-// ── Google OAuth Scaffolding ──
+// ── Trusted Devices Management ──
+router.get('/api/auth/trusted-devices', requireAuth, async (req, res) => {
+  try {
+    const devices = await listTrustedDevices(req.user.id)
+    res.json({ ok: true, devices })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.delete('/api/auth/trusted-devices/:id', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id
+    await deleteTrustedDevice(req.user.id, id)
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
+router.post('/api/auth/trusted-devices/revoke-all', requireAuth, async (req, res) => {
+  try {
+    await deleteAllTrustedDevices(req.user.id)
+    clearTrustedDeviceCookie(res, { secure: isSecureCookie(req) })
+    res.json({ ok: true })
+  } catch {
+    res.status(500).json({ error: 'db_error' })
+  }
+})
+
 router.get('/api/auth/google/config', (req, res) => {
-  const clientId = envValue('GOOGLE_CLIENT_ID')
-  res.json({ ok: true, enabled: Boolean(clientId) })
+  res.json({
+    ok: true,
+    enabled: Boolean(envValue('GOOGLE_CLIENT_ID') && envValue('GOOGLE_CLIENT_SECRET')),
+    client_id: envValue('GOOGLE_CLIENT_ID') || null,
+  })
 })
 
 router.post('/api/auth/logout', async (req, res) => {
   const bearer = getBearerToken(req)
   const cookieToken = getCookieToken(req)
   const token = bearer || cookieToken
+  let userId = null
   try {
-    if (token) await deleteSession(token)
+    if (token) {
+      const session = await getSession(token).catch(() => null)
+      userId = session?.user_id || null
+      await deleteSession(token)
+    }
   } catch {
     // ignore
+  }
+  if (userId) {
+    query('DELETE FROM push_subscriptions WHERE user_id = $1', [userId]).catch(() => {})
   }
   clearAuthCookie(res, { secure: isSecureCookie(req) })
   res.json({ ok: true })
@@ -948,8 +1454,9 @@ router.post('/api/auth/forgot-password', rateLimitMiddleware({ windowMs: 60_000,
 
       await savePasswordResetToken({ userId: user.id, tokenHash, email: user.email, expiresAt })
 
-      const clientOrigin = clientOriginFromRequest(req)
-      const resetLink = `${clientOrigin.replace(/\/+$/, '')}/reset-password?token=${token}`
+      // Never build this from Origin/Referer: the mail goes to the account owner, so a spoofed
+      // header would hand the reset token to whoever crafted the request.
+      const resetLink = `${trustedSiteOrigin().replace(/\/+$/, '')}/reset-password?token=${token}`
 
       const discordLink = await getDiscordLinkForUser(user.id)
       let sentDiscord = false
@@ -1047,6 +1554,23 @@ router.post('/api/auth/reset-password', rateLimitMiddleware({ windowMs: 60_000, 
 
     await setUserPassword({ userId: record.user_id, password })
     await deleteUserPasswordResetTokens(record.user_id)
+    // Whoever was signed in with the old password (including an attacker) is now logged out.
+    await deleteAllUserSessionsExcept(record.user_id, '')
+
+    try {
+      await logAuditEvent({
+        actorUserId: record.user_id,
+        actorEmail: record.email || null,
+        action: 'auth.password_reset',
+        entityType: 'user',
+        entityId: String(record.user_id),
+        detail: { sessions_revoked: true },
+        ipAddress: req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress,
+        userAgent: req.headers['user-agent'],
+        status: 'success',
+        severity: 'security',
+      })
+    } catch {}
 
     res.json({ ok: true })
   } catch (err) {

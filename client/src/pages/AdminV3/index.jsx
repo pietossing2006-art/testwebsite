@@ -11,7 +11,7 @@ import {
   DEFAULT_COUPON_FORM, DEFAULT_PROMOTION_FORM, DEFAULT_DISCOUNT_COUPON_FORM,
   DEFAULT_POOL_FORM, DEFAULT_STOCK_ITEM_EDIT, DEFAULT_MYSTERY_FORM, DEFAULT_MYSTERY_EDIT,
   DEFAULT_MYSTERY_SIMULATION, DEFAULT_AUTOMATION_RULE_FORM, EMPTY_SETTINGS_FIELD_ERRORS,
-  DEFAULT_HOMEPAGE_SETTINGS, DEFAULT_SITE_SETTINGS,
+  DEFAULT_HOMEPAGE_SETTINGS, DEFAULT_SITE_SETTINGS, DEFAULT_TOPUP_SETTINGS,
   pickNumber, formatNumber, formatMinutes, formatDateTime, formatRelativeTime,
   isoToLocalInput, getErrorMessage, getSupportStatusMeta, getSupportWaitingMeta,
   formatDiscountSummary, getPromotionStatusMeta, getCouponStatusMeta,
@@ -20,13 +20,13 @@ import {
   normalizeCustomFormFieldsForSubmit, normalizeProductOptionsForSubmit,
   splitStockLines, normalizeSupportAttachments, computeMysteryChanceMeta,
   formatMysteryChancePercent, formatMysteryEffectiveWeight, buildFallbackRbac,
-  normalizeHomepageSettings, normalizeSiteSettings,
+  normalizeHomepageSettings, normalizeSiteSettings, normalizeTopupSettings,
 } from './helpers.js'
 import {
   loadDashboardModule, loadUsersModule, loadSupportModule, loadSupportTicketDetail,
   loadFulfillmentModule, loadFulfillmentRequestDetail, loadLogsModule, loadSettingsModule,
   loadCatalogModule, loadPromotionsModule, loadStockModule, loadAutomationModule,
-  loadAnnouncementsModule, loadMessagesModule, loadTimesheetModule, loadOwnerModule,
+  loadAnnouncementsModule, loadMessagesModule, loadTimesheetModule, loadOwnerModule, loadTopupsModule,
   loadOrdersModule, loadBundlesModule, loadGrowthModule,
 } from './loaders.js'
 import DashboardModule from './modules/DashboardModule.jsx'
@@ -46,6 +46,7 @@ import MessagesModule from './modules/MessagesModule.jsx'
 import OwnerModule from './modules/OwnerModule.jsx'
 import TimesheetModule from './modules/TimesheetModule.jsx'
 import OrdersModule from './modules/OrdersModule.jsx'
+import TopupsModule from './modules/TopupsModule.jsx'
 import LedgerShell from './shell/LedgerShell.jsx'
 import PageBar from './shell/PageBar.jsx'
 import './AdminV3.css'
@@ -67,6 +68,7 @@ const MODULE_LABELS = {
   fulfillment: 'งานบริการ',
   orders: 'ออเดอร์',
   timesheet: 'เวลางาน',
+  topups: 'ตรวจสลิปเติมเงิน',
   automation: 'อัตโนมัติ',
   bundles: 'Bundle',
   promotions: 'โปรโมชั่น',
@@ -86,6 +88,7 @@ const MODULE_DESCRIPTIONS = {
   stock: 'ดูแลสต็อกดิจิทัล pool และการผูกตัวเลือกสินค้า',
   fulfillment: 'ติดตามงานบริการที่รอดำเนินการและงานที่กำลังทำ',
   orders: 'ค้นหาและตรวจสอบคำสั่งซื้อทั้งหมดจากศูนย์เดียว',
+  topups: 'ตรวจสลิปที่ลูกค้าแนบเข้ามา เทียบกับเงินเข้าบัญชีร้าน แล้วอนุมัติพ้อยท์',
   timesheet: 'บันทึกเวลาเข้างาน ออกงาน และตรวจรอบการทำงานของทีม',
   automation: 'ตั้งกฎ workflow และดูเหตุการณ์ที่ระบบจัดการอัตโนมัติ',
   bundles: 'สร้างชุดสินค้าและแคมเปญแบบ bundle',
@@ -473,10 +476,13 @@ export default function AdminV3() {
   }, [notifOpen])
 
   // ── module loader ──
-  async function loadModuleData(moduleId) {
+  async function loadModuleData(moduleId, options = {}) {
     const requestId = ++requestSeqRef.current
     const current = moduleId || activeModule
-    setModuleStore((prev) => ({ ...prev, [current]: { ...(prev[current] || {}), status: 'loading', error: '' } }))
+    const silent = Boolean(options?.silent)
+    if (!silent) {
+      setModuleStore((prev) => ({ ...prev, [current]: { ...(prev[current] || {}), status: 'loading', error: '' } }))
+    }
     try {
       let data = null
       const r = String(session?.me?.user?.role || '').trim().toLowerCase()
@@ -488,10 +494,12 @@ export default function AdminV3() {
       }
       else if (current === 'fulfillment') data = await loadFulfillmentModule(fulfillmentQuery)
       else if (current === 'logs') data = r === 'owner' ? await loadLogsModule(logsQuery) : { logs: [] }
-      else if (current === 'settings') data = (r === 'admin' || r === 'owner') ? await loadSettingsModule() : {
+      else if (current === 'settings') data = (r === 'admin' || r === 'owner' || canAction('settings.manage')) ? await loadSettingsModule() : {
         image_settings: normalizeUiImageSettings(DEFAULT_UI_IMAGE_SETTINGS),
         branding_settings: normalizeUiBrandingSettings(DEFAULT_UI_BRANDING_SETTINGS),
         homepage_settings: normalizeHomepageSettings(DEFAULT_HOMEPAGE_SETTINGS),
+        site_settings: normalizeSiteSettings(DEFAULT_SITE_SETTINGS),
+        topup_settings: normalizeTopupSettings(DEFAULT_TOPUP_SETTINGS),
       }
       else if (current === 'catalog') data = await loadCatalogModule()
       else if (current === 'bundles') data = await loadBundlesModule()
@@ -503,13 +511,14 @@ export default function AdminV3() {
       else if (current === 'messages') data = await loadMessagesModule()
       else if (current === 'timesheet') data = await loadTimesheetModule(r)
       else if (current === 'orders') data = await loadOrdersModule(ordersQuery)
+      else if (current === 'topups') data = await loadTopupsModule()
       else if (current === 'owner') data = r === 'owner' ? await loadOwnerModule() : {}
 
       if (requestId !== requestSeqRef.current) return
       setModuleStore((prev) => ({ ...prev, [current]: { status: 'ready', data, error: '', loadedAt: Date.now() } }))
     } catch (err) {
       if (requestId !== requestSeqRef.current) return
-      setModuleStore((prev) => ({ ...prev, [current]: { status: 'error', data: null, error: getErrorMessage(err, `Unable to load ${current}`), loadedAt: Date.now() } }))
+      setModuleStore((prev) => ({ ...prev, [current]: { status: 'error', data: silent ? (prev[current]?.data || null) : null, error: getErrorMessage(err, `Unable to load ${current}`), loadedAt: Date.now() } }))
     }
   }
 
@@ -605,6 +614,7 @@ export default function AdminV3() {
       case 'logs': return <LogsModule data={data} ctx={ctx} />
       case 'settings': return <SettingsModule data={data} ctx={ctx} />
       case 'automation': return <AutomationModule data={data} ctx={ctx} />
+      case 'topups': return <TopupsModule data={data} ctx={ctx} />
       case 'announcements': return <AnnouncementsModule data={data} ctx={ctx} />
       case 'messages': return <MessagesModule data={data} ctx={ctx} />
       case 'timesheet': return <TimesheetModule data={data} ctx={ctx} />

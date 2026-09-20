@@ -7,6 +7,7 @@ import {
   getWallet,
   updateUserProfile,
   changeUserPassword,
+  deleteAllUserSessionsExcept,
   getDiscordLinkForUser,
   listMyTransactions,
   listMyTopups,
@@ -36,6 +37,7 @@ import {
   enableUserEmail2FA,
   disableUser2FA,
   updateUserBackupCodes,
+  deleteAllTrustedDevices,
 } from '../db.js'
 import { requireAuth, rateLimitMiddleware } from '../lib/auth.js'
 import { requestEmailOtp, verifyEmailOtp } from '../lib/emailOtp.js'
@@ -52,7 +54,7 @@ import { AvatarUploadBodySchema, PasswordChangeBodySchema, ProfileBodySchema } f
 import { validateBody } from '../lib/validation.js'
 import { publishSupportEvent } from '../lib/events.js'
 import { requestDiscordPasswordResetCode, verifyDiscordPasswordResetCode } from '../lib/discordBot.js'
-import { isSecureCookie, clearAuthCookie } from '../lib/cookies.js'
+import { isSecureCookie, clearAuthCookie, clearTrustedDeviceCookie } from '../lib/cookies.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -177,6 +179,8 @@ router.post('/api/me/password', requireAuth, async (req, res) => {
     }
 
     await changeUserPassword({ userId: req.user.id, oldPassword: old_password, newPassword: new_password })
+    // Keep this device signed in, kick everything else off the old password.
+    await deleteAllUserSessionsExcept(req.user.id, req.user.token)
     res.json({ ok: true })
   } catch (e) {
     const msg = String(e?.message ?? '')
@@ -343,15 +347,40 @@ router.post('/api/me/2fa/email/send-code', requireAuth, rateLimitMiddleware({ wi
     const user = await getUserById(req.user.id)
     if (!user?.email) return res.status(400).json({ error: 'no_email' })
 
+    const purpose = (req.body?.action === 'disable' || req.query?.action === 'disable')
+      ? 'disable_2fa_email'
+      : 'enable_2fa_email'
+
     const result = await requestEmailOtp({
       email: user.email,
-      purpose: 'enable_2fa_email',
+      purpose,
       accountLabel: user.display_name || user.username || user.email,
     })
 
     res.json({ ok: true, ...result })
   } catch {
     res.status(500).json({ error: 'email_send_failed' })
+  }
+})
+
+router.post('/api/me/2fa/email/send-disable-code', requireAuth, rateLimitMiddleware({ windowMs: 60_000, max: 3, keyPrefix: '2fa_email_disable_send' }), async (req, res) => {
+  try {
+    const user = await getUserById(req.user.id)
+    const sec = await getUser2FASecret(req.user.id)
+    if (!user?.email) return res.status(400).json({ error: 'no_email', message: 'ไม่พบที่อยู่อีเมลของคุณ' })
+    if (!sec?.two_factor_enabled || sec.two_factor_type !== 'email') {
+      return res.status(400).json({ error: 'invalid_type', message: 'บัญชีไม่ได้เปิดใช้งาน 2FA ผ่าน Email' })
+    }
+
+    const result = await requestEmailOtp({
+      email: user.email,
+      purpose: 'disable_2fa_email',
+      accountLabel: user.display_name || user.username || user.email,
+    })
+
+    res.json({ ok: true, message: 'ส่งรหัส OTP ไปยังอีเมลเรียบร้อยแล้ว', ...result })
+  } catch {
+    res.status(500).json({ error: 'email_send_failed', message: 'ส่งรหัส OTP ไปยังอีเมลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง' })
   }
 })
 
@@ -388,30 +417,58 @@ router.post('/api/me/2fa/disable', requireAuth, async (req, res) => {
       return res.status(400).json({ error: '2fa_not_enabled', message: 'บัญชียังไม่ได้เปิด 2FA' })
     }
 
-    // Disabling 2FA requires BOTH the password AND the second factor itself —
-    // password alone must never be enough, or 2FA gives no protection against
-    // a stolen password.
     if (typeof password !== 'string' || !password || !(await checkPassword(password, user.password_hash))) {
-      return res.status(400).json({ error: 'auth_failed', message: 'รหัสผ่านหรือรหัส OTP 2FA ไม่ถูกต้อง' })
+      return res.status(400).json({ error: 'invalid_password', message: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' })
     }
 
+    if (typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({
+        error: 'code_required',
+        message: sec.two_factor_type === 'email'
+          ? 'กรุณากรอกรหัส OTP ที่ได้รับจากอีเมล'
+          : 'กรุณากรอกรหัส 6 หลักจากแอปพลิเคชัน Authenticator หรือรหัสสำรอง',
+      })
+    }
+
+    const cleanCode = code.trim()
     let codeVerified = false
-    if (typeof code === 'string' && code.trim()) {
-      if (sec.two_factor_type === 'totp' && sec.two_factor_secret) {
-        codeVerified = verifyTotpToken({ token: code.trim(), secret: sec.two_factor_secret })
-      } else if (sec.two_factor_type === 'email') {
-        try {
-          await verifyEmailOtp({ email: user.email, purpose: 'disable_2fa_email', code: code.trim() })
-          codeVerified = true
-        } catch {}
+    let codeErrorMsg = ''
+
+    // Allow backup code if available
+    const backupCodes = Array.isArray(sec.two_factor_backup_codes) ? sec.two_factor_backup_codes : []
+    const backupResult = verifyAndConsumeBackupCode(cleanCode, backupCodes)
+    if (backupResult.valid) {
+      codeVerified = true
+    } else if (sec.two_factor_type === 'totp') {
+      if (sec.two_factor_secret) {
+        codeVerified = verifyTotpToken({ token: cleanCode, secret: sec.two_factor_secret })
+      }
+      if (!codeVerified) {
+        codeErrorMsg = 'รหัส 6 หลักจากแอปพลิเคชันไม่ถูกต้อง หรือเวลาในอุปกรณ์ไม่ตรง'
+      }
+    } else if (sec.two_factor_type === 'email') {
+      try {
+        await verifyEmailOtp({ email: user.email, purpose: 'disable_2fa_email', code: cleanCode })
+        codeVerified = true
+      } catch (e) {
+        const msg = String(e?.message || '')
+        if (msg === 'otp_expired_or_not_found') codeErrorMsg = 'รหัส OTP หมดอายุ กรุณากดขอรหัสใหม่อีกครั้ง'
+        else if (msg === 'otp_too_many_attempts') codeErrorMsg = 'กรอกรหัส OTP ผิดเกินกำหนด กรุณาขอรหัสใหม่'
+        else codeErrorMsg = 'รหัส OTP จากอีเมลไม่ถูกต้อง'
       }
     }
 
     if (!codeVerified) {
-      return res.status(400).json({ error: 'auth_failed', message: 'รหัสผ่านหรือรหัส OTP 2FA ไม่ถูกต้อง' })
+      return res.status(400).json({
+        error: 'invalid_code',
+        message: codeErrorMsg || 'รหัสยืนยันไม่ถูกต้อง',
+      })
     }
 
     await disableUser2FA(req.user.id)
+    await deleteAllTrustedDevices(req.user.id).catch(() => {})
+    clearTrustedDeviceCookie(res, { secure: isSecureCookie(req) })
+
     res.json({ ok: true, message: '2fa_disabled' })
   } catch (err) {
     console.error('[2FA DISABLE ERROR]', err)
@@ -438,7 +495,20 @@ router.post('/api/me/2fa/backup-codes/regenerate', requireAuth, async (req, res)
   }
 })
 
-router.post('/api/me/avatar-upload', requireAuth, async (req, res) => {
+// Deletes the file a previous upload left behind, so a user cycling avatars cannot fill the disk.
+async function removePreviousAvatarFile(userId) {
+  try {
+    const current = await getUserById(userId)
+    const url = String(current?.avatar_url || '')
+    const match = url.match(/^\/uploads\/avatars\/([A-Za-z0-9._-]+)$/)
+    if (!match) return
+    await fs.promises.rm(path.join(AVATAR_UPLOADS_ROOT, match[1]), { force: true })
+  } catch {
+    // a leftover file is not worth failing the upload over
+  }
+}
+
+router.post('/api/me/avatar-upload', requireAuth, rateLimitMiddleware({ windowMs: 60_000, max: 6, keyPrefix: 'avatar_upload' }), async (req, res) => {
   const parsed = validateBody(AvatarUploadBodySchema, req.body, { fallbackError: 'invalid_image_data' })
   if (!parsed.ok) return res.status(400).json({ error: parsed.error })
   try {
@@ -451,6 +521,7 @@ router.post('/api/me/avatar-upload', requireAuth, async (req, res) => {
     const target = path.join(AVATAR_UPLOADS_ROOT, filename)
     await fs.promises.writeFile(target, buffer)
     const avatarUrl = `/uploads/avatars/${filename}`
+    await removePreviousAvatarFile(req.user.id)
     res.status(201).json({ ok: true, avatar_url: avatarUrl })
   } catch (e) {
     const msg = String(e?.message ?? '')

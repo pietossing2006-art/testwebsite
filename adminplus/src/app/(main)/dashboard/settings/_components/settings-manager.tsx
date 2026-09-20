@@ -76,6 +76,14 @@ const TOPUP_METHODS = [
 
 const ASSIGNABLE_ROLES = ["booster", "support", "admin", "owner"];
 
+function formatPhoneNumber(num: unknown): string {
+  const clean = String(num || "").replace(/\D/g, "");
+  if (clean.length === 10) return `${clean.slice(0, 3)}-${clean.slice(3, 6)}-${clean.slice(6)}`;
+  if (clean.length === 9) return `${clean.slice(0, 2)}-${clean.slice(2, 5)}-${clean.slice(5)}`;
+  if (clean.length === 13) return `${clean.slice(0, 1)}-${clean.slice(1, 5)}-${clean.slice(5, 10)}-${clean.slice(10, 12)}-${clean.slice(12)}`;
+  return String(num || "").trim();
+}
+
 function str(source: Record<string, unknown>, key: string) {
   const value = source?.[key];
   return value == null ? "" : String(value);
@@ -126,6 +134,15 @@ function ToggleRow({
   );
 }
 
+const TABS_CONFIG: { value: string; label: string }[] = [
+  { value: "branding", label: "Branding" },
+  { value: "homepage", label: "หน้าแรก" },
+  { value: "images", label: "รูปภาพ" },
+  { value: "site", label: "SEO / ท้ายเว็บ" },
+  { value: "topup", label: "เติมเงิน" },
+  { value: "ops", label: "มอบหมายงาน" },
+];
+
 export function SettingsManager({
   initialSettings,
   initialAutoAssign,
@@ -135,6 +152,30 @@ export function SettingsManager({
   initialAutoAssign: AutoAssignConfig | null;
   refs: SettingsRefs;
 }) {
+  const [tab, setTab] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const urlTab = new URLSearchParams(window.location.search).get("tab");
+        if (urlTab && TABS_CONFIG.some((t) => t.value === urlTab)) return urlTab;
+        const saved = sessionStorage.getItem("adminplus_settings_tab");
+        if (saved && TABS_CONFIG.some((t) => t.value === saved)) return saved;
+      } catch {}
+    }
+    return "branding";
+  });
+
+  function handleTabChange(value: string) {
+    setTab(value);
+    if (typeof window !== "undefined") {
+      try {
+        sessionStorage.setItem("adminplus_settings_tab", value);
+        const url = new URL(window.location.href);
+        url.searchParams.set("tab", value);
+        window.history.replaceState(null, "", url.toString());
+      } catch {}
+    }
+  }
+
   const [image, setImage] = useState<Record<string, unknown>>(initialSettings.image_settings ?? {});
   const [branding, setBranding] = useState<Record<string, unknown>>(initialSettings.branding_settings ?? {});
   const [homepage, setHomepage] = useState<Record<string, unknown>>(initialSettings.homepage_settings ?? {});
@@ -153,13 +194,48 @@ export function SettingsManager({
         site_settings: site,
         topup_settings: topup,
       });
-      toast.success("บันทึกการตั้งค่าเรียบร้อย");
+      toast.success("บันทึกการตั้งค่าทั้งหมดเรียบร้อย");
       // Trust the server's normalised values so the form shows what was actually stored.
       setImage(res.image_settings ?? image);
       setBranding(res.branding_settings ?? branding);
       setHomepage(res.homepage_settings ?? homepage);
       setSite(res.site_settings ?? site);
       setTopup(res.topup_settings ?? topup);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveSection(section: string) {
+    setBusy(true);
+    try {
+      const payload: Partial<UiSettings> = {};
+      let label = "";
+      if (section === "branding") {
+        payload.branding_settings = branding;
+        label = "Branding";
+      } else if (section === "homepage") {
+        payload.homepage_settings = homepage;
+        label = "หน้าแรก";
+      } else if (section === "images") {
+        payload.image_settings = image;
+        label = "รูปภาพ";
+      } else if (section === "site") {
+        payload.site_settings = site;
+        label = "SEO / ท้ายเว็บ";
+      } else if (section === "topup") {
+        payload.topup_settings = topup;
+        label = "ระบบเติมเงิน";
+      }
+      const res = await adminApi.put<UiSettings>("/ui-settings", payload);
+      toast.success(`บันทึกส่วน "${label}" เรียบร้อย`);
+      if (res.branding_settings) setBranding(res.branding_settings);
+      if (res.homepage_settings) setHomepage(res.homepage_settings);
+      if (res.image_settings) setImage(res.image_settings);
+      if (res.site_settings) setSite(res.site_settings);
+      if (res.topup_settings) setTopup(res.topup_settings);
     } catch (err) {
       toast.error(getErrorMessage(err));
     } finally {
@@ -184,17 +260,33 @@ export function SettingsManager({
     }
   }
 
+  const currentTabLabel = TABS_CONFIG.find((t) => t.value === tab)?.label || "";
+
   return (
     <div className="flex flex-col gap-4">
-      <Tabs defaultValue="branding">
-        <TabsList>
-          <TabsTrigger value="branding">Branding</TabsTrigger>
-          <TabsTrigger value="homepage">หน้าแรก</TabsTrigger>
-          <TabsTrigger value="images">รูปภาพ</TabsTrigger>
-          <TabsTrigger value="site">SEO / ท้ายเว็บ</TabsTrigger>
-          <TabsTrigger value="topup">เติมเงิน</TabsTrigger>
-          <TabsTrigger value="ops">มอบหมายงาน</TabsTrigger>
-        </TabsList>
+      <Tabs value={tab} onValueChange={handleTabChange}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList>
+            {TABS_CONFIG.map((t) => (
+              <TabsTrigger key={t.value} value={t.value}>
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={tab === "ops" ? saveAutoAssign : () => saveSection(tab)}
+              disabled={busy}
+            >
+              บันทึกทั้งหมดของหน้านี้ ({currentTabLabel})
+            </Button>
+            <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+              บันทึกทั้งหมด
+            </Button>
+          </div>
+        </div>
 
         {/* ── Branding ─────────────────────────────────────────── */}
         <TabsContent value="branding" className="flex flex-col gap-4 pt-4">
@@ -241,6 +333,14 @@ export function SettingsManager({
               />
             </CardContent>
           </Card>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="sm" onClick={() => saveSection("branding")} disabled={busy}>
+              บันทึกทั้งหมดของหน้านี้ (Branding)
+            </Button>
+            <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+              บันทึกทั้งหมด
+            </Button>
+          </div>
         </TabsContent>
 
         {/* ── Homepage ─────────────────────────────────────────── */}
@@ -359,6 +459,14 @@ export function SettingsManager({
               <FaqEditor items={list<FaqItem>(homepage, "faq_items")} onChange={(items) => setHomepage((s) => ({ ...s, faq_items: items }))} disabled={busy} />
             </CardContent>
           </Card>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="sm" onClick={() => saveSection("homepage")} disabled={busy}>
+              บันทึกทั้งหมดของหน้านี้ (หน้าแรก)
+            </Button>
+            <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+              บันทึกทั้งหมด
+            </Button>
+          </div>
         </TabsContent>
 
         {/* ── Images ───────────────────────────────────────────── */}
@@ -402,6 +510,14 @@ export function SettingsManager({
               ))}
             </CardContent>
           </Card>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="sm" onClick={() => saveSection("images")} disabled={busy}>
+              บันทึกทั้งหมดของหน้านี้ (รูปภาพ)
+            </Button>
+            <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+              บันทึกทั้งหมด
+            </Button>
+          </div>
         </TabsContent>
 
         {/* ── SEO / footer ─────────────────────────────────────── */}
@@ -459,28 +575,142 @@ export function SettingsManager({
               <Textarea rows={10} value={str(site, "tos_content")} onChange={(e) => setSite((s) => ({ ...s, tos_content: e.target.value }))} disabled={busy} />
             </CardContent>
           </Card>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="sm" onClick={() => saveSection("site")} disabled={busy}>
+              บันทึกทั้งหมดของหน้านี้ (SEO / ท้ายเว็บ)
+            </Button>
+            <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+              บันทึกทั้งหมด
+            </Button>
+          </div>
         </TabsContent>
 
         {/* ── Top-up ───────────────────────────────────────────── */}
         <TabsContent value="topup" className="pt-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">ช่องทางเติมเงิน</CardTitle>
-              <CardDescription>ปิดช่องทางไหน ลูกค้าจะไม่เห็นตัวเลือกนั้นบนหน้าเติมเงิน</CardDescription>
+              <CardTitle className="text-base">ช่องทางเติมเงินและบัญชีรับเงิน</CardTitle>
+              <CardDescription>จัดการช่องทางการชำระเงินและหมายเลขบัญชีสำหรับรับเงิน</CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              {TOPUP_METHODS.map((method) => (
-                <ToggleRow
-                  key={method.key}
-                  checked={topup[method.key] !== false}
-                  onChange={(v) => setTopup((s) => ({ ...s, [method.key]: v }))}
-                  title={method.label}
-                  desc={method.desc}
-                  disabled={busy}
-                />
-              ))}
+            <CardContent className="flex flex-col gap-5">
+              {/* Active Status Overview Banner */}
+              <div className="border rounded-lg p-3 bg-muted/40 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+                  </span>
+                  <span className="text-xs font-semibold text-foreground">สถานะบัญชีรับเงินที่ใช้งานอยู่:</span>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium ${topup.truemoney_phone ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30" : "bg-destructive/10 text-destructive border border-destructive/20"}`}>
+                    🎁 TrueMoney: {topup.truemoney_phone ? `ใช้เบอร์ ${formatPhoneNumber(topup.truemoney_phone)}` : "ยังไม่ระบุเบอร์"}
+                  </span>
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium ${topup.promptpay_target ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30" : "bg-destructive/10 text-destructive border border-destructive/20"}`}>
+                    📱 PromptPay: {topup.promptpay_target ? `ใช้หมายเลข ${formatPhoneNumber(topup.promptpay_target)}` : "ยังไม่ระบุ"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                {TOPUP_METHODS.map((method) => (
+                  <ToggleRow
+                    key={method.key}
+                    checked={topup[method.key] !== false}
+                    onChange={(v) => setTopup((s) => ({ ...s, [method.key]: v }))}
+                    title={method.label}
+                    desc={method.desc}
+                    disabled={busy}
+                  />
+                ))}
+              </div>
+
+              <div className="border-t pt-4 flex flex-col gap-4">
+                <div className="text-sm font-semibold text-foreground">ตั้งค่าบัญชีรับเงิน (PromptPay & TrueMoney)</div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="promptpay_target" className="text-xs">
+                        หมายเลข PromptPay (เบอร์โทร / บัตรประชาชน / PromptPay ID)
+                      </Label>
+                      {topup.promptpay_target ? (
+                        <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                          ✓ ใช้งาน: {formatPhoneNumber(topup.promptpay_target)}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                          ยังไม่ระบุ
+                        </span>
+                      )}
+                    </div>
+                    <Input
+                      id="promptpay_target"
+                      placeholder="เช่น 0952501621 หรือ 1xxxxxxxxxxxx"
+                      value={String(topup.promptpay_target ?? "")}
+                      onChange={(e) => setTopup((s) => ({ ...s, promptpay_target: e.target.value }))}
+                      disabled={busy}
+                    />
+                    <p className="text-[11px] text-muted-foreground">ใช้สำหรับสร้าง QR Code พร้อมเพย์รับชำระเงิน</p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="promptpay_name" className="text-xs">
+                        ชื่อบัญชี PromptPay (แสดงให้ลูกค้าตรวจสอบ)
+                      </Label>
+                      {Boolean(topup.promptpay_name) && (
+                        <span className="text-[11px] text-muted-foreground bg-muted px-2 py-0.5 rounded border">
+                          {String(topup.promptpay_name)}
+                        </span>
+                      )}
+                    </div>
+                    <Input
+                      id="promptpay_name"
+                      placeholder="เช่น พร้อมเพย์ (PromptPay) หรือชื่อ-นามสกุล"
+                      value={String(topup.promptpay_name ?? "")}
+                      onChange={(e) => setTopup((s) => ({ ...s, promptpay_name: e.target.value }))}
+                      disabled={busy}
+                    />
+                    <p className="text-[11px] text-muted-foreground">ชื่อบัญชีที่จะปรากฏบนหน้าสแกน QR เพื่อให้ลูกค้าตรวจสอบ</p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 max-w-md">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="truemoney_phone" className="text-xs">
+                      เบอร์โทรศัพท์รับเงิน TrueMoney Wallet (Voucher Phone)
+                    </Label>
+                    {topup.truemoney_phone ? (
+                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        ✓ ใช้เบอร์นี้อยู่: {formatPhoneNumber(topup.truemoney_phone)}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                        ยังไม่ระบุเบอร์
+                      </span>
+                    )}
+                  </div>
+                  <Input
+                    id="truemoney_phone"
+                    placeholder="เช่น 0952501621"
+                    value={String(topup.truemoney_phone ?? "")}
+                    onChange={(e) => setTopup((s) => ({ ...s, truemoney_phone: e.target.value }))}
+                    disabled={busy}
+                  />
+                  <p className="text-[11px] text-muted-foreground">เบอร์ TrueMoney Wallet ที่ระบบจะใช้ดึงเงินจากซองของขวัญอัตโนมัติ</p>
+                </div>
+              </div>
             </CardContent>
           </Card>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button size="sm" onClick={() => saveSection("topup")} disabled={busy}>
+              บันทึกทั้งหมดของหน้านี้ (ระบบเติมเงิน)
+            </Button>
+            <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+              บันทึกทั้งหมด
+            </Button>
+          </div>
         </TabsContent>
 
         {/* ── Auto-assign (its own endpoint, so its own save) ──── */}
@@ -521,9 +751,14 @@ export function SettingsManager({
                   })}
                 </div>
               </Field>
-              <Button size="sm" className="self-start" onClick={saveAutoAssign} disabled={busy}>
-                บันทึกการมอบหมายงาน
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={saveAutoAssign} disabled={busy}>
+                  บันทึกทั้งหมดของหน้านี้ (มอบหมายงาน)
+                </Button>
+                <Button variant="outline" size="sm" onClick={save} disabled={busy}>
+                  บันทึกทั้งหมด
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

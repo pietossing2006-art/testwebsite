@@ -47,10 +47,9 @@ export const env = Object.freeze({
     process.env.ALLOW_LOCAL_DEV_ORIGINS,
     process.env.NODE_ENV !== 'production',
   ),
-  ALLOW_NULL_ORIGIN: parseBoolean(
-    process.env.ALLOW_NULL_ORIGIN,
-    process.env.NODE_ENV !== 'production',
-  ),
+  // Off unless explicitly requested: "Origin: null" covers sandboxed iframes and data: URLs,
+  // which is exactly what a cross-site attacker can arrange.
+  ALLOW_NULL_ORIGIN: parseBoolean(process.env.ALLOW_NULL_ORIGIN, false),
   PG: {
     host: process.env.PGHOST || 'localhost',
     port: process.env.PGPORT ? Number(process.env.PGPORT) : 5432,
@@ -63,6 +62,11 @@ export const env = Object.freeze({
     CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET || '',
     BOT_TOKEN: process.env.DISCORD_BOT_TOKEN || '',
     REDIRECT_URI: process.env.DISCORD_REDIRECT_URI || '',
+  },
+  GOOGLE: {
+    CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
+    CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
+    REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI || '',
   },
   SERVE_CLIENT: parseBoolean(process.env.SERVE_CLIENT, process.env.NODE_ENV === 'production'),
 })

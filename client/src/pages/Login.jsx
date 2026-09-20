@@ -19,10 +19,43 @@ function discordErrorMessage(code) {
   return `Discord login ไม่สำเร็จ${raw ? `: ${raw}` : ''}`
 }
 
+function googleErrorMessage(code) {
+  const raw = String(code || '').trim()
+  if (!raw) return ''
+  const [value, detailRaw] = raw.split(':')
+  const detail = detailRaw ? decodeURIComponent(detailRaw) : ''
+
+  if (value === 'banned') return 'บัญชีนี้ถูกระงับการใช้งาน'
+  if (value === 'not_configured' || value === 'google_login_not_configured') return 'Google login ยังไม่ได้ตั้งค่าบนเซิร์ฟเวอร์'
+  if (value === 'access_denied') return 'คุณยกเลิกการเข้าสู่ระบบด้วย Google'
+  if (value === 'user_already_linked') return 'บัญชีเว็บนี้ถูกผูกกับ Google อื่นอยู่แล้ว'
+  if (value === 'invalid_state') return 'Google login หมดอายุ กรุณาลองใหม่'
+  if (value === 'token_exchange_failed') return `Google แลก token ไม่สำเร็จ${detail ? ` (${detail})` : ''}`
+  if (value === 'profile_failed') return `ดึงข้อมูลบัญชี Google ไม่สำเร็จ${detail ? ` (${detail})` : ''}`
+  if (value === 'db_unique_violation') return 'บันทึกบัญชี Google ลงฐานข้อมูลไม่สำเร็จ เพราะข้อมูลซ้ำ'
+  if (value === 'google_login_failed') return `Google login ไม่สำเร็จ${detail ? `: ${detail}` : ' กรุณาลองใหม่'}`
+  return `Google login ไม่สำเร็จ${raw ? `: ${raw}` : ''}`
+}
+
+// Social logins that land on a 2FA-protected account come back here carrying a temp token,
+// so the challenge screen can be seeded on the very first render.
+function readOauth2faChallenge(search) {
+  const params = new URLSearchParams(search || '')
+  if (params.get('two_factor') !== '1') return null
+  const tempToken = params.get('temp_token') || ''
+  if (!tempToken) return null
+  return {
+    tempToken,
+    type: params.get('two_factor_type') === 'email' ? 'email' : 'totp',
+    maskedEmail: params.get('email_masked') || '',
+  }
+}
+
 export default function Login() {
   const loc = useLocation()
   const searchParams = new URLSearchParams(loc.search)
   const returnTo = searchParams.get('return_to') || '/'
+  const oauth2fa = readOauth2faChallenge(loc.search)
 
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
@@ -34,17 +67,21 @@ export default function Login() {
   const [retryAfterSeconds, setRetryAfterSeconds] = useState(0)
 
   // 2FA Challenge States
-  const [twoFactorRequired, setTwoFactorRequired] = useState(false)
-  const [twoFactorType, setTwoFactorType] = useState('totp') // 'totp' | 'email'
-  const [tempToken, setTempToken] = useState('')
-  const [maskedEmail, setMaskedEmail] = useState('')
+  const [twoFactorRequired, setTwoFactorRequired] = useState(Boolean(oauth2fa))
+  const [twoFactorType, setTwoFactorType] = useState(oauth2fa?.type || 'totp') // 'totp' | 'email'
+  const [tempToken, setTempToken] = useState(oauth2fa?.tempToken || '')
+  const [maskedEmail, setMaskedEmail] = useState(oauth2fa?.maskedEmail || '')
   const [twoFactorCode, setTwoFactorCode] = useState('')
   const [useBackupCode, setUseBackupCode] = useState(false)
-  const [resendCooldown, setResendCooldown] = useState(0)
+  const [rememberDevice, setRememberDevice] = useState(true)
+  const [resendCooldown, setResendCooldown] = useState(oauth2fa?.type === 'email' ? 60 : 0)
 
   const [discordConfig, setDiscordConfig] = useState({ enabled: false, loaded: false })
   const [googleConfig, setGoogleConfig] = useState({ enabled: false, loaded: false })
   const discordErrorText = discordErrorMessage(searchParams.get('discord_error'))
+  const googleErrorText = googleErrorMessage(searchParams.get('google_error'))
+  const clientOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+  const oauthQuery = `return_to=${encodeURIComponent(returnTo)}&remember=${remember ? '1' : '0'}&client_origin=${encodeURIComponent(clientOrigin)}`
 
   useEffect(() => {
     let cancelled = false
@@ -60,12 +97,26 @@ export default function Login() {
       }
       if (googRes.status === 'fulfilled') {
         setGoogleConfig({ enabled: Boolean(googRes.value?.enabled), loaded: true })
+      } else {
+        setGoogleConfig({ enabled: false, loaded: true })
       }
     })
     return () => {
       cancelled = true
     }
   }, [])
+
+  // Keep the temp token out of the address bar (and out of the browser history).
+  useEffect(() => {
+    if (!oauth2fa) return
+    const params = new URLSearchParams(window.location.search)
+    params.delete('two_factor')
+    params.delete('temp_token')
+    params.delete('two_factor_type')
+    params.delete('email_masked')
+    const query = params.toString()
+    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`)
+  }, [oauth2fa])
 
   // Lockout countdown timer effect
   useEffect(() => {
@@ -104,10 +155,16 @@ export default function Login() {
     setStatus('submitting')
     setErrorText('')
     try {
+      const trustedDeviceToken = localStorage.getItem('trusted_device_token') || ''
       const data = await fetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ login, password, remember }),
+        body: JSON.stringify({
+          login,
+          password,
+          remember,
+          trusted_device_token: trustedDeviceToken,
+        }),
       })
 
       if (data?.two_factor_required) {
@@ -121,6 +178,10 @@ export default function Login() {
           setResendCooldown(60)
         }
         return
+      }
+
+      if (data?.trusted_device_token) {
+        localStorage.setItem('trusted_device_token', data.trusted_device_token)
       }
 
       setAuthToken(data?.token ?? null)
@@ -157,8 +218,13 @@ export default function Login() {
           temp_token: tempToken,
           code: twoFactorCode.trim(),
           is_backup_code: useBackupCode,
+          remember_device: rememberDevice,
         }),
       })
+
+      if (data?.trusted_device_token) {
+        localStorage.setItem('trusted_device_token', data.trusted_device_token)
+      }
 
       setAuthToken(data?.token ?? null)
       setStatus('success')
@@ -247,6 +313,22 @@ export default function Login() {
                 </div>
               )}
 
+              <div className="flex items-start gap-3 rounded-2xl border border-sky-100 bg-sky-50/60 p-3 text-left">
+                <input
+                  id="remember-device"
+                  type="checkbox"
+                  checked={rememberDevice}
+                  onChange={(e) => setRememberDevice(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded-md border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                />
+                <label htmlFor="remember-device" className="text-xs font-semibold text-slate-700 cursor-pointer select-none leading-tight">
+                  จดจำอุปกรณ์นี้ (30 วัน)
+                  <span className="block mt-0.5 text-[11px] font-normal text-slate-500">
+                    ไม่ต้องกรอกรหัสยืนยัน 2FA ซ้ำเมื่อเข้าสู่ระบบจากอุปกรณ์นี้
+                  </span>
+                </label>
+              </div>
+
               <button
                 type="submit"
                 disabled={status === 'submitting' || !twoFactorCode.trim()}
@@ -294,6 +376,12 @@ export default function Login() {
             {discordErrorText ? (
               <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50/90 p-3.5 text-xs font-bold text-amber-900 shadow-xs">
                 ⚠️ {discordErrorText}
+              </div>
+            ) : null}
+
+            {googleErrorText ? (
+              <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50/90 p-3.5 text-xs font-bold text-amber-900 shadow-xs">
+                ⚠️ {googleErrorText}
               </div>
             ) : null}
 
@@ -401,7 +489,7 @@ export default function Login() {
             </form>
 
             {/* Social Logins */}
-            {discordConfig.enabled ? (
+            {discordConfig.enabled || googleConfig.enabled ? (
               <div className="mt-6">
                 <div className="relative flex items-center justify-center">
                   <div className="absolute inset-0 flex items-center">
@@ -413,15 +501,32 @@ export default function Login() {
                 </div>
 
                 <div className="mt-4 space-y-2">
-                  <a
-                    href={resolveApiUrl('/api/auth/discord/login')}
-                    className="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-700 shadow-2xs transition hover:border-[#5865F2] hover:bg-[#5865F2]/5 hover:text-[#5865F2]"
-                  >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.894a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
-                    </svg>
-                    <span>ดำเนินการต่อด้วย Discord</span>
-                  </a>
+                  {discordConfig.enabled ? (
+                    <a
+                      href={resolveApiUrl(`/api/auth/discord?${oauthQuery}`)}
+                      className="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-[#5865F2]/20 bg-[#5865F2] py-2.5 text-xs font-bold text-white shadow-md shadow-[#5865F2]/20 transition hover:bg-[#4752C4] hover:shadow-lg"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515a.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0a12.64 12.64 0 0 0-.617-1.25a.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057a19.9 19.9 0 0 0 5.993 3.03a.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106a13.107 13.107 0 0 1-1.872-.892a.077.077 0 0 1-.008-.128a10.2 10.2 0 0 0 .372-.292a.074.074 0 0 1 .077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127a12.299 12.299 0 0 1-1.873.894a.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028a19.839 19.839 0 0 0 6.002-3.03a.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.956-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419c0-1.333.955-2.419 2.157-2.419c1.21 0 2.176 1.096 2.157 2.42c0 1.333-.946 2.418-2.157 2.418z"/>
+                      </svg>
+                      <span>ลงชื่อเข้าใช้ด้วย Discord</span>
+                    </a>
+                  ) : null}
+
+                  {googleConfig.enabled ? (
+                    <a
+                      href={resolveApiUrl(`/api/auth/google?${oauthQuery}`)}
+                      className="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-700 shadow-md shadow-slate-500/10 transition hover:bg-slate-50 hover:shadow-lg"
+                    >
+                      <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill="#4285F4" d="M21.6 12.227c0-.709-.064-1.39-.182-2.045H12v3.868h5.382a4.6 4.6 0 0 1-1.996 3.018v2.51h3.232c1.891-1.742 2.982-4.305 2.982-7.351z"/>
+                        <path fill="#34A853" d="M12 22c2.7 0 4.964-.895 6.618-2.422l-3.232-2.51c-.895.6-2.04.955-3.386.955-2.605 0-4.81-1.759-5.596-4.123H3.064v2.59A9.996 9.996 0 0 0 12 22z"/>
+                        <path fill="#FBBC05" d="M6.404 13.9a5.999 5.999 0 0 1 0-3.8V7.51H3.064a10.003 10.003 0 0 0 0 8.98l3.34-2.59z"/>
+                        <path fill="#EA4335" d="M12 5.977c1.468 0 2.786.505 3.823 1.496l2.868-2.868C16.959 2.99 14.695 2 12 2a9.996 9.996 0 0 0-8.936 5.51l3.34 2.59C7.19 7.736 9.395 5.977 12 5.977z"/>
+                      </svg>
+                      <span>ลงชื่อเข้าใช้ด้วย Google</span>
+                    </a>
+                  ) : null}
                 </div>
               </div>
             ) : null}

@@ -1,11 +1,13 @@
 const COOKIE_NAME = 'auth_token'
 const COOKIE_CONSENT_NAME = 'cookie_consent'
+const COOKIE_TRUSTED_DEVICE = 'trusted_device'
 const COOKIE_MAX_AGE_REMEMBER_MS = 1000 * 60 * 60 * 24 * 30
 const COOKIE_MAX_AGE_SESSION_MS = 1000 * 60 * 60 * 24
 const COOKIE_CONSENT_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 180
+const COOKIE_MAX_AGE_TRUSTED_DEVICE_MS = 1000 * 60 * 60 * 24 * 30
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on'])
 
-export { COOKIE_NAME, COOKIE_CONSENT_NAME }
+export { COOKIE_NAME, COOKIE_CONSENT_NAME, COOKIE_TRUSTED_DEVICE }
 export { cookieDomain, cookieSameSite }
 
 export function isSecureCookie(req) {
@@ -56,6 +58,37 @@ export function clearAuthCookie(res, { secure = false } = {}) {
     domain: cookieDomain(res.req),
     path: '/',
   })
+}
+
+export function setTrustedDeviceCookie(res, token, { secure = false } = {}) {
+  res.cookie(COOKIE_TRUSTED_DEVICE, token, {
+    httpOnly: true,
+    sameSite: cookieSameSite(res.req, secure),
+    secure: Boolean(secure),
+    domain: cookieDomain(res.req),
+    maxAge: COOKIE_MAX_AGE_TRUSTED_DEVICE_MS,
+    path: '/',
+  })
+}
+
+export function clearTrustedDeviceCookie(res, { secure = false } = {}) {
+  res.clearCookie(COOKIE_TRUSTED_DEVICE, {
+    httpOnly: true,
+    sameSite: cookieSameSite(res.req, secure),
+    secure: Boolean(secure),
+    domain: cookieDomain(res.req),
+    path: '/',
+  })
+}
+
+export function getTrustedDeviceToken(req) {
+  const cookieVal = req?.cookies?.[COOKIE_TRUSTED_DEVICE]
+  if (typeof cookieVal === 'string' && cookieVal.trim()) return cookieVal.trim()
+  const headerVal = req?.headers?.['x-trusted-device']
+  if (typeof headerVal === 'string' && headerVal.trim()) return headerVal.trim()
+  const bodyVal = req?.body?.trusted_device_token
+  if (typeof bodyVal === 'string' && bodyVal.trim()) return bodyVal.trim()
+  return null
 }
 
 export function normalizeConsentInput(raw) {

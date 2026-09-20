@@ -1,10 +1,39 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { resolveApiUrl } from '../api.js'
 import { connectTrackerSocket } from '../socket.js'
-import './tracker-isolation.css'
+import './tracker.css'
 
 const SOCKET_FALLBACK_INTERVAL = 30000
 const API = '/api/tracker'
+const PAGE_SIZE = 240
+const FONT_HREF = 'https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Work+Sans:wght@400;500;600&display=swap'
+
+// Behaviour switches mirrored from the design mockup.
+const REQUIRE_ALL_CATEGORIES = false
+const DEFAULT_CHECK_STATUS = 'ok' // 'ok' preselects "ปกติ", null leaves the checklist blank
+
+const FALLBACK_CATEGORIES = [
+  { key: 'structure', label: 'โครงสร้าง / พื้น-ผนัง-ฝ้าเพดาน' },
+  { key: 'doors', label: 'ประตู-หน้าต่าง' },
+  { key: 'electric', label: 'ระบบไฟฟ้า-แสงสว่าง' },
+  { key: 'plumbing', label: 'ระบบประปา-สุขาภิบาล' },
+  { key: 'ac', label: 'เครื่องปรับอากาศ' },
+  { key: 'fixtures', label: 'เฟอร์นิเจอร์บิลท์อิน/สุขภัณฑ์' },
+]
+
+const UNIT_STATUS = {
+  pending: { label: 'รอตรวจ', cls: '' },
+  ok: { label: 'ตรวจแล้ว ปกติ', cls: 'is-ok' },
+  issue: { label: 'พบปัญหา', cls: 'is-issue' },
+  skipped: { label: 'ข้าม', cls: 'is-skipped' },
+}
+
+const ISSUE_STATUS = {
+  pending: 'รอดำเนินการ',
+  in_progress: 'กำลังซ่อม',
+  done: 'เสร็จแล้ว',
+}
+const ISSUE_ORDER = ['pending', 'in_progress', 'done']
 
 function getRoomIdFromPath() {
   if (typeof window === 'undefined') return ''
@@ -35,19 +64,11 @@ function formatUnitLabel(unitNumber, prefix, totalRooms) {
   return `${prefix}${String(unitNumber).padStart(numberWidth(totalRooms), '0')}`
 }
 
-function unitDomSafeId(unitName) {
-  return unitName.replace(/[^a-zA-Z0-9_-]/g, '-')
-}
-
-function getSortValue(str) {
-  try {
-    const parts = str.split('/')
-    const lastPart = parts[parts.length - 1]
-    const num = parseInt(lastPart, 10)
-    return Number.isNaN(num) ? str : num
-  } catch {
-    return str
-  }
+function formatThaiDate(isoString) {
+  if (!isoString) return ''
+  const date = new Date(isoString)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 function formatRelativeTime(isoString) {
@@ -60,81 +81,117 @@ function formatRelativeTime(isoString) {
   if (diffMin < 60) return `${diffMin} นาทีที่แล้ว`
   const diffHour = Math.floor(diffMin / 60)
   if (diffHour < 24) return `${diffHour} ชั่วโมงที่แล้ว`
-  const diffDay = Math.floor(diffHour / 24)
-  return `${diffDay} วันที่แล้ว`
+  return `${Math.floor(diffHour / 24)} วันที่แล้ว`
+}
+
+// Splits 1..total into range chips (the mockup's "building" filter); rooms
+// here have no building, so number ranges stand in for it.
+function buildRangeGroups(total, prefix) {
+  const size = total > 400 ? 100 : total > 120 ? 50 : total > 40 ? 20 : 0
+  if (!size) return []
+  const groups = []
+  for (let start = 1; start <= total; start += size) {
+    const end = Math.min(total, start + size - 1)
+    groups.push({
+      key: `${start}-${end}`,
+      start,
+      end,
+      label: `${formatUnitLabel(start, prefix, total)} – ${String(end).padStart(numberWidth(total), '0')}`,
+    })
+  }
+  return groups
+}
+
+function Chip({ active, onClick, children }) {
+  return (
+    <button type="button" className={`tk-chip ${active ? 'is-active' : ''}`} onClick={onClick}>
+      {children}
+    </button>
+  )
+}
+
+function Badge({ status }) {
+  const meta = UNIT_STATUS[status] || UNIT_STATUS.pending
+  return <span className={`tk-badge ${meta.cls}`}>{meta.label}</span>
 }
 
 export default function Tracker() {
   const [sessions, setSessions] = useState([])
   const [activeSession, setActiveSession] = useState(null)
-  const [checkedUnits, setCheckedUnits] = useState(new Set())
-  const [markedUnits, setMarkedUnits] = useState(new Set())
+  const [checkedUnits, setCheckedUnits] = useState(() => new Set())
+  const [markedUnits, setMarkedUnits] = useState(() => new Set())
+  const [inspections, setInspections] = useState(() => new Map())
+  const [issues, setIssues] = useState([])
+  const [categories, setCategories] = useState(FALLBACK_CATEGORIES)
   const [online, setOnline] = useState(true)
   const [roomsLoaded, setRoomsLoaded] = useState(false)
   const [currentRoomId, setCurrentRoomId] = useState(getRoomIdFromPath)
   const [roomStateLoading, setRoomStateLoading] = useState(Boolean(getRoomIdFromPath()))
+
   const [joinPassword, setJoinPassword] = useState('')
   const [joinFeedback, setJoinFeedback] = useState('')
   const [joinSubmitting, setJoinSubmitting] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [currentFilter, setCurrentFilter] = useState('all')
-  const [currentView, setCurrentView] = useState('grid')
-  const [unitInput, setUnitInput] = useState('')
-  const [feedback, setFeedback] = useState({ text: '', type: '', visible: false })
-  const [inputBorder, setInputBorder] = useState('')
-  const [latestHighlightedUnit, setLatestHighlightedUnit] = useState(null)
-  const [selectedUnit, setSelectedUnit] = useState(null)
-  const [modalOpen, setModalOpen] = useState(false)
-  const [sessionModalOpen, setSessionModalOpen] = useState(false)
-  const [editMode, setEditMode] = useState(false)
-  const [editValue, setEditValue] = useState('')
-  const [modalFeedback, setModalFeedback] = useState({ text: '', type: '', visible: false })
-  const [sessionForm, setSessionForm] = useState({ name: '', password: '', guest_name: '', prefix: '42/', total: '755' })
-  const [sessionFeedback, setSessionFeedback] = useState({ text: '', type: '', visible: false })
   const [lobbySearch, setLobbySearch] = useState('')
+  const [sessionModalOpen, setSessionModalOpen] = useState(false)
+  const [sessionForm, setSessionForm] = useState({ name: '', password: '', guest_name: '', prefix: '42/', total: '755' })
+  const [sessionFeedback, setSessionFeedback] = useState('')
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false)
   const [roomNameDraft, setRoomNameDraft] = useState('')
-  const [roomSettingsFeedback, setRoomSettingsFeedback] = useState({ text: '', type: '', visible: false })
+  const [roomSettingsFeedback, setRoomSettingsFeedback] = useState('')
   const [roomActionBusy, setRoomActionBusy] = useState(false)
 
-  const unitInputRef = useRef(null)
+  const [view, setView] = useState('units') // units | inspect | issues
+  const [activeUnit, setActiveUnit] = useState(null)
+  const [draft, setDraft] = useState({})
+  const [rangeFilter, setRangeFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [issueFilter, setIssueFilter] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [layout, setLayout] = useState('grid')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const [saving, setSaving] = useState(false)
+  const [busyIssueId, setBusyIssueId] = useState(null)
+  const [toast, setToast] = useState(null)
+
+  const toastTimer = useRef(null)
   const backdropPointerStartedRef = useRef(false)
 
   const prefix = activeSession?.prefix || '42/'
-  const totalRooms = Number(activeSession?.total_rooms || 755)
+  const totalRooms = Number(activeSession?.total_rooms || 0)
 
-  const handleBackdropPointerDown = useCallback((event) => {
-    backdropPointerStartedRef.current = event.target === event.currentTarget
+  const showToast = useCallback((text, type = 'info') => {
+    setToast({ text, type })
+    clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2500)
   }, [])
-
-  const handleBackdropClick = useCallback((event, close) => {
-    if (backdropPointerStartedRef.current && event.target === event.currentTarget) {
-      close()
-    }
-    backdropPointerStartedRef.current = false
-  }, [])
-
-  const allUnitsList = useMemo(() => {
-    const list = []
-    for (let i = 1; i <= totalRooms; i += 1) {
-      list.push(formatUnitLabel(i, prefix, totalRooms))
-    }
-    return list
-  }, [prefix, totalRooms])
 
   const applyState = useCallback((data) => {
     setSessions(data.rooms || data.sessions || [])
     setActiveSession(data.active_room || data.active_session || null)
     setCheckedUnits(new Set(data.units || []))
     setMarkedUnits(new Set(data.marked || []))
+    setInspections(new Map((data.inspections || []).map((item) => [Number(item.unit_number), item])))
+    setIssues(data.issues || [])
+    if (Array.isArray(data.categories) && data.categories.length) setCategories(data.categories)
+  }, [])
+
+  const resetRoomData = useCallback(() => {
+    setActiveSession(null)
+    setCheckedUnits(new Set())
+    setMarkedUnits(new Set())
+    setInspections(new Map())
+    setIssues([])
+    setView('units')
+    setActiveUnit(null)
   }, [])
 
   const loadRooms = useCallback(async () => {
     try {
       const data = await trackerFetch('/rooms')
       setSessions(data.rooms || [])
-      setRoomsLoaded(true)
     } catch {
+      // lobby stays with whatever it had
+    } finally {
       setRoomsLoaded(true)
     }
   }, [])
@@ -149,171 +206,170 @@ export default function Tracker() {
   const loadData = useCallback(async () => {
     if (!activeSession?.id) return
     try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/state`)
-      applyState(data)
-      setOnline(true)
+      await loadRoomState(activeSession.id)
     } catch {
       setOnline(false)
     }
-  }, [activeSession?.id, applyState])
+  }, [activeSession?.id, loadRoomState])
 
   useEffect(() => {
-    let cancelled = false
-    loadRooms().finally(() => {
-      if (!cancelled) setRoomsLoaded(true)
-    })
+    loadRooms()
     const onPopState = () => setCurrentRoomId(getRoomIdFromPath())
     window.addEventListener('popstate', onPopState)
-    return () => {
-      cancelled = true
-      window.removeEventListener('popstate', onPopState)
-    }
+    return () => window.removeEventListener('popstate', onPopState)
   }, [loadRooms])
 
   useEffect(() => {
     if (!currentRoomId) {
       setRoomStateLoading(false)
-      setActiveSession(null)
-      setCheckedUnits(new Set())
-      setMarkedUnits(new Set())
-      return
+      resetRoomData()
+      return undefined
     }
     let cancelled = false
     setRoomStateLoading(true)
     setJoinFeedback('')
-    loadRoomState(currentRoomId).then(() => {
-      if (!cancelled) setRoomStateLoading(false)
-    }).catch((err) => {
-      if (cancelled) return
-      setActiveSession(null)
-      setCheckedUnits(new Set())
-      setMarkedUnits(new Set())
-      if (err.status !== 401) setOnline(false)
-      setRoomStateLoading(false)
-    })
+    loadRoomState(currentRoomId)
+      .catch((err) => {
+        if (cancelled) return
+        resetRoomData()
+        if (err.status !== 401) setOnline(false)
+      })
+      .finally(() => {
+        if (!cancelled) setRoomStateLoading(false)
+      })
     return () => {
       cancelled = true
     }
-  }, [currentRoomId, loadRoomState])
+  }, [currentRoomId, loadRoomState, resetRoomData])
 
   useEffect(() => {
     if (!activeSession?.id) return undefined
-
     const socket = connectTrackerSocket(activeSession.id)
-    const initialTimer = setTimeout(() => {
-      loadData()
-    }, 0)
-
-    const onConnect = () => {
-      setOnline(true)
-      loadData()
-    }
-    const onDisconnect = () => {
-      setOnline(false)
-    }
-    const onConnectError = () => {
-      setOnline(false)
-    }
+    const onConnect = () => { setOnline(true); loadData() }
+    const onDisconnect = () => setOnline(false)
     const onTrackerUpdate = (data) => {
       if (data?.deleted) {
-        if (typeof window !== 'undefined') window.history.pushState({}, '', '/tracker')
+        window.history.pushState({}, '', '/tracker')
         setCurrentRoomId('')
-        setActiveSession(null)
+        resetRoomData()
         loadRooms()
-        setFeedback({ text: '🗑️ ห้องนี้ถูกลบแล้ว', type: 'error', visible: true })
+        showToast('ห้องนี้ถูกลบแล้ว', 'error')
         return
       }
       applyState(data || {})
       setOnline(true)
     }
-
     socket.on('connect', onConnect)
     socket.on('disconnect', onDisconnect)
-    socket.on('connect_error', onConnectError)
+    socket.on('connect_error', onDisconnect)
     socket.on('tracker_update', onTrackerUpdate)
-
     const timer = setInterval(() => {
       if (!socket.connected) loadData()
     }, SOCKET_FALLBACK_INTERVAL)
-
     return () => {
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
-      socket.off('connect_error', onConnectError)
+      socket.off('connect_error', onDisconnect)
       socket.off('tracker_update', onTrackerUpdate)
-      clearTimeout(initialTimer)
       clearInterval(timer)
     }
-  }, [activeSession?.id, applyState, loadData, loadRooms])
+  }, [activeSession?.id, applyState, loadData, loadRooms, resetRoomData, showToast])
 
   useEffect(() => {
-    document.title = '🔑 Unit Key Tracker - ระบบบันทึกคีย์ห้องชุด'
+    document.title = 'ตรวจห้องชุด - ระบบตรวจห้องชุด'
     document.body.classList.add('tracker-page')
-
-    let link = document.querySelector('link[data-tracker-css]')
+    let link = document.querySelector('link[data-tracker-font]')
     if (!link) {
       link = document.createElement('link')
       link.rel = 'stylesheet'
-      link.setAttribute('data-tracker-css', '1')
+      link.href = FONT_HREF
+      link.setAttribute('data-tracker-font', '1')
       document.head.appendChild(link)
     }
-    link.href = '/tracker/style.css?v=9'
-
     return () => {
       document.body.classList.remove('tracker-page')
+      clearTimeout(toastTimer.current)
     }
   }, [])
 
   useEffect(() => {
-    if (!modalOpen && !sessionModalOpen && !roomSettingsOpen) return undefined
+    if (!sessionModalOpen && !roomSettingsOpen) return undefined
     const onKeyDown = (e) => {
       if (e.key !== 'Escape') return
-      if (modalOpen) closeModal()
-      else if (roomSettingsOpen) closeRoomSettings()
-      else if (sessionModalOpen) setSessionModalOpen(false)
+      setSessionModalOpen(false)
+      setRoomSettingsOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [modalOpen, sessionModalOpen, roomSettingsOpen])
+  }, [sessionModalOpen, roomSettingsOpen])
 
-  const showFeedback = (text, type, autoHide = true) => {
-    setFeedback({ text, type, visible: true })
-    if (autoHide) {
-      setTimeout(() => {
-        setFeedback((prev) => (prev.text === text ? { text: '', type: '', visible: false } : prev))
-      }, 4000)
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [rangeFilter, statusFilter, searchQuery, activeSession?.id])
+
+  // ---------- derived data ----------
+  const unitStatusOf = useCallback((unitNumber) => {
+    const code = formatUnitLabel(unitNumber, prefix, totalRooms)
+    if (markedUnits.has(code)) return 'skipped'
+    const inspection = inspections.get(unitNumber)
+    if (inspection) return inspection.result === 'issue' ? 'issue' : 'ok'
+    if (checkedUnits.has(code)) return 'ok'
+    return 'pending'
+  }, [prefix, totalRooms, markedUnits, inspections, checkedUnits])
+
+  const allUnits = useMemo(() => {
+    const list = []
+    for (let n = 1; n <= totalRooms; n += 1) {
+      const inspection = inspections.get(n)
+      list.push({
+        n,
+        code: formatUnitLabel(n, prefix, totalRooms),
+        status: unitStatusOf(n),
+        lastInspected: inspection?.inspected_at || null,
+      })
     }
-  }
+    return list
+  }, [totalRooms, prefix, inspections, unitStatusOf])
 
-  const parseInput = (rawVal) => {
-    let parsed = rawVal.trim()
-    if (parsed.startsWith(prefix)) parsed = parsed.slice(prefix.length)
-    if (/^\d+$/.test(parsed)) parsed = String(Number(parsed)).padStart(numberWidth(totalRooms), '0')
-    return `${prefix}${parsed}`
-  }
+  const rangeGroups = useMemo(() => buildRangeGroups(totalRooms, prefix), [totalRooms, prefix])
 
-  const deferredSearchQuery = useDeferredValue(searchQuery)
-
+  const deferredSearch = useDeferredValue(searchQuery)
   const filteredUnits = useMemo(() => {
-    const combined = new Set([...allUnitsList, ...checkedUnits, ...markedUnits])
-    const unitsArray = Array.from(combined).sort((a, b) => {
-      const valA = getSortValue(a)
-      const valB = getSortValue(b)
-      if (typeof valA === 'number' && typeof valB === 'number') return valA - valB
-      return String(valA).localeCompare(String(valB))
-    })
-
-    const query = deferredSearchQuery.trim().toLowerCase()
-    return unitsArray.filter((unit) => {
-      if (!unit.toLowerCase().includes(query)) return false
-      const isChecked = checkedUnits.has(unit)
-      const isMarked = markedUnits.has(unit)
-      if (currentFilter === 'checked') return isChecked
-      if (currentFilter === 'unchecked') return !isChecked && !isMarked
-      if (currentFilter === 'marked') return isMarked
+    const query = deferredSearch.trim().toLowerCase()
+    const range = rangeGroups.find((g) => g.key === rangeFilter)
+    return allUnits.filter((u) => {
+      if (range && (u.n < range.start || u.n > range.end)) return false
+      if (statusFilter !== 'all' && u.status !== statusFilter) return false
+      if (query && !u.code.toLowerCase().includes(query) && !String(u.n).includes(query)) return false
       return true
     })
-  }, [allUnitsList, checkedUnits, markedUnits, deferredSearchQuery, currentFilter])
+  }, [allUnits, rangeGroups, rangeFilter, statusFilter, deferredSearch])
+
+  const counts = useMemo(() => {
+    const c = { ok: 0, issue: 0, skipped: 0, pending: 0 }
+    for (const u of allUnits) c[u.status] += 1
+    return c
+  }, [allUnits])
+
+  // Per-range breakdown for the summary tab; falls back to one row for small rooms.
+  const rangeSummary = useMemo(() => {
+    const groups = rangeGroups.length
+      ? rangeGroups
+      : [{ key: 'all', start: 1, end: totalRooms, label: `${formatUnitLabel(1, prefix, totalRooms)} – ${formatUnitLabel(totalRooms, prefix, totalRooms)}` }]
+    return groups.map((g) => {
+      const row = { ...g, total: g.end - g.start + 1, ok: 0, issue: 0, skipped: 0, pending: 0 }
+      for (let n = g.start; n <= g.end; n += 1) row[allUnits[n - 1].status] += 1
+      row.inspected = row.ok + row.issue
+      row.percent = row.total ? (row.inspected / row.total) * 100 : 0
+      return row
+    })
+  }, [rangeGroups, allUnits, totalRooms, prefix])
+
+  const openIssues = useMemo(() => issues.filter((i) => i.status !== 'done'), [issues])
+  const filteredIssues = useMemo(
+    () => (issueFilter === 'all' ? issues : issues.filter((i) => i.status === issueFilter)),
+    [issues, issueFilter],
+  )
 
   const deferredLobbySearch = useDeferredValue(lobbySearch)
   const filteredSessions = useMemo(() => {
@@ -322,54 +378,43 @@ export default function Tracker() {
     return sessions.filter((room) => room.name.toLowerCase().includes(query))
   }, [sessions, deferredLobbySearch])
 
-  const count = checkedUnits.size
-  const markedCount = markedUnits.size
-  const percentage = totalRooms ? ((count / totalRooms) * 100).toFixed(2) : '0.00'
-  const exampleUnit = formatUnitLabel(Math.min(5, totalRooms), prefix, totalRooms)
-  const dashboardTitle = activeSession
-    ? `แดชบอร์ดแสดงผลห้องทั้งหมด (${formatUnitLabel(1, prefix, totalRooms)} - ${formatUnitLabel(totalRooms, prefix, totalRooms)})`
-    : 'แดชบอร์ดแสดงผลห้องทั้งหมด'
-
-  const handleUnitInput = (value) => {
-    setUnitInput(value)
-    const rawVal = value.trim()
-    if (!rawVal) {
-      setFeedback({ text: '', type: '', visible: false })
-      setInputBorder('')
-      return
-    }
-    const fullUnitName = parseInput(rawVal)
-    if (markedUnits.has(fullUnitName)) {
-      setFeedback({ text: `⚠️ ห้อง '${fullUnitName}' มาร์คไว้ว่ายังไม่มีข้อมูล/กรอกไม่ได้`, type: 'error', visible: true })
-      setInputBorder('var(--pink-color)')
-    } else if (checkedUnits.has(fullUnitName)) {
-      setFeedback({ text: `⚠️ ซ้ำ! ห้อง '${fullUnitName}' ถูกคีย์ไปแล้ว`, type: 'error', visible: true })
-      setInputBorder('var(--danger-color)')
-    } else {
-      setFeedback({ text: `🟢 ห้อง '${fullUnitName}' ยังไม่ถูกบันทึก (กด Enter เพื่อบันทึก)`, type: 'success', visible: true })
-      setInputBorder('var(--success-color)')
-    }
-  }
-
+  // ---------- navigation ----------
   const navigateToRoom = (roomId, replace = false) => {
     const url = `/tracker/rooms/${encodeURIComponent(roomId)}`
-    if (typeof window !== 'undefined') {
-      if (replace) window.history.replaceState({}, '', url)
-      else window.history.pushState({}, '', url)
-    }
+    if (replace) window.history.replaceState({}, '', url)
+    else window.history.pushState({}, '', url)
     setCurrentRoomId(String(roomId))
   }
 
   const navigateToLobby = () => {
-    if (typeof window !== 'undefined') window.history.pushState({}, '', '/tracker')
+    window.history.pushState({}, '', '/tracker')
     setCurrentRoomId('')
-    setActiveSession(null)
+    resetRoomData()
     loadRooms()
   }
 
+  const openInspect = (unitNumber) => {
+    const existing = inspections.get(unitNumber)?.checklist || {}
+    const next = {}
+    for (const c of categories) {
+      const prev = existing[c.key]
+      next[c.key] = prev ? { status: prev.status ?? null, note: prev.note || '' } : { status: DEFAULT_CHECK_STATUS, note: '' }
+    }
+    setDraft(next)
+    setActiveUnit(unitNumber)
+    setView('inspect')
+    window.scrollTo({ top: 0 })
+  }
+
+  const backToUnits = () => {
+    setView('units')
+    setActiveUnit(null)
+    window.scrollTo({ top: 0 })
+  }
+
+  // ---------- room actions ----------
   const handleJoinRoom = async (e) => {
     e.preventDefault()
-    if (!currentRoomId) return
     const password = joinPassword.trim()
     if (!password) {
       setJoinFeedback('กรอกรหัสห้องก่อน')
@@ -393,185 +438,9 @@ export default function Tracker() {
     }
   }
 
-  const highlightUnit = (unitName) => {
-    setTimeout(() => {
-      const safeId = unitDomSafeId(unitName)
-      const id = currentView === 'grid' ? `cell-${safeId}` : `list-item-${safeId}`
-      const el = document.getElementById(id)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        el.classList.add('latest-pulse')
-        setTimeout(() => el.classList.remove('latest-pulse'), 900)
-      }
-    }, 100)
-  }
-
-  const handleAdd = async (e) => {
-    e.preventDefault()
-    const rawVal = unitInput.trim()
-    if (!rawVal) return
-    const fullUnitName = parseInput(rawVal)
-    if (markedUnits.has(fullUnitName)) {
-      showFeedback(`⚠️ ห้อง '${fullUnitName}' มาร์คไว้ว่ายังไม่มีข้อมูล/กรอกไม่ได้ (กรุณาปลดมาร์คก่อน)`, 'error')
-      unitInputRef.current?.select()
-      setInputBorder('var(--pink-color)')
-      return
-    }
-    if (checkedUnits.has(fullUnitName)) {
-      showFeedback(`⚠️ ซ้ำ! ห้อง '${fullUnitName}' ถูกคีย์ไปแล้ว`, 'error')
-      unitInputRef.current?.select()
-      return
-    }
-    try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/units`, { method: 'POST', body: JSON.stringify({ unit: fullUnitName }) })
-      setLatestHighlightedUnit(data.unit)
-      applyState(data)
-      showFeedback(`✅ บันทึก '${data.unit}' สำเร็จ!`, 'success')
-      setUnitInput('')
-      setInputBorder('')
-      unitInputRef.current?.focus()
-      highlightUnit(data.unit)
-    } catch (err) {
-      showFeedback(`⚠️ ${err.message}`, 'error')
-      unitInputRef.current?.select()
-    }
-  }
-
-  const openModal = (unit) => {
-    setSelectedUnit(unit)
-    setEditMode(false)
-    setModalFeedback({ text: '', type: '', visible: false })
-    setModalOpen(true)
-  }
-
-  const closeModal = () => {
-    setModalOpen(false)
-    setSelectedUnit(null)
-    setEditMode(false)
-    setModalFeedback({ text: '', type: '', visible: false })
-  }
-
-  const modalStatus = useMemo(() => {
-    if (!selectedUnit) return { text: '', color: '', isChecked: false, isMarked: false }
-    const isChecked = checkedUnits.has(selectedUnit)
-    const isMarked = markedUnits.has(selectedUnit)
-    if (isMarked) return { text: '🌸 ยังไม่มีข้อมูล / ยังกรอกไม่ได้', color: 'var(--pink-color)', isChecked, isMarked }
-    if (isChecked) return { text: '✅ บันทึกคีย์เรียบร้อยแล้ว', color: 'var(--success-color)', isChecked, isMarked }
-    return { text: '❌ ยังไม่ได้คีย์บันทึกคีย์', color: 'var(--danger-color)', isChecked, isMarked }
-  }, [selectedUnit, checkedUnits, markedUnits])
-
-  const handleModalToggle = async () => {
-    if (!selectedUnit) return
-    try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/units`, { method: 'POST', body: JSON.stringify({ unit: selectedUnit }) })
-      setLatestHighlightedUnit(data.unit)
-      applyState(data)
-      closeModal()
-    } catch (err) {
-      setModalFeedback({ text: err.message, type: 'error', visible: true })
-    }
-  }
-
-  const handleModalDelete = async () => {
-    if (!selectedUnit) return
-    if (!window.confirm(`คุณต้องการยกเลิกการบันทึกคีย์ห้อง ${selectedUnit} ใช่หรือไม่?`)) return
-    try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/units/${encodeURIComponent(selectedUnit)}`, { method: 'DELETE' })
-      applyState(data)
-      closeModal()
-      showFeedback(`🗑️ ยกเลิกการคีย์ห้อง '${selectedUnit}' แล้ว`, 'success')
-    } catch (err) {
-      setModalFeedback({ text: err.message, type: 'error', visible: true })
-    }
-  }
-
-  const handleModalMark = async () => {
-    if (!selectedUnit) return
-    try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/marked/${encodeURIComponent(selectedUnit)}/toggle`, { method: 'POST' })
-      applyState(data)
-      closeModal()
-      const actionText = data.action === 'unmarked'
-        ? `ปลดมาร์คห้อง '${selectedUnit}' แล้ว`
-        : `มาร์คห้อง '${selectedUnit}' ว่าไม่มีข้อมูลแล้ว`
-      showFeedback(`🌸 ${actionText}`, 'success')
-    } catch (err) {
-      setModalFeedback({ text: err.message, type: 'error', visible: true })
-    }
-  }
-
-  const handleSaveEdit = async () => {
-    if (!selectedUnit || !editValue.trim()) {
-      setModalFeedback({ text: 'กรุณากรอกหมายเลขห้องใหม่', type: 'error', visible: true })
-      return
-    }
-    try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/units`, {
-        method: 'PUT',
-        body: JSON.stringify({ old_unit: selectedUnit, new_unit: editValue.trim() }),
-      })
-      setLatestHighlightedUnit(data.unit)
-      applyState(data)
-      closeModal()
-      showFeedback(`✏️ แก้ไขห้องเป็น '${data.unit}' เรียบร้อย`, 'success')
-      highlightUnit(data.unit)
-    } catch (err) {
-      setModalFeedback({ text: err.message, type: 'error', visible: true })
-    }
-  }
-
-  const handleSessionChange = async (sessionId) => {
-    if (sessionId) navigateToRoom(sessionId)
-  }
-
-  const openRoomSettings = () => {
-    setRoomNameDraft(activeSession?.name || '')
-    setRoomSettingsFeedback({ text: '', type: '', visible: false })
-    setRoomSettingsOpen(true)
-  }
-
-  const closeRoomSettings = () => {
-    setRoomSettingsOpen(false)
-    setRoomSettingsFeedback({ text: '', type: '', visible: false })
-  }
-
-  const handleRenameRoom = async (e) => {
-    e.preventDefault()
-    if (!activeSession?.id || !roomNameDraft.trim()) return
-    setRoomActionBusy(true)
-    try {
-      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name: roomNameDraft.trim() }),
-      })
-      applyState(data)
-      closeRoomSettings()
-      showFeedback('✅ เปลี่ยนชื่อห้องแล้ว', 'success')
-    } catch (err) {
-      setRoomSettingsFeedback({ text: err.message, type: 'error', visible: true })
-    } finally {
-      setRoomActionBusy(false)
-    }
-  }
-
-  const handleDeleteRoom = async () => {
-    if (!activeSession?.id) return
-    if (!window.confirm(`ลบห้อง '${activeSession.name}' และข้อมูลทั้งหมดในห้องนี้ใช่หรือไม่? การกระทำนี้ย้อนกลับไม่ได้`)) return
-    setRoomActionBusy(true)
-    try {
-      await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}`, { method: 'DELETE' })
-      closeRoomSettings()
-      navigateToLobby()
-      showFeedback('🗑️ ลบห้องแล้ว', 'success')
-    } catch (err) {
-      setRoomSettingsFeedback({ text: err.message, type: 'error', visible: true })
-    } finally {
-      setRoomActionBusy(false)
-    }
-  }
-
   const handleCreateSession = async (e) => {
     e.preventDefault()
+    setSessionFeedback('')
     try {
       const data = await trackerFetch('/rooms', {
         method: 'POST',
@@ -587,35 +456,148 @@ export default function Tracker() {
       setSessionForm({ name: '', password: '', guest_name: '', prefix: '42/', total: '755' })
       setSessionModalOpen(false)
       navigateToRoom(data.active_room.id, true)
-      showFeedback(`✅ สร้างห้อง '${data.active_room.name}' แล้ว`, 'success')
+      showToast(`สร้างห้อง '${data.active_room.name}' แล้ว`)
     } catch (err) {
-      setSessionFeedback({ text: err.message, type: 'error', visible: true })
+      setSessionFeedback(err.message)
     }
   }
 
-  const joinTargetRoom = sessions.find((room) => room.id === currentRoomId)
-
-  if (!roomsLoaded) {
-    return (
-      <div className="tracker-auth-screen">
-        <div className="tracker-auth-card">
-          <div className="auth-spinner" aria-hidden="true" />
-          <div className="logo-icon">🏠</div>
-          <h1>Unit Key Tracker</h1>
-          <p>กำลังโหลดห้อง...</p>
-        </div>
-      </div>
-    )
+  const openRoomSettings = () => {
+    setRoomNameDraft(activeSession?.name || '')
+    setRoomSettingsFeedback('')
+    setRoomSettingsOpen(true)
   }
 
-  if (currentRoomId && !activeSession && roomStateLoading) {
+  const handleRenameRoom = async (e) => {
+    e.preventDefault()
+    if (!activeSession?.id || !roomNameDraft.trim()) return
+    setRoomActionBusy(true)
+    try {
+      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: roomNameDraft.trim() }),
+      })
+      applyState(data)
+      setRoomSettingsOpen(false)
+      showToast('เปลี่ยนชื่อห้องแล้ว')
+    } catch (err) {
+      setRoomSettingsFeedback(err.message)
+    } finally {
+      setRoomActionBusy(false)
+    }
+  }
+
+  const handleDeleteRoom = async () => {
+    if (!activeSession?.id) return
+    if (!window.confirm(`ลบห้อง '${activeSession.name}' และข้อมูลทั้งหมดในห้องนี้ใช่หรือไม่? การกระทำนี้ย้อนกลับไม่ได้`)) return
+    setRoomActionBusy(true)
+    try {
+      await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}`, { method: 'DELETE' })
+      setRoomSettingsOpen(false)
+      navigateToLobby()
+      showToast('ลบห้องแล้ว')
+    } catch (err) {
+      setRoomSettingsFeedback(err.message)
+    } finally {
+      setRoomActionBusy(false)
+    }
+  }
+
+  // ---------- inspection actions ----------
+  const setCatStatus = (key, status) => setDraft((d) => ({ ...d, [key]: { ...d[key], status } }))
+  const setCatNote = (key, note) => setDraft((d) => ({ ...d, [key]: { ...d[key], note } }))
+  const canSave = !REQUIRE_ALL_CATEGORIES || categories.every((c) => draft[c.key]?.status)
+
+  const saveInspection = async () => {
+    if (!activeSession?.id || !activeUnit || !canSave || saving) return
+    const code = formatUnitLabel(activeUnit, prefix, totalRooms)
+    setSaving(true)
+    try {
+      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/inspections`, {
+        method: 'PUT',
+        body: JSON.stringify({ unit: activeUnit, checklist: draft }),
+      })
+      applyState(data)
+      backToUnits()
+      showToast(`บันทึกผลตรวจห้อง ${code} แล้ว`)
+    } catch (err) {
+      showToast(err.message || 'บันทึกไม่สำเร็จ', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const clearInspection = async () => {
+    if (!activeSession?.id || !activeUnit) return
+    const code = formatUnitLabel(activeUnit, prefix, totalRooms)
+    if (!window.confirm(`ล้างผลตรวจห้อง ${code} และงานซ่อมที่ยังไม่เสร็จของห้องนี้?`)) return
+    setSaving(true)
+    try {
+      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/inspections/${activeUnit}`, { method: 'DELETE' })
+      applyState(data)
+      backToUnits()
+      showToast(`ล้างผลตรวจห้อง ${code} แล้ว`)
+    } catch (err) {
+      showToast(err.message || 'ล้างผลตรวจไม่สำเร็จ', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleSkip = async () => {
+    if (!activeSession?.id || !activeUnit) return
+    const code = formatUnitLabel(activeUnit, prefix, totalRooms)
+    setSaving(true)
+    try {
+      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/marked/${activeUnit}/toggle`, { method: 'POST' })
+      applyState(data)
+      backToUnits()
+      showToast(data.action === 'marked' ? `ข้ามห้อง ${code} แล้ว` : `ยกเลิกข้ามห้อง ${code} แล้ว`)
+    } catch (err) {
+      showToast(err.message || 'ทำรายการไม่สำเร็จ', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const cycleIssueStatus = async (issue) => {
+    if (!activeSession?.id || busyIssueId) return
+    const next = ISSUE_ORDER[(ISSUE_ORDER.indexOf(issue.status) + 1) % ISSUE_ORDER.length]
+    setBusyIssueId(issue.id)
+    try {
+      const data = await trackerFetch(`/rooms/${encodeURIComponent(activeSession.id)}/issues/${encodeURIComponent(issue.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: next }),
+      })
+      applyState(data)
+    } catch (err) {
+      showToast(err.message || 'อัปเดตสถานะไม่สำเร็จ', 'error')
+    } finally {
+      setBusyIssueId(null)
+    }
+  }
+
+  const handleBackdropPointerDown = (event) => {
+    backdropPointerStartedRef.current = event.target === event.currentTarget
+  }
+  const handleBackdropClick = (event, close) => {
+    if (backdropPointerStartedRef.current && event.target === event.currentTarget) close()
+    backdropPointerStartedRef.current = false
+  }
+
+  const joinTargetRoom = sessions.find((room) => room.id === currentRoomId)
+  const toastEl = toast ? <div className={`tk-toast ${toast.type === 'error' ? 'is-error' : ''}`}>{toast.text}</div> : null
+
+  // ---------- screens ----------
+  if (!roomsLoaded || (currentRoomId && !activeSession && roomStateLoading)) {
     return (
-      <div className="tracker-auth-screen">
-        <div className="tracker-auth-card">
-          <div className="auth-spinner" aria-hidden="true" />
-          <div className="logo-icon">🔐</div>
-          <h1>{joinTargetRoom?.name || 'กำลังเข้าห้อง'}</h1>
-          <p>กำลังตรวจสอบสิทธิ์เข้าห้อง...</p>
+      <div className="tk">
+        <div className="tk-auth">
+          <div className="tk-auth-card">
+            <div className="tk-spinner" aria-hidden="true" />
+            <h1>{joinTargetRoom?.name || 'ตรวจห้องชุด'}</h1>
+            <p>{currentRoomId ? 'กำลังตรวจสอบสิทธิ์เข้าห้อง...' : 'กำลังโหลดห้อง...'}</p>
+          </div>
         </div>
       </div>
     )
@@ -623,463 +605,441 @@ export default function Tracker() {
 
   if (currentRoomId && !activeSession) {
     return (
-      <div className="tracker-auth-screen">
-        <form className="tracker-auth-card" onSubmit={handleJoinRoom}>
-          <div className="logo-icon">🔑</div>
-          <h1>{joinTargetRoom?.name || 'เข้าห้อง'}</h1>
-          <p>กรอกรหัสของห้องนี้เพื่อเข้า dashboard</p>
-          <input
-            type="password"
-            value={joinPassword}
-            onChange={(e) => setJoinPassword(e.target.value)}
-            placeholder="รหัสห้อง"
-            autoFocus
-            autoComplete="current-password"
-          />
-          {joinFeedback ? <div className="tracker-auth-error">{joinFeedback}</div> : null}
-          <button type="submit" className="btn btn-success" disabled={joinSubmitting}>
-            {joinSubmitting ? 'กำลังเข้าห้อง...' : 'เข้าห้อง'}
-          </button>
-          <button type="button" className="btn btn-primary" onClick={navigateToLobby}>กลับ Lobby</button>
-        </form>
+      <div className="tk">
+        <div className="tk-auth">
+          <form className="tk-auth-card" onSubmit={handleJoinRoom}>
+            <div className="tk-logo" style={{ margin: '0 auto 4px' }} aria-hidden="true" />
+            <h1>{joinTargetRoom?.name || 'เข้าห้อง'}</h1>
+            <p>กรอกรหัสของห้องนี้เพื่อเข้าตรวจห้องชุด</p>
+            <div className="tk-field">
+              <label htmlFor="tk-join-password">รหัสห้อง</label>
+              <input
+                id="tk-join-password"
+                type="password"
+                value={joinPassword}
+                onChange={(e) => setJoinPassword(e.target.value)}
+                autoFocus
+                autoComplete="current-password"
+              />
+            </div>
+            {joinFeedback ? <div className="tk-error">{joinFeedback}</div> : null}
+            <button type="submit" className="tk-btn" disabled={joinSubmitting}>
+              {joinSubmitting ? 'กำลังเข้าห้อง...' : 'เข้าห้อง'}
+            </button>
+            <button type="button" className="tk-btn is-ghost" onClick={navigateToLobby}>← กลับหน้ารวมห้อง</button>
+          </form>
+        </div>
       </div>
     )
   }
 
   if (!activeSession) {
     return (
-      <div className="tracker-lobby">
-        <aside className="lobby-sidebar">
-          <div className="brand">
-            <div className="logo-icon">🔑</div>
-            <div className="brand-text">
-              <h1>Unit Key Tracker</h1>
-              <span className="subtext">Room Lobby</span>
+      <div className="tk">
+        <div className="tk-header">
+          <div className="tk-brand">
+            <div className="tk-logo" aria-hidden="true" />
+            <div>
+              <div className="tk-brand-title">ตรวจห้องชุด</div>
+              <div className="tk-brand-sub">เลือกโครงการ/ห้องเพื่อเริ่มตรวจ</div>
             </div>
           </div>
-          <button type="button" className="btn btn-success lobby-create-btn" onClick={() => setSessionModalOpen(true)}>สร้างห้อง</button>
-        </aside>
-        <main className="lobby-main">
-          <header className="lobby-header">
+          <button type="button" className="tk-btn" onClick={() => { setSessionFeedback(''); setSessionModalOpen(true) }}>+ สร้างห้องใหม่</button>
+        </div>
+        <div className="tk-lobby">
+          <div className="tk-lobby-head">
             <div>
-              <h1>Active Rooms</h1>
-              <p>เลือกห้อง</p>
+              <h1 className="tk-h1">ห้องทั้งหมด</h1>
+              <p className="tk-sub">{filteredSessions.length} / {sessions.length} ห้อง</p>
             </div>
-            <span>{filteredSessions.length} / {sessions.length} ห้อง</span>
-          </header>
-          {sessions.length > 6 ? (
-            <div className="search-box lobby-search-box">
-              <span className="search-icon">🔍</span>
-              <input
-                type="text"
-                value={lobbySearch}
-                onChange={(e) => setLobbySearch(e.target.value)}
-                placeholder="ค้นหาชื่อห้อง..."
-              />
-              {lobbySearch ? (
-                <button type="button" className="clear-btn" style={{ display: 'block' }} onClick={() => setLobbySearch('')}>&times;</button>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="lobby-grid">
+            {sessions.length > 6 ? (
+              <div className="tk-search">
+                <input type="text" value={lobbySearch} onChange={(e) => setLobbySearch(e.target.value)} placeholder="ค้นหาชื่อห้อง..." />
+                {lobbySearch ? <button type="button" onClick={() => setLobbySearch('')} aria-label="ล้างคำค้น">×</button> : null}
+              </div>
+            ) : null}
+          </div>
+          <div className="tk-room-grid">
             {filteredSessions.map((room) => (
-              <article key={room.id} className="room-card">
-                <div className="room-card-head">
-                  <h2>{room.name}</h2>
-                  <span>OPEN</span>
+              <article key={room.id} className="tk-room">
+                <h2>{room.name}</h2>
+                <div className="tk-room-meta">
+                  <span>ตรวจแล้ว {room.checked_count || 0} / {room.total_rooms}</span>
+                  {room.issue_unit_count ? <span>พบปัญหา {room.issue_unit_count}</span> : null}
+                  {room.open_issue_count ? <span>งานซ่อมค้าง {room.open_issue_count}</span> : null}
                 </div>
-                <div className="room-card-meta">
-                  <span>✅ {room.checked_count || 0} / {room.total_rooms}</span>
-                  <span>🌸 {room.marked_count || 0}</span>
-                </div>
-                <p>Prefix: {room.prefix}</p>
-                <p>Owner: {room.created_by_guest_name || (room.created_by_user_id ? `User #${room.created_by_user_id}` : 'guest')}</p>
-                {room.last_active_at ? <p className="room-card-active">🕓 ใช้งานล่าสุด {formatRelativeTime(room.last_active_at)}</p> : null}
-                <button type="button" className="btn btn-primary" onClick={() => navigateToRoom(room.id)}>Join</button>
+                <p>เลขห้อง {formatUnitLabel(1, room.prefix, room.total_rooms)} – {formatUnitLabel(room.total_rooms, room.prefix, room.total_rooms)}</p>
+                <p>ผู้สร้าง: {room.created_by_guest_name || (room.created_by_user_id ? `User #${room.created_by_user_id}` : 'guest')}</p>
+                {room.last_active_at ? <p>ใช้งานล่าสุด {formatRelativeTime(room.last_active_at)}</p> : null}
+                <button type="button" className="tk-btn" onClick={() => navigateToRoom(room.id)}>เข้าห้อง</button>
               </article>
             ))}
           </div>
-          {!sessions.length ? <div className="empty-lobby">ยังไม่มีห้อง สร้างห้องแรกได้เลย</div> : null}
-          {sessions.length && !filteredSessions.length ? <div className="empty-lobby">ไม่พบห้องที่ตรงกับ &quot;{lobbySearch}&quot;</div> : null}
-        </main>
+          {!sessions.length ? <div className="tk-empty">ยังไม่มีห้อง สร้างห้องแรกได้เลย</div> : null}
+          {sessions.length && !filteredSessions.length ? <div className="tk-empty">ไม่พบห้องที่ตรงกับ “{lobbySearch}”</div> : null}
+        </div>
+
         {sessionModalOpen ? (
-          <div
-            className="modal active"
-            onPointerDown={handleBackdropPointerDown}
-            onClick={(e) => handleBackdropClick(e, () => setSessionModalOpen(false))}
-          >
-            <div className="modal-content glass">
-              <span className="close-modal" onClick={() => setSessionModalOpen(false)} role="button" tabIndex={0}>&times;</span>
-              <div className="modal-header">
-                <span className="modal-icon">🏠</span>
+          <div className="tk-modal" onPointerDown={handleBackdropPointerDown} onClick={(e) => handleBackdropClick(e, () => setSessionModalOpen(false))}>
+            <form className="tk-modal-card" onSubmit={handleCreateSession} autoComplete="off">
+              <div className="tk-modal-head">
                 <h3>สร้างห้องใหม่</h3>
+                <button type="button" className="tk-iconbtn" onClick={() => setSessionModalOpen(false)} aria-label="ปิด">×</button>
               </div>
-              <form id="session-form" onSubmit={handleCreateSession} autoComplete="off">
-                <label className="field-label" htmlFor="session-name-input">ชื่อห้อง</label>
-                <div className="input-group">
-                  <input id="session-name-input" value={sessionForm.name} onChange={(e) => setSessionForm((f) => ({ ...f, name: e.target.value }))} placeholder="เช่น ห้อง 2 - NOOBS ONLY" required />
+              <div className="tk-field">
+                <label htmlFor="tk-session-name">ชื่อห้อง / โครงการ</label>
+                <input id="tk-session-name" value={sessionForm.name} onChange={(e) => setSessionForm((f) => ({ ...f, name: e.target.value }))} placeholder="เช่น อาคาร A" required />
+              </div>
+              <div className="tk-field">
+                <label htmlFor="tk-session-password">รหัสห้อง</label>
+                <input id="tk-session-password" type="password" value={sessionForm.password} onChange={(e) => setSessionForm((f) => ({ ...f, password: e.target.value }))} placeholder="ตั้งรหัสสำหรับเข้าห้อง" required />
+              </div>
+              <div className="tk-field">
+                <label htmlFor="tk-session-guest">ชื่อผู้สร้าง</label>
+                <input id="tk-session-guest" value={sessionForm.guest_name} onChange={(e) => setSessionForm((f) => ({ ...f, guest_name: e.target.value }))} placeholder="เช่น Noble" />
+              </div>
+              <div className="tk-field-row">
+                <div className="tk-field">
+                  <label htmlFor="tk-session-prefix">Prefix เลขห้อง</label>
+                  <input id="tk-session-prefix" value={sessionForm.prefix} onChange={(e) => setSessionForm((f) => ({ ...f, prefix: e.target.value }))} placeholder="42/" required />
                 </div>
-                <label className="field-label" htmlFor="session-password-input">รหัสห้อง</label>
-                <div className="input-group">
-                  <input id="session-password-input" type="password" value={sessionForm.password} onChange={(e) => setSessionForm((f) => ({ ...f, password: e.target.value }))} placeholder="ตั้งรหัสห้อง" required />
+                <div className="tk-field">
+                  <label htmlFor="tk-session-total">จำนวนห้อง</label>
+                  <input id="tk-session-total" type="number" min="1" max="10000" value={sessionForm.total} onChange={(e) => setSessionForm((f) => ({ ...f, total: e.target.value }))} placeholder="755" required />
                 </div>
-                <label className="field-label" htmlFor="session-guest-input">ชื่อผู้สร้าง (guest)</label>
-                <div className="input-group">
-                  <input id="session-guest-input" value={sessionForm.guest_name} onChange={(e) => setSessionForm((f) => ({ ...f, guest_name: e.target.value }))} placeholder="เช่น Noble" />
-                </div>
-                <div className="session-form-row">
-                  <div>
-                    <label className="field-label" htmlFor="session-prefix-input">Prefix</label>
-                    <div className="input-group">
-                      <input id="session-prefix-input" value={sessionForm.prefix} onChange={(e) => setSessionForm((f) => ({ ...f, prefix: e.target.value }))} placeholder="42/" required />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="field-label" htmlFor="session-total-input">จำนวนห้อง</label>
-                    <div className="input-group">
-                      <input id="session-total-input" type="number" min="1" max="10000" value={sessionForm.total} onChange={(e) => setSessionForm((f) => ({ ...f, total: e.target.value }))} placeholder="755" required />
-                    </div>
-                  </div>
-                </div>
-                {sessionFeedback.visible ? <div className={`feedback-message ${sessionFeedback.type}`}>{sessionFeedback.text}</div> : null}
-                <button type="submit" className="btn btn-primary session-submit" style={{ marginTop: 12, width: '100%' }}>สร้างห้อง</button>
-              </form>
-            </div>
+              </div>
+              {sessionFeedback ? <div className="tk-error">{sessionFeedback}</div> : null}
+              <button type="submit" className="tk-btn">สร้างห้อง</button>
+            </form>
           </div>
         ) : null}
+        {toastEl}
       </div>
     )
   }
 
+  const activeUnitCode = activeUnit ? formatUnitLabel(activeUnit, prefix, totalRooms) : ''
+  const activeUnitStatus = activeUnit ? unitStatusOf(activeUnit) : 'pending'
+  const activeInspection = activeUnit ? inspections.get(activeUnit) : null
+  const inspectedCount = counts.ok + counts.issue
+  const remainingCount = counts.pending
+  const pct = (n) => (totalRooms ? (n / totalRooms) * 100 : 0)
+  const percent = Math.round(pct(inspectedCount))
+  const fmtPct = (n) => `${pct(n).toFixed(1)}%`
+  const visibleUnits = filteredUnits.slice(0, visibleCount)
+
   return (
-    <>
-    <div className="app-container">
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="logo-icon">🔑</div>
-            <div className="brand-text">
-              <h1>Unit Key Tracker</h1>
-              <span className="subtext">ระบบบันทึกคีย์ห้องชุด</span>
+    <div className="tk">
+      <div className="tk-header">
+        <div className="tk-brand">
+          <div className="tk-logo" aria-hidden="true" />
+          <div style={{ minWidth: 0 }}>
+            <div className="tk-brand-title">ตรวจห้องชุด</div>
+            <div className="tk-brand-sub">
+              <span>{activeSession.name}</span>
+              <span>·</span>
+              <button type="button" className="tk-linkbtn" onClick={navigateToLobby}>เปลี่ยนห้อง</button>
             </div>
           </div>
-
-          <div className="session-bar">
-            <button type="button" className="session-new-btn" onClick={navigateToLobby} title="กลับ Lobby">←</button>
-            <select
-              value={activeSession?.id || ''}
-              onChange={(e) => handleSessionChange(e.target.value)}
-              aria-label="เลือกห้อง"
-            >
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            <button type="button" className="session-new-btn" onClick={openRoomSettings} title="ตั้งค่าห้อง">⚙️</button>
-          </div>
-
-          <div className="stats-card">
-            <div className="progress-info">
-              <div className="progress-text">
-                <span className="label">บันทึกคีย์แล้ว</span>
-                <span className="percentage">{percentage}%</span>
-              </div>
-              <span className="count">{count} / {totalRooms} ห้อง</span>
-            </div>
-            <div className="progress-bar-container">
-              <div className="progress-bar-fill" style={{ width: `${Math.min(Number(percentage), 100)}%` }} />
-            </div>
-            <div className="sync-status">
-              <span className={`status-dot ${online ? 'online' : 'offline'}`} />
-              <span className="status-text">{online ? 'เชื่อมต่อเซิร์ฟเวอร์แล้ว' : 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้'}</span>
-              {markedCount > 0 ? <span className="marked-count">🌸 {markedCount} ห้อง</span> : null}
-            </div>
-          </div>
-
-          <div className="card form-card">
-            <h2>📥 บันทึกข้อมูลคีย์ใหม่</h2>
-            <p className="input-tip">พิมพ์เลขห้องแล้วกด Enter ได้เลย! (เช่น 5 -&gt; {exampleUnit})</p>
-            <form onSubmit={handleAdd} autoComplete="off">
-              <div className="input-group" style={inputBorder ? { borderColor: inputBorder } : undefined}>
-                <span className="prefix">{prefix}</span>
-                <input
-                  ref={unitInputRef}
-                  type="text"
-                  value={unitInput}
-                  onChange={(e) => handleUnitInput(e.target.value)}
-                  placeholder={`เลขห้อง (เช่น ${String(1).padStart(numberWidth(totalRooms), '0')}, ${String(Math.min(150, totalRooms)).padStart(numberWidth(totalRooms), '0')})`}
-                  required
-                  autoFocus
-                />
-                <button type="submit" className="btn btn-success">
-                  <span className="btn-icon">➕</span> บันทึก
-                </button>
-              </div>
-            </form>
-            {feedback.visible ? (
-              <div className={`feedback-message ${feedback.type}`}>{feedback.text}</div>
-            ) : null}
-          </div>
-
-          <div className="card filter-card">
-            <h2>🔍 ค้นหาและกรองข้อมูล</h2>
-            <div className="search-box">
-              <span className="search-icon">🔍</span>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="ค้นหาหมายเลขห้อง..."
-              />
-              {searchQuery ? (
-                <button type="button" className="clear-btn" style={{ display: 'block' }} onClick={() => setSearchQuery('')}>&times;</button>
-              ) : null}
-            </div>
-            <div className="filter-buttons">
-              {[
-                ['all', 'ทั้งหมด'],
-                ['checked', '✅ บันทึกแล้ว'],
-                ['unchecked', '❌ ยังไม่บันทึก'],
-                ['marked', '🌸 ไม่มีข้อมูล'],
-              ].map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={`filter-btn ${currentFilter === key ? 'active' : ''}`}
-                  onClick={() => setCurrentFilter(key)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="footer-info">
-            <button type="button" className="session-add-link" onClick={navigateToLobby}>← กลับ Lobby</button>
-            <p>Cloudflare Tunnel Active 🌐</p>
-            <p>Domain: <span id="domain-display">{typeof window !== 'undefined' ? window.location.hostname : 'key.vxpers.com'}</span></p>
-          </div>
-        </aside>
-
-        <main id="dashboard" className="dashboard">
-          <header className="dashboard-header">
-            <div className="title-area">
-              <h2>{dashboardTitle}</h2>
-              <p className="subtitle">คลิกที่ห้องเพื่อบันทึกหรือจัดการรายละเอียด</p>
-            </div>
-            <div className="view-toggles">
-              <button type="button" className={`toggle-btn ${currentView === 'grid' ? 'active' : ''}`} onClick={() => setCurrentView('grid')}>🔳 ตาราง (Grid)</button>
-              <button type="button" className={`toggle-btn ${currentView === 'list' ? 'active' : ''}`} onClick={() => setCurrentView('list')}>📃 รายการ (List)</button>
-            </div>
-          </header>
-
-          <div className={`room-grid ${currentView === 'grid' ? 'active-view' : ''}`}>
-            {filteredUnits.map((unit) => {
-              const isChecked = checkedUnits.has(unit)
-              const isMarked = markedUnits.has(unit)
-              let cellClass = 'unchecked'
-              let statusIcon = '❌'
-              if (isMarked) { cellClass = 'marked'; statusIcon = '🌸' }
-              else if (isChecked) { cellClass = 'checked'; statusIcon = '✅' }
-              const displayNum = unit.startsWith(prefix) ? unit.slice(prefix.length) : unit
-              const latestClass = unit === latestHighlightedUnit ? ' latest-unit' : ''
-              return (
-                <div
-                  key={unit}
-                  id={`cell-${unitDomSafeId(unit)}`}
-                  className={`room-cell ${cellClass}${latestClass}`}
-                  onClick={() => openModal(unit)}
-                  onKeyDown={(e) => e.key === 'Enter' && openModal(unit)}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <span className="cell-prefix">{prefix}</span>
-                  <span className="cell-number">{displayNum}</span>
-                  <span className="status-icon">{statusIcon}</span>
-                </div>
-              )
-            })}
-          </div>
-
-          <div className={`room-list ${currentView === 'list' ? 'active-view' : ''}`}>
-            {filteredUnits.map((unit) => {
-              const isChecked = checkedUnits.has(unit)
-              const isMarked = markedUnits.has(unit)
-              let itemClass = 'unchecked'
-              let itemStatusText = '❌ ยังไม่บันทึก'
-              if (isMarked) { itemClass = 'marked'; itemStatusText = '🌸 ไม่มีข้อมูล' }
-              else if (isChecked) { itemClass = 'checked'; itemStatusText = '✅ บันทึกแล้ว' }
-              const latestClass = unit === latestHighlightedUnit ? ' latest-unit' : ''
-              return (
-                <div
-                  key={unit}
-                  id={`list-item-${unitDomSafeId(unit)}`}
-                  className={`room-list-item ${itemClass}${latestClass}`}
-                  onClick={() => openModal(unit)}
-                  onKeyDown={(e) => e.key === 'Enter' && openModal(unit)}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <span className="item-title">{unit}</span>
-                  <span className="item-status">{itemStatusText}</span>
-                </div>
-              )
-            })}
-          </div>
-        </main>
+        </div>
+        <div className="tk-tabs">
+          <button type="button" className={`tk-tab ${view === 'units' || view === 'inspect' ? 'is-active' : ''}`} onClick={backToUnits}>ห้องชุด</button>
+          <button type="button" className={`tk-tab ${view === 'issues' ? 'is-active' : ''}`} onClick={() => { setView('issues'); setActiveUnit(null) }}>
+            งานซ่อม
+            {openIssues.length ? <span className="tk-tab-badge">{openIssues.length}</span> : null}
+          </button>
+          <button type="button" className={`tk-tab ${view === 'summary' ? 'is-active' : ''}`} onClick={() => { setView('summary'); setActiveUnit(null) }}>สรุป</button>
+          <button type="button" className="tk-iconbtn" onClick={openRoomSettings} title="ตั้งค่าห้อง" aria-label="ตั้งค่าห้อง">⚙</button>
+        </div>
       </div>
 
-      <div className="card mobile-form-dock">
-        <h2>📥 บันทึกข้อมูลคีย์ใหม่</h2>
-        <p className="input-tip">พิมพ์เลขห้องแล้วกด Enter ได้เลย! เช่น 5 → {exampleUnit}</p>
-        <form onSubmit={handleAdd} autoComplete="off">
-          <div className="input-group" style={inputBorder ? { borderColor: inputBorder } : undefined}>
-            <span className="prefix">{prefix}</span>
-            <input
-              type="text"
-              value={unitInput}
-              onChange={(e) => handleUnitInput(e.target.value)}
-              placeholder={`เลขห้อง เช่น ${String(1).padStart(numberWidth(totalRooms), '0')}`}
-              required
-            />
-            <button type="submit" className="btn btn-success" aria-label="บันทึก">
-              <span className="btn-icon">+</span> บันทึก
-            </button>
+      <div className="tk-main">
+        {view === 'units' ? (
+          <>
+            <div className="tk-stats">
+              <span>ตรวจแล้ว <strong>{inspectedCount}</strong> / {totalRooms} ห้อง ({percent}%)</span>
+              <div className="tk-progress"><span style={{ width: `${percent}%` }} /></div>
+              {counts.issue ? <span>พบปัญหา <strong>{counts.issue}</strong></span> : null}
+              {counts.skipped ? <span>ข้าม <strong>{counts.skipped}</strong></span> : null}
+              <span className="tk-sync"><span className={`tk-dot ${online ? '' : 'is-off'}`} />{online ? 'ออนไลน์' : 'ออฟไลน์'}</span>
+            </div>
+
+            <div className="tk-toolbar">
+              {rangeGroups.length ? (
+                <>
+                  <Chip active={rangeFilter === 'all'} onClick={() => setRangeFilter('all')}>ทุกช่วง</Chip>
+                  {rangeGroups.map((g) => (
+                    <Chip key={g.key} active={rangeFilter === g.key} onClick={() => setRangeFilter(g.key)}>{g.label}</Chip>
+                  ))}
+                  <div className="tk-divider" />
+                </>
+              ) : null}
+              <Chip active={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>ทุกสถานะ</Chip>
+              <Chip active={statusFilter === 'pending'} onClick={() => setStatusFilter('pending')}>รอตรวจ</Chip>
+              <Chip active={statusFilter === 'ok'} onClick={() => setStatusFilter('ok')}>ตรวจแล้ว</Chip>
+              <Chip active={statusFilter === 'issue'} onClick={() => setStatusFilter('issue')}>พบปัญหา</Chip>
+              {counts.skipped ? <Chip active={statusFilter === 'skipped'} onClick={() => setStatusFilter('skipped')}>ข้าม</Chip> : null}
+              <div className="tk-search">
+                <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="ค้นหาเลขห้อง..." />
+                {searchQuery ? <button type="button" onClick={() => setSearchQuery('')} aria-label="ล้างคำค้น">×</button> : null}
+              </div>
+              <div className="tk-layout-toggle" role="group" aria-label="รูปแบบการแสดงผล">
+                <button type="button" className={layout === 'grid' ? 'is-active' : ''} onClick={() => setLayout('grid')}>การ์ด</button>
+                <button type="button" className={layout === 'list' ? 'is-active' : ''} onClick={() => setLayout('list')}>รายการ</button>
+              </div>
+            </div>
+
+            {layout === 'grid' ? (
+              <div className="tk-grid">
+                {visibleUnits.map((u) => (
+                  <div key={u.n} className="tk-card">
+                    <div className="tk-card-head">
+                      <div>
+                        <div className="tk-unit-code">{u.code}</div>
+                        <div className="tk-unit-meta">{activeSession.name}</div>
+                      </div>
+                      <Badge status={u.status} />
+                    </div>
+                    <div className="tk-unit-last">ตรวจล่าสุด: {u.lastInspected ? formatThaiDate(u.lastInspected) : 'ยังไม่เคยตรวจ'}</div>
+                    <button type="button" className="tk-btn" onClick={() => openInspect(u.n)}>เข้าตรวจห้อง</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="tk-list">
+                {visibleUnits.map((u) => (
+                  <div key={u.n} className="tk-row">
+                    <div className="tk-row-main">
+                      <div className="tk-unit-code">{u.code}</div>
+                      <Badge status={u.status} />
+                      <div className="tk-unit-last">ตรวจล่าสุด: {u.lastInspected ? formatThaiDate(u.lastInspected) : 'ยังไม่เคยตรวจ'}</div>
+                    </div>
+                    <button type="button" className="tk-btn is-sm" onClick={() => openInspect(u.n)}>เข้าตรวจห้อง</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {!filteredUnits.length ? <div className="tk-empty">ไม่พบห้องที่ตรงกับตัวกรอง</div> : null}
+            {filteredUnits.length > visibleCount ? (
+              <div className="tk-more">
+                <button type="button" className="tk-btn is-ghost" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+                  แสดงเพิ่ม ({filteredUnits.length - visibleCount} ห้อง)
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {view === 'inspect' && activeUnit ? (
+          <div className="tk-inspect">
+            <div className="tk-inspect-head">
+              <button type="button" className="tk-btn is-ghost is-sm" onClick={backToUnits}>← กลับ</button>
+              <div>
+                <div className="tk-unit-code">{activeUnitCode}</div>
+                <div className="tk-unit-meta">
+                  {activeSession.name}
+                  {activeInspection?.inspected_at ? ` • ตรวจล่าสุด ${formatThaiDate(activeInspection.inspected_at)}` : ''}
+                </div>
+              </div>
+              <Badge status={activeUnitStatus} />
+            </div>
+
+            <div className="tk-cats">
+              {categories.map((c) => {
+                const d = draft[c.key] || { status: null, note: '' }
+                return (
+                  <div key={c.key} className="tk-cat">
+                    <div className="tk-cat-label">{c.label}</div>
+                    <div className="tk-cat-opts">
+                      <button type="button" className={`tk-opt ${d.status === 'ok' ? 'is-ok' : ''}`} onClick={() => setCatStatus(c.key, 'ok')}>ปกติ</button>
+                      <button type="button" className={`tk-opt ${d.status === 'bad' ? 'is-bad' : ''}`} onClick={() => setCatStatus(c.key, 'bad')}>ชำรุด</button>
+                      <button type="button" className={`tk-opt ${d.status === 'na' ? 'is-na' : ''}`} onClick={() => setCatStatus(c.key, 'na')}>N/A</button>
+                    </div>
+                    {d.status === 'bad' ? (
+                      <textarea
+                        className="tk-note"
+                        value={d.note}
+                        onChange={(e) => setCatNote(c.key, e.target.value)}
+                        placeholder="ระบุรายละเอียดปัญหา..."
+                        maxLength={1000}
+                      />
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="tk-save-bar">
+              <button type="button" className="tk-save" disabled={!canSave || saving} onClick={saveInspection}>
+                {saving ? 'กำลังบันทึก...' : 'บันทึกผลตรวจ'}
+              </button>
+              <div className="tk-inspect-actions">
+                <button type="button" className="tk-btn is-ghost is-sm" disabled={saving} onClick={toggleSkip}>
+                  {activeUnitStatus === 'skipped' ? 'ยกเลิกข้ามห้องนี้' : 'ข้ามห้องนี้'}
+                </button>
+                {activeInspection || activeUnitStatus === 'ok' ? (
+                  <button type="button" className="tk-btn is-danger is-sm" disabled={saving} onClick={clearInspection}>ล้างผลตรวจ</button>
+                ) : null}
+              </div>
+              {REQUIRE_ALL_CATEGORIES && !canSave ? <div className="tk-inspect-hint">เลือกผลให้ครบทุกหมวดก่อนบันทึก</div> : null}
+            </div>
           </div>
-        </form>
-        {feedback.visible ? (
-          <div className={`feedback-message ${feedback.type}`}>{feedback.text}</div>
+        ) : null}
+
+        {view === 'summary' ? (
+          <div className="tk-summary">
+            <div className="tk-summary-hero">
+              <svg className="tk-ring" viewBox="0 0 120 120" role="img" aria-label={`ตรวจแล้ว ${fmtPct(inspectedCount)}`}>
+                <circle cx="60" cy="60" r="52" className="tk-ring-track" />
+                <circle
+                  cx="60" cy="60" r="52" className="tk-ring-fill"
+                  strokeDasharray={`${(pct(inspectedCount) / 100) * 2 * Math.PI * 52} ${2 * Math.PI * 52}`}
+                />
+                <text x="60" y="56" textAnchor="middle" className="tk-ring-value">{pct(inspectedCount).toFixed(1)}%</text>
+                <text x="60" y="74" textAnchor="middle" className="tk-ring-label">ตรวจแล้ว</text>
+              </svg>
+              <div className="tk-summary-hero-text">
+                <div className="tk-h1">{activeSession.name}</div>
+                <p className="tk-sub">ห้องทั้งหมด {totalRooms} ห้อง ({formatUnitLabel(1, prefix, totalRooms)} – {formatUnitLabel(totalRooms, prefix, totalRooms)})</p>
+                <div className="tk-progress tk-progress-lg" aria-hidden="true">
+                  <span className="is-ok" style={{ width: `${pct(counts.ok)}%` }} />
+                  <span className="is-issue" style={{ width: `${pct(counts.issue)}%` }} />
+                  <span className="is-skipped" style={{ width: `${pct(counts.skipped)}%` }} />
+                </div>
+                <div className="tk-legend">
+                  <span><i className="is-ok" />ปกติ {counts.ok}</span>
+                  <span><i className="is-issue" />พบปัญหา {counts.issue}</span>
+                  {counts.skipped ? <span><i className="is-skipped" />ข้าม {counts.skipped}</span> : null}
+                  <span><i />รอตรวจ {counts.pending}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="tk-tiles">
+              <div className="tk-tile is-ok">
+                <div className="tk-tile-label">ตรวจแล้ว</div>
+                <div className="tk-tile-value">{inspectedCount} <small>ห้อง</small></div>
+                <div className="tk-tile-pct">{fmtPct(inspectedCount)}</div>
+              </div>
+              <div className="tk-tile">
+                <div className="tk-tile-label">คงเหลือ (รอตรวจ)</div>
+                <div className="tk-tile-value">{remainingCount} <small>ห้อง</small></div>
+                <div className="tk-tile-pct">{fmtPct(remainingCount)}</div>
+              </div>
+              <div className="tk-tile is-issue">
+                <div className="tk-tile-label">พบปัญหา</div>
+                <div className="tk-tile-value">{counts.issue} <small>ห้อง</small></div>
+                <div className="tk-tile-pct">{fmtPct(counts.issue)} · งานซ่อมค้าง {openIssues.length}</div>
+              </div>
+              <div className="tk-tile is-skipped">
+                <div className="tk-tile-label">ข้าม</div>
+                <div className="tk-tile-value">{counts.skipped} <small>ห้อง</small></div>
+                <div className="tk-tile-pct">{fmtPct(counts.skipped)}</div>
+              </div>
+            </div>
+
+            <div className="tk-table-wrap">
+              <table className="tk-table">
+                <thead>
+                  <tr>
+                    <th>ช่วงห้อง</th>
+                    <th>ทั้งหมด</th>
+                    <th>ตรวจแล้ว</th>
+                    <th>คงเหลือ</th>
+                    <th>พบปัญหา</th>
+                    <th>ข้าม</th>
+                    <th>% ตรวจแล้ว</th>
+                    <th className="tk-table-bar" aria-hidden="true" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rangeSummary.map((r) => (
+                    <tr key={r.key}>
+                      <td>{r.label}</td>
+                      <td>{r.total}</td>
+                      <td>{r.inspected}</td>
+                      <td>{r.pending}</td>
+                      <td>{r.issue || '–'}</td>
+                      <td>{r.skipped || '–'}</td>
+                      <td>{r.percent.toFixed(1)}%</td>
+                      <td className="tk-table-bar"><div className="tk-progress"><span style={{ width: `${r.percent}%` }} /></div></td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td>รวม</td>
+                    <td>{totalRooms}</td>
+                    <td>{inspectedCount}</td>
+                    <td>{remainingCount}</td>
+                    <td>{counts.issue || '–'}</td>
+                    <td>{counts.skipped || '–'}</td>
+                    <td>{fmtPct(inspectedCount)}</td>
+                    <td className="tk-table-bar"><div className="tk-progress"><span style={{ width: `${percent}%` }} /></div></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        ) : null}
+
+        {view === 'issues' ? (
+          <div>
+            <div className="tk-toolbar">
+              <Chip active={issueFilter === 'all'} onClick={() => setIssueFilter('all')}>ทั้งหมด</Chip>
+              {ISSUE_ORDER.map((s) => (
+                <Chip key={s} active={issueFilter === s} onClick={() => setIssueFilter(s)}>{ISSUE_STATUS[s]}</Chip>
+              ))}
+            </div>
+            <div className="tk-list">
+              {filteredIssues.map((i) => (
+                <div key={i.id} className="tk-issue">
+                  <div>
+                    <div className="tk-issue-title">
+                      <button type="button" onClick={() => openInspect(i.unit_number)}>{i.unit}</button>
+                      {' — '}{i.category_label}
+                    </div>
+                    <div className="tk-issue-note">{i.note || '(ไม่ระบุรายละเอียด)'}</div>
+                    <div className="tk-issue-date">พบเมื่อ {formatThaiDate(i.created_at)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    className={`tk-issue-status is-${i.status}`}
+                    disabled={busyIssueId === i.id}
+                    onClick={() => cycleIssueStatus(i)}
+                    title="คลิกเพื่อเปลี่ยนสถานะ"
+                  >
+                    {ISSUE_STATUS[i.status] || i.status} →
+                  </button>
+                </div>
+              ))}
+              {!filteredIssues.length ? <div className="tk-empty">ไม่มีรายการงานซ่อมในหมวดนี้</div> : null}
+            </div>
+          </div>
         ) : null}
       </div>
 
-      {modalOpen ? (
-        <div
-          className="modal active"
-          onPointerDown={handleBackdropPointerDown}
-          onClick={(e) => handleBackdropClick(e, closeModal)}
-        >
-          <div className="modal-content glass">
-            <span className="close-modal" onClick={closeModal} onKeyDown={(e) => e.key === 'Enter' && closeModal()} role="button" tabIndex={0}>&times;</span>
-            <div className="modal-header">
-              <span className="modal-icon">🚪</span>
-              <h3>ห้อง {selectedUnit}</h3>
-            </div>
-            <div className="modal-body">
-              <p>สถานะปัจจุบัน: <span style={{ color: modalStatus.color }}>{modalStatus.text}</span></p>
-              {editMode ? (
-                <div className="edit-section active">
-                  <label htmlFor="edit-unit-input">แก้ไขหมายเลขห้อง:</label>
-                  <div className="input-group">
-                    <span className="prefix">{prefix}</span>
-                    <input
-                      id="edit-unit-input"
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSaveEdit())}
-                    />
-                  </div>
-                  {modalFeedback.visible ? <div className={`feedback-message ${modalFeedback.type}`}>{modalFeedback.text}</div> : null}
-                </div>
-              ) : null}
-            </div>
-            <div className="modal-footer">
-              {!editMode && !modalStatus.isMarked && !modalStatus.isChecked ? (
-                <button type="button" className="btn btn-primary" onClick={handleModalToggle}>✅ บันทึกคีย์</button>
-              ) : null}
-              {!editMode ? (
-                <button type="button" className="btn btn-pink" onClick={handleModalMark}>
-                  {modalStatus.isMarked ? '🔓 ปลดมาร์คสีชมพู' : '🌸 มาร์คไม่มีข้อมูล'}
-                </button>
-              ) : null}
-              {!editMode && modalStatus.isChecked ? (
-                <>
-                  <button type="button" className="btn btn-warning" onClick={() => { setEditMode(true); setEditValue(selectedUnit.startsWith(prefix) ? selectedUnit.slice(prefix.length) : selectedUnit) }}>✏️ แก้ไขเลขห้อง</button>
-                  <button type="button" className="btn btn-danger" onClick={handleModalDelete}>🗑️ ยกเลิกการคีย์</button>
-                </>
-              ) : null}
-              {editMode ? (
-                <>
-                  <button type="button" className="btn btn-success" onClick={handleSaveEdit}>💾 บันทึกที่แก้ไข</button>
-                  <button type="button" className="btn btn-secondary" onClick={() => setEditMode(false)}>ยกเลิก</button>
-                </>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {sessionModalOpen ? (
-        <div
-          className="modal active"
-          onPointerDown={handleBackdropPointerDown}
-          onClick={(e) => handleBackdropClick(e, () => setSessionModalOpen(false))}
-        >
-          <div className="modal-content glass">
-            <span className="close-modal" onClick={() => setSessionModalOpen(false)} role="button" tabIndex={0}>&times;</span>
-            <div className="modal-header">
-              <span className="modal-icon">🗂️</span>
-              <h3>สร้างโปรเจกต์ใหม่</h3>
-            </div>
-            <div className="modal-body">
-              <form id="session-form" onSubmit={handleCreateSession} autoComplete="off">
-                <label className="field-label" htmlFor="session-name-input">ชื่อ</label>
-                <div className="input-group">
-                  <input id="session-name-input" value={sessionForm.name} onChange={(e) => setSessionForm((f) => ({ ...f, name: e.target.value }))} placeholder="เช่น อาคาร A" required />
-                </div>
-                <div className="session-form-row">
-                  <div>
-                    <label className="field-label" htmlFor="session-prefix-input">Prefix</label>
-                    <div className="input-group">
-                      <input id="session-prefix-input" value={sessionForm.prefix} onChange={(e) => setSessionForm((f) => ({ ...f, prefix: e.target.value }))} placeholder="42/" required />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="field-label" htmlFor="session-total-input">จำนวนห้อง</label>
-                    <div className="input-group">
-                      <input id="session-total-input" type="number" min="1" max="10000" value={sessionForm.total} onChange={(e) => setSessionForm((f) => ({ ...f, total: e.target.value }))} placeholder="755" required />
-                    </div>
-                  </div>
-                </div>
-                {sessionFeedback.visible ? <div className={`feedback-message ${sessionFeedback.type}`}>{sessionFeedback.text}</div> : null}
-                <button type="submit" className="btn btn-primary session-submit" style={{ marginTop: 12, width: '100%' }}>สร้าง</button>
-              </form>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       {roomSettingsOpen ? (
-        <div
-          className="modal active"
-          onPointerDown={handleBackdropPointerDown}
-          onClick={(e) => handleBackdropClick(e, closeRoomSettings)}
-        >
-          <div className="modal-content glass">
-            <span className="close-modal" onClick={closeRoomSettings} role="button" tabIndex={0}>&times;</span>
-            <div className="modal-header">
-              <span className="modal-icon">⚙️</span>
+        <div className="tk-modal" onPointerDown={handleBackdropPointerDown} onClick={(e) => handleBackdropClick(e, () => setRoomSettingsOpen(false))}>
+          <form className="tk-modal-card" onSubmit={handleRenameRoom} autoComplete="off">
+            <div className="tk-modal-head">
               <h3>ตั้งค่าห้อง</h3>
+              <button type="button" className="tk-iconbtn" onClick={() => setRoomSettingsOpen(false)} aria-label="ปิด">×</button>
             </div>
-            <div className="modal-body">
-              <form onSubmit={handleRenameRoom} autoComplete="off">
-                <label className="field-label" htmlFor="room-name-input">ชื่อห้อง</label>
-                <div className="input-group">
-                  <input
-                    id="room-name-input"
-                    value={roomNameDraft}
-                    onChange={(e) => setRoomNameDraft(e.target.value)}
-                    required
-                  />
-                </div>
-                {roomSettingsFeedback.visible ? <div className={`feedback-message ${roomSettingsFeedback.type}`}>{roomSettingsFeedback.text}</div> : null}
-                <button type="submit" className="btn btn-primary session-submit" style={{ marginTop: 12, width: '100%' }} disabled={roomActionBusy}>บันทึกชื่อห้อง</button>
-              </form>
+            <div className="tk-field">
+              <label htmlFor="tk-room-name">ชื่อห้อง</label>
+              <input id="tk-room-name" value={roomNameDraft} onChange={(e) => setRoomNameDraft(e.target.value)} required />
             </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-danger" onClick={handleDeleteRoom} disabled={roomActionBusy}>🗑️ ลบห้องนี้</button>
+            <p className="tk-sub">เลขห้อง {formatUnitLabel(1, prefix, totalRooms)} – {formatUnitLabel(totalRooms, prefix, totalRooms)} ({totalRooms} ห้อง)</p>
+            {roomSettingsFeedback ? <div className="tk-error">{roomSettingsFeedback}</div> : null}
+            <div className="tk-modal-foot">
+              <button type="button" className="tk-btn is-danger" onClick={handleDeleteRoom} disabled={roomActionBusy}>ลบห้องนี้</button>
+              <button type="submit" className="tk-btn" disabled={roomActionBusy}>บันทึกชื่อห้อง</button>
             </div>
-          </div>
+          </form>
         </div>
       ) : null}
-    </>
+      {toastEl}
+    </div>
   )
 }

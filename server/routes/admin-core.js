@@ -1,5 +1,7 @@
 import { Router } from 'express'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
@@ -83,10 +85,25 @@ import { redis, QUEUE_SLA_SECONDS, QUEUE_TICK_MS, lastQueueTick, queueTimer } fr
 const router = Router()
 const storageThumbCache = createStorageMemoryCache({ maxEntries: STORAGE_THUMB_MEMORY_CACHE_MAX_ENTRIES })
 const storageFfmpegLimiter = createStorageConcurrencyLimiter(STORAGE_FFMPEG_MAX_CONCURRENCY)
+// Disk storage, not memory: a 50 x 1GB batch would otherwise be buffered in the heap and take
+// the process down long before the files ever reach the storage root.
+const storageUploadTmpDir = path.join(os.tmpdir(), 'vxpers-storage-uploads')
+fs.mkdirSync(storageUploadTmpDir, { recursive: true })
+
 const storageUploadMulter = multer({
   limits: { fileSize: 1024 * 1024 * 1024, files: 50 }, // 1GB per file, max 50 files per batch
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, storageUploadTmpDir),
+    filename: (_req, _file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}`),
+  }),
 })
+
+async function discardTempUploads(files) {
+  for (const file of Array.isArray(files) ? files : []) {
+    if (!file?.path) continue
+    await fs.promises.rm(file.path, { force: true }).catch(() => {})
+  }
+}
 
 function sendStorageThumbnail(res, { etag, contentType, output }) {
   res.setHeader('ETag', etag)
@@ -680,7 +697,12 @@ router.post('/api/admin/storage/upload', requireAuth, requireOwner, storageUploa
           targetFilePath = path.join(targetDir.absolute, finalName)
         }
 
-        await fs.promises.writeFile(targetFilePath, file.buffer)
+        await fs.promises.rename(file.path, targetFilePath).catch(async (err) => {
+          // rename fails across devices; fall back to a streaming copy.
+          if (err?.code !== 'EXDEV') throw err
+          await fs.promises.copyFile(file.path, targetFilePath)
+          await fs.promises.rm(file.path, { force: true })
+        })
         const relPath = targetDir.rel ? `${targetDir.rel}/${finalName}` : finalName
         const mediaKind = getStorageMediaKindByPath(targetFilePath)
 
@@ -698,6 +720,8 @@ router.post('/api/admin/storage/upload', requireAuth, requireOwner, storageUploa
       if (msg === 'invalid_path' || msg === 'invalid_name') return res.status(400).json({ error: msg })
       if (e?.code === 'ENOENT') return res.status(404).json({ error: 'not_found' })
       res.status(500).json({ error: 'upload_failed' })
+    } finally {
+      await discardTempUploads(req.files)
     }
   },
 )

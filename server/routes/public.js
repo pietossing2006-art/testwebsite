@@ -28,7 +28,7 @@ import {
 import { requireAuth, requireAdmin, optionalAuth, rateLimitMiddleware } from '../lib/auth.js'
 import { sendDiscordOrderTracking } from '../lib/discordBot.js'
 import { CouponRedeemBodySchema } from '../lib/requestSchemas.js'
-import { assertTopupMethodEnabledForRequest } from '../lib/topupSettings.js'
+import { assertTopupMethodEnabledForRequest, toPublicTopupSettings } from '../lib/topupSettings.js'
 import { validateBody } from '../lib/validation.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -126,7 +126,7 @@ router.get('/api/ui-settings', async (req, res) => {
       branding_settings: settings?.branding_settings,
       homepage_settings: settings?.homepage_settings,
       site_settings: settings?.site_settings,
-      topup_settings: settings?.topup_settings,
+      topup_settings: toPublicTopupSettings(settings?.topup_settings),
     })
   } catch {
     res.status(500).json({ error: 'db_error' })

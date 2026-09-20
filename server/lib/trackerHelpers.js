@@ -64,6 +64,8 @@ export function serializeSession(row) {
     last_active_at: row.last_active_at || null,
     checked_count: Number(row.checked_count || 0),
     marked_count: Number(row.marked_count || 0),
+    issue_unit_count: Number(row.issue_unit_count || 0),
+    open_issue_count: Number(row.open_issue_count || 0),
     created_at: row.created_at,
     updated_at: row.updated_at,
   }

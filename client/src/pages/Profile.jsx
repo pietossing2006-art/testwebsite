@@ -173,6 +173,10 @@ export default function Profile() {
 
   const [disable2faModalOpen, setDisable2faModalOpen] = useState(false)
   const [disable2faPassword, setDisable2faPassword] = useState('')
+  const [disable2faCode, setDisable2faCode] = useState('')
+  const [disable2faCooldown, setDisable2faCooldown] = useState(0)
+  const [disable2faSendingOtp, setDisable2faSendingOtp] = useState(false)
+  const [disable2faOtpSentMsg, setDisable2faOtpSentMsg] = useState('')
   const [disable2faError, setDisable2faError] = useState('')
   const [disable2faSubmitting, setDisable2faSubmitting] = useState(false)
 
@@ -206,6 +210,12 @@ export default function Profile() {
     const t = setInterval(() => setVerifyEmailCountdown((c) => Math.max(0, c - 1)), 1000)
     return () => clearInterval(t)
   }, [verifyEmailCountdown])
+
+  useEffect(() => {
+    if (disable2faCooldown <= 0) return
+    const t = setInterval(() => setDisable2faCooldown((c) => Math.max(0, c - 1)), 1000)
+    return () => clearInterval(t)
+  }, [disable2faCooldown])
 
   function showToast(msg) {
     setToastMessage(msg)
@@ -614,25 +624,63 @@ export default function Profile() {
     }
   }
 
+  async function handleSendDisable2faEmailOtp() {
+    if (disable2faCooldown > 0 || disable2faSendingOtp) return
+    setDisable2faSendingOtp(true)
+    setDisable2faError('')
+    setDisable2faOtpSentMsg('')
+    try {
+      await fetchJson('/api/me/2fa/email/send-disable-code', { method: 'POST' })
+      setDisable2faCooldown(60)
+      setDisable2faOtpSentMsg(`ส่งรหัส OTP ไปยัง ${user?.email || 'อีเมลของคุณ'} เรียบร้อยแล้ว`)
+      showToast('ส่งรหัส OTP เรียบร้อยแล้ว')
+    } catch (err) {
+      setDisable2faError(err?.data?.message || 'ส่งรหัส OTP ไปยังอีเมลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง')
+    } finally {
+      setDisable2faSendingOtp(false)
+    }
+  }
+
   async function handleDisable2FA(e) {
     e.preventDefault()
-    if (!disable2faPassword || disable2faSubmitting) return
+    if (!disable2faPassword || !disable2faCode.trim() || disable2faSubmitting) return
     setDisable2faSubmitting(true)
     setDisable2faError('')
     try {
       await fetchJson('/api/me/2fa/disable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: disable2faPassword }),
+        body: JSON.stringify({
+          password: disable2faPassword,
+          code: disable2faCode.trim(),
+        }),
       })
+      try {
+        localStorage.removeItem('trusted_device_token')
+      } catch {}
       setDisable2faModalOpen(false)
       setDisable2faPassword('')
+      setDisable2faCode('')
+      setDisable2faOtpSentMsg('')
       showToast('ปิดใช้งานระบบ 2FA เรียบร้อยแล้ว')
       load2FAStatus()
     } catch (err) {
-      setDisable2faError(err?.data?.message || 'รหัสผ่านไม่ถูกต้อง')
+      setDisable2faError(err?.data?.message || 'รหัสผ่านหรือรหัส OTP 2FA ไม่ถูกต้อง')
     } finally {
       setDisable2faSubmitting(false)
+    }
+  }
+
+  async function handleRevokeAllTrustedDevices() {
+    if (!window.confirm('คุณต้องการยกเลิกการจดจำอุปกรณ์ 2FA ทั้งหมดใช่หรือไม่? ครั้งต่อไปจะต้องยืนยันรหัส 2FA ทุกเครื่อง')) return
+    try {
+      await fetchJson('/api/auth/trusted-devices/revoke-all', { method: 'POST' })
+      try {
+        localStorage.removeItem('trusted_device_token')
+      } catch {}
+      showToast('ยกเลิกการจดจำอุปกรณ์ 2FA ทั้งหมดเรียบร้อยแล้ว')
+    } catch {
+      showToast('เกิดข้อผิดพลาดในการยกเลิกอุปกรณ์')
     }
   }
 
@@ -1489,9 +1537,19 @@ export default function Profile() {
                     </button>
                     <button
                       type="button"
+                      onClick={handleRevokeAllTrustedDevices}
+                      className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-bold text-amber-700 hover:bg-amber-100 transition cursor-pointer"
+                      title="ยกเลิกการจดจำอุปกรณ์เบราว์เซอร์ทั้งหมด ครั้งต่อไปจะต้องยืนยัน 2FA ใหม่ทุกเครื่อง"
+                    >
+                      🛡️ ยกเลิกอุปกรณ์ที่จำไว้ทั้งหมด
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         setDisable2faPassword('')
+                        setDisable2faCode('')
                         setDisable2faError('')
+                        setDisable2faOtpSentMsg('')
                         setDisable2faModalOpen(true)
                       }}
                       className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition cursor-pointer"
@@ -2133,25 +2191,96 @@ export default function Profile() {
       {disable2faModalOpen && typeof document !== 'undefined' ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="w-full max-w-md rounded-3xl border border-rose-200 bg-white p-6 shadow-2xl animate-scaleIn">
-            <h3 className="text-base font-black text-slate-900">ยืนยันปิดการใช้งาน 2FA</h3>
-            <p className="mt-1 text-xs text-slate-600">กรุณากรอกรหัสผ่านปัจจุบันของคุณเพื่อยืนยันการปิดระบบ 2FA</p>
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-rose-50 text-rose-600 border border-rose-200">
+                <span className="text-xl">⚠️</span>
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900">ยืนยันปิดการใช้งาน 2FA</h3>
+                <p className="text-[11px] text-slate-500">
+                  {twoFactorInfo.type === 'email'
+                    ? 'กรุณากรอกรหัส OTP จากอีเมล และรหัสผ่านเพื่อยืนยัน'
+                    : 'กรุณากรอกรหัส Authenticator และรหัสผ่านเพื่อยืนยัน'}
+                </p>
+              </div>
+            </div>
 
-            <form onSubmit={handleDisable2FA} className="mt-4 space-y-3">
-              <input
-                value={disable2faPassword}
-                onChange={(e) => setDisable2faPassword(e.target.value)}
-                placeholder="รหัสผ่านปัจจุบัน"
-                type="password"
-                required
-                autoFocus
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs outline-none focus:border-rose-400 focus:bg-white"
-              />
+            <form onSubmit={handleDisable2FA} className="mt-5 space-y-4">
+              {/* If Email 2FA: OTP requesting section */}
+              {twoFactorInfo.type === 'email' ? (
+                <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-slate-700">รหัสยืนยัน OTP ทางอีเมล</span>
+                    <button
+                      type="button"
+                      onClick={handleSendDisable2faEmailOtp}
+                      disabled={disable2faCooldown > 0 || disable2faSendingOtp}
+                      className="rounded-xl border border-sky-200 bg-white px-2.5 py-1 text-[11px] font-bold text-sky-600 shadow-2xs hover:bg-sky-50 disabled:opacity-50 transition cursor-pointer"
+                    >
+                      {disable2faSendingOtp
+                        ? 'กำลังส่ง OTP...'
+                        : disable2faCooldown > 0
+                        ? `ขอรหัสใหม่ใน (${disable2faCooldown}s)`
+                        : '📨 ขอรหัส OTP ทางอีเมล'}
+                    </button>
+                  </div>
+
+                  {disable2faOtpSentMsg ? (
+                    <div className="text-[11px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg p-2">
+                      ✅ {disable2faOtpSentMsg}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-500 leading-tight">
+                      กดปุ่ม "ขอรหัส OTP ทางอีเมล" เพื่อรับรหัส 6 หลักทาง {user?.email || 'Gmail'}
+                    </p>
+                  )}
+
+                  <input
+                    value={disable2faCode}
+                    onChange={(e) => setDisable2faCode(e.target.value)}
+                    placeholder="000000"
+                    maxLength={10}
+                    required
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-center text-base font-mono font-black tracking-widest text-slate-900 outline-none focus:border-sky-400 focus:ring-3 focus:ring-sky-100"
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    รหัส 6 หลักจากแอป Authenticator หรือรหัสสำรอง
+                  </label>
+                  <input
+                    value={disable2faCode}
+                    onChange={(e) => setDisable2faCode(e.target.value)}
+                    placeholder="000000 หรือ ABCD-1234"
+                    maxLength={10}
+                    required
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-center text-sm font-mono font-bold tracking-widest text-slate-900 outline-none focus:border-rose-400 focus:bg-white"
+                  />
+                </div>
+              )}
+
+              {/* Current Password Field */}
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">รหัสผ่านปัจจุบัน</label>
+                <input
+                  value={disable2faPassword}
+                  onChange={(e) => setDisable2faPassword(e.target.value)}
+                  placeholder="••••••••••••"
+                  type="password"
+                  required
+                  autoFocus={twoFactorInfo.type !== 'email'}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs outline-none focus:border-rose-400 focus:bg-white"
+                />
+              </div>
 
               {disable2faError ? (
-                <div className="text-xs font-bold text-rose-600">⚠️ {disable2faError}</div>
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-bold text-rose-600">
+                  ⚠️ {disable2faError}
+                </div>
               ) : null}
 
-              <div className="mt-5 flex justify-end gap-2">
+              <div className="mt-5 flex justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setDisable2faModalOpen(false)}
@@ -2161,10 +2290,10 @@ export default function Profile() {
                 </button>
                 <button
                   type="submit"
-                  disabled={disable2faSubmitting || !disable2faPassword}
-                  className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer"
+                  disabled={disable2faSubmitting || !disable2faPassword || !disable2faCode.trim()}
+                  className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-black text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer transition"
                 >
-                  {disable2faSubmitting ? 'กำลังปิด...' : 'ยืนยันปิด 2FA'}
+                  {disable2faSubmitting ? 'กำลังปิด 2FA...' : 'ยืนยันปิด 2FA'}
                 </button>
               </div>
             </form>

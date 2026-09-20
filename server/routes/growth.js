@@ -241,6 +241,102 @@ export function createGrowthRouter({ store = db, auth = defaultAuth() } = {}) {
     return callStore(res, () => store.adminTestGrowthNotification(parsed.data), (result) => res.json({ ok: true, ...result }))
   })
 
+  // ── Back-in-Stock Alerts ──
+
+  router.get('/api/me/back-in-stock', auth.requireAuth, async (req, res) => {
+    try {
+      const subscriptions = await store.listMyBackInStockSubscriptions(req.user.id)
+      res.json({ ok: true, subscriptions })
+    } catch (error) {
+      mapError(res, error)
+    }
+  })
+
+  router.post('/api/me/back-in-stock/:productId(\\d+)', auth.requireAuth, async (req, res) => {
+    try {
+      const sub = await store.subscribeBackInStock({
+        userId: req.user.id,
+        productId: Number(req.params.productId),
+        productOptionId: req.body?.product_option_id || null,
+        notifyInbox: req.body?.notify_inbox !== false,
+        notifyPush: req.body?.notify_push !== false,
+      })
+      res.json({ ok: true, subscription: sub })
+    } catch (error) {
+      mapError(res, error)
+    }
+  })
+
+  router.delete('/api/me/back-in-stock/:productId(\\d+)', auth.requireAuth, async (req, res) => {
+    try {
+      await store.unsubscribeBackInStock({
+        userId: req.user.id,
+        productId: Number(req.params.productId),
+        productOptionId: req.query?.product_option_id || null,
+      })
+      res.json({ ok: true })
+    } catch (error) {
+      mapError(res, error)
+    }
+  })
+
+  router.get('/api/products/:id/stock-alerts', async (req, res) => {
+    try {
+      const productId = Number(req.params.id)
+      if (!Number.isFinite(productId)) return res.json({ ok: true, subscriber_count: 0, preorder_info: { total_waiting: 0, total_qty: 0 } })
+      const [subscriberCount, preorderInfo] = await Promise.all([
+        store.getBackInStockSubscriberCount(productId),
+        store.getPreorderQueueInfo(productId, req.query?.product_option_id || null),
+      ])
+      res.json({ ok: true, subscriber_count: subscriberCount, preorder_info: preorderInfo })
+    } catch (error) {
+      mapError(res, error)
+    }
+  })
+
+  // ── Pre-Order Queue ──
+
+  router.post('/api/me/preorder/:productId(\\d+)', auth.requireAuth, async (req, res) => {
+    try {
+      const preorder = await store.createPreorder({
+        userId: req.user.id,
+        productId: Number(req.params.productId),
+        productOptionId: req.body?.product_option_id || null,
+        qty: req.body?.qty || 1,
+        unitPricePoints: req.body?.unit_price_points || 0,
+      })
+      res.json({ ok: true, preorder })
+    } catch (error) {
+      const msg = String(error?.message || '')
+      if (msg === 'preorder_exists') return res.status(409).json({ error: 'preorder_exists' })
+      if (msg === 'insufficient_points') return res.status(400).json({ error: 'insufficient_points' })
+      mapError(res, error)
+    }
+  })
+
+  router.delete('/api/me/preorder/:preorderId(\\d+)', auth.requireAuth, async (req, res) => {
+    try {
+      const result = await store.cancelPreorder({
+        userId: req.user.id,
+        preorderId: Number(req.params.preorderId),
+      })
+      res.json({ ok: true, ...result })
+    } catch (error) {
+      const msg = String(error?.message || '')
+      if (msg === 'not_found') return res.status(404).json({ error: 'not_found' })
+      mapError(res, error)
+    }
+  })
+
+  router.get('/api/me/preorders', auth.requireAuth, async (req, res) => {
+    try {
+      const preorders = await store.listMyPreorders(req.user.id)
+      res.json({ ok: true, preorders })
+    } catch (error) {
+      mapError(res, error)
+    }
+  })
+
   return router
 }
 

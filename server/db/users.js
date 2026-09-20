@@ -761,11 +761,112 @@ export async function deleteSession(token) {
 }
 
 
+function hashDeviceToken(token) {
+  return crypto.createHash('sha256').update(String(token || '').trim()).digest('hex')
+}
+
+export async function createTrustedDevice({ userId, token, deviceName, ipAddress, userAgent, days = 30 }) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid) || uid <= 0 || !token) return null
+  const tokenHash = hashDeviceToken(token)
+  const name = typeof deviceName === 'string' && deviceName.trim() ? deviceName.trim().slice(0, 255) : 'Trusted Device'
+  const ip = typeof ipAddress === 'string' && ipAddress.trim() ? ipAddress.trim().slice(0, 128) : null
+  const ua = typeof userAgent === 'string' && userAgent.trim() ? userAgent.trim().slice(0, 512) : null
+  const numDays = Math.max(1, Math.min(365, Number(days) || 30))
+  const expiresAt = new Date(Date.now() + numDays * 24 * 60 * 60 * 1000)
+
+  await query('DELETE FROM trusted_devices WHERE token_hash = $1', [tokenHash]).catch(() => {})
+
+  const res = await query(
+    `INSERT INTO trusted_devices (user_id, token_hash, device_name, ip_address, user_agent, expires_at, last_used_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     RETURNING id, user_id, device_name, ip_address, user_agent, expires_at, last_used_at, created_at`,
+    [uid, tokenHash, name, ip, ua, expiresAt],
+  )
+  return res.rows[0] ?? null
+}
+
+export async function verifyAndTouchTrustedDevice({ userId, token, ipAddress, userAgent }) {
+  const uid = Number(userId)
+  const t = typeof token === 'string' ? token.trim() : ''
+  if (!Number.isFinite(uid) || uid <= 0 || !t) return null
+  const tokenHash = hashDeviceToken(t)
+
+  const row = await get(
+    `SELECT id, user_id, device_name, ip_address, user_agent, expires_at, last_used_at, created_at
+     FROM trusted_devices
+     WHERE user_id = $1 AND token_hash = $2 AND expires_at > now()`,
+    [uid, tokenHash],
+  )
+  if (!row) return null
+
+  const ip = typeof ipAddress === 'string' && ipAddress.trim() ? ipAddress.trim().slice(0, 128) : row.ip_address
+  const ua = typeof userAgent === 'string' && userAgent.trim() ? userAgent.trim().slice(0, 512) : row.user_agent
+
+  await query(
+    `UPDATE trusted_devices
+     SET last_used_at = now(), ip_address = $1, user_agent = $2
+     WHERE id = $3`,
+    [ip, ua, row.id],
+  ).catch(() => {})
+
+  return row
+}
+
+export async function listTrustedDevices(userId) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid) || uid <= 0) return []
+  return all(
+    `SELECT id, device_name, ip_address, user_agent, expires_at, last_used_at, created_at
+     FROM trusted_devices
+     WHERE user_id = $1 AND expires_at > now()
+     ORDER BY last_used_at DESC`,
+    [uid],
+  )
+}
+
+export async function deleteTrustedDevice(userId, deviceId) {
+  const uid = Number(userId)
+  const did = Number(deviceId)
+  if (!Number.isFinite(uid) || !Number.isFinite(did)) return { ok: false }
+  await query('DELETE FROM trusted_devices WHERE user_id = $1 AND id = $2', [uid, did])
+  return { ok: true }
+}
+
+export async function deleteAllTrustedDevices(userId) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid)) return { ok: false }
+  await query('DELETE FROM trusted_devices WHERE user_id = $1', [uid])
+  return { ok: true }
+}
+
+
 function normalizeDiscordLinkCode(raw) {
   return String(raw ?? '')
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '')
+}
+
+
+// Refresh the cached provider profile on every social login, but never overwrite an avatar
+// or display name the user set themselves - only values still owned by that provider's CDN.
+async function refreshLinkedProfile(client, user, { displayName, avatarUrl, avatarPattern }) {
+  const currentAvatar = String(user?.avatar_url ?? '')
+  const avatarIsProviderOwned = !currentAvatar || avatarPattern.test(currentAvatar)
+  const nextAvatar = avatarUrl && avatarIsProviderOwned && avatarUrl !== currentAvatar ? avatarUrl : null
+  const nextDisplayName = displayName && !String(user?.display_name ?? '').trim() ? displayName : null
+  if (!nextAvatar && !nextDisplayName) return user
+
+  const updated = await client.query(
+    `UPDATE users
+     SET avatar_url = COALESCE($2, avatar_url),
+         display_name = COALESCE($3, display_name)
+     WHERE id = $1
+     RETURNING id, email, username, role, is_banned, display_name, avatar_url`,
+    [user.id, nextAvatar, nextDisplayName],
+  )
+  return updated.rows?.[0] ?? user
 }
 
 
@@ -1052,8 +1153,13 @@ export async function findOrCreateUserFromDiscord({
          WHERE discord_user_id = $1`,
         [did, username || globalName],
       )
+      const refreshed = await refreshLinkedProfile(client, linked, {
+        displayName,
+        avatarUrl: safeAvatarUrl,
+        avatarPattern: /^https:\/\/cdn\.discordapp\.(com|net)\//,
+      })
       await client.query('COMMIT')
-      return linked
+      return refreshed
     }
 
     let user = null
@@ -1124,3 +1230,177 @@ export async function findOrCreateUserFromDiscord({
   }
 }
 
+
+function normalizeGoogleUserId(raw) {
+  const id = String(raw ?? '').trim()
+  if (!/^[A-Za-z0-9_-]{5,64}$/.test(id)) throw new Error('invalid_google_user')
+  return id
+}
+
+
+function normalizeGoogleUsername(raw) {
+  const base = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+  return base || 'google-user'
+}
+
+
+async function buildUniqueGoogleUsername({ googleUserId, email, displayName }) {
+  const emailLocal = String(email ?? '').split('@')[0]
+  const baseRaw = normalizeGoogleUsername(emailLocal || displayName || `google-${googleUserId}`)
+  const suffix = String(googleUserId || '').slice(-6) || crypto.randomBytes(3).toString('hex')
+  const candidates = [
+    baseRaw.length >= 6 ? baseRaw : `${baseRaw}-${suffix}`,
+    `${baseRaw}-${suffix}`,
+    `google-${suffix}`,
+    `google-${crypto.randomBytes(5).toString('hex')}`,
+  ].map((x) => x.slice(0, 40))
+
+  for (const candidate of candidates) {
+    if (candidate.length < 6) continue
+    const existing = await get('SELECT id FROM users WHERE username = $1', [candidate])
+    if (!existing) return candidate
+  }
+
+  return `google-${crypto.randomBytes(8).toString('hex')}`.slice(0, 40)
+}
+
+
+export async function getGoogleLinkForUser(userId) {
+  const uid = Number(userId)
+  if (!Number.isFinite(uid) || uid <= 0) throw new Error('invalid_user_id')
+  return get(
+    `SELECT user_id, google_user_id, google_email, linked_at, updated_at
+     FROM google_account_links
+     WHERE user_id = $1`,
+    [uid],
+  )
+}
+
+
+export async function findOrCreateUserFromGoogle({
+  googleUserId,
+  email,
+  emailVerified,
+  displayName,
+  avatarUrl,
+} = {}) {
+  const gid = normalizeGoogleUserId(googleUserId)
+  const verifiedEmail = emailVerified && typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+    ? email.trim().toLowerCase()
+    : null
+  const name = String(displayName ?? '').trim().slice(0, 120)
+  const finalDisplayName = name || (verifiedEmail ? verifiedEmail.split('@')[0] : `Google ${gid.slice(-6)}`)
+  const safeAvatarUrl = typeof avatarUrl === 'string' && /^https:\/\/([a-z0-9-]+\.)*(googleusercontent\.com|google\.com)\//.test(avatarUrl)
+    ? avatarUrl
+    : null
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+
+    const existingLink = await client.query(
+      `SELECT
+         u.id AS id,
+         l.user_id,
+         u.email,
+         u.username,
+         u.role,
+         u.is_banned,
+         u.display_name,
+         u.avatar_url
+       FROM google_account_links l
+       JOIN users u ON u.id = l.user_id
+       WHERE l.google_user_id = $1
+       FOR UPDATE`,
+      [gid],
+    )
+    if (existingLink.rows?.[0]) {
+      const linked = existingLink.rows[0]
+      if (Boolean(linked.is_banned)) throw new Error('banned')
+      await client.query(
+        `UPDATE google_account_links
+         SET google_email = $2, updated_at = now()
+         WHERE google_user_id = $1`,
+        [gid, verifiedEmail],
+      )
+      const refreshed = await refreshLinkedProfile(client, linked, {
+        displayName: finalDisplayName,
+        avatarUrl: safeAvatarUrl,
+        avatarPattern: /^https:\/\/([a-z0-9-]+\.)*(googleusercontent\.com|google\.com)\//,
+      })
+      await client.query('COMMIT')
+      return refreshed
+    }
+
+    let user = null
+    if (verifiedEmail) {
+      const userByEmail = await client.query(
+        `SELECT id, email, username, role, is_banned, display_name, avatar_url
+         FROM users
+         WHERE email = $1
+         FOR UPDATE`,
+        [verifiedEmail],
+      )
+      user = userByEmail.rows?.[0] ?? null
+      if (user && Boolean(user.is_banned)) throw new Error('banned')
+    }
+
+    if (!user) {
+      const countRes = await client.query('SELECT COUNT(*)::int AS c FROM users')
+      const isFirst = Number(countRes.rows?.[0]?.c ?? 0) === 0
+      const role = isFirst ? 'owner' : 'user'
+      const userEmail = verifiedEmail || `google-${gid}@google.local`
+      const userName = await buildUniqueGoogleUsername({ googleUserId: gid, email: verifiedEmail, displayName: finalDisplayName })
+      const passwordHash = await hashPassword(crypto.randomBytes(32).toString('base64url'))
+
+      const created = await client.query(
+        `INSERT INTO users (email, password_hash, role, username, display_name, avatar_url)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, email, username, role, is_banned, display_name, avatar_url`,
+        [userEmail, passwordHash, role, userName, finalDisplayName, safeAvatarUrl],
+      )
+      user = created.rows[0]
+      await client.query('INSERT INTO wallets (user_id, balance) VALUES ($1, 0) ON CONFLICT (user_id) DO NOTHING', [user.id])
+    }
+
+    const existingUserLink = await client.query(
+      `SELECT google_user_id
+       FROM google_account_links
+       WHERE user_id = $1
+       FOR UPDATE`,
+      [user.id],
+    )
+    const linkedGoogleId = existingUserLink.rows?.[0]?.google_user_id
+    if (linkedGoogleId != null && String(linkedGoogleId) !== gid) {
+      throw new Error('user_already_linked')
+    }
+
+    await client.query(
+      `INSERT INTO google_account_links (user_id, google_user_id, google_email, linked_at, updated_at)
+       VALUES ($1, $2, $3, now(), now())
+       ON CONFLICT (user_id)
+       DO UPDATE SET
+         google_user_id = EXCLUDED.google_user_id,
+         google_email = EXCLUDED.google_email,
+         updated_at = now()`,
+      [user.id, gid, verifiedEmail],
+    )
+
+    await client.query('COMMIT')
+    return user
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK')
+    } catch {
+      // ignore
+    }
+    throw e
+  } finally {
+    client.release()
+  }
+}

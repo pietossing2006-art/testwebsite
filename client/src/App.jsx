@@ -19,6 +19,7 @@ const TopupHistory = lazy(() => import('./pages/TopupHistory.jsx'))
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory.jsx'))
 const OrderTracking = lazy(() => import('./pages/OrderTracking.jsx'))
 const Tos = lazy(() => import('./pages/Tos.jsx'))
+const Privacy = lazy(() => import('./pages/Privacy.jsx'))
 const Inbox = lazy(() => import('./pages/Inbox.jsx'))
 const Support = lazy(() => import('./pages/Support.jsx'))
 const BundleDetail = lazy(() => import('./pages/BundleDetail.jsx'))
@@ -158,6 +159,7 @@ export default function App() {
             <Route path="/support" element={<Support />} />
             <Route path="/discord" element={<DiscordInvite />} />
             <Route path="/tos" element={<Tos />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route path="/topup" element={<Navigate to="/topup/angpao" replace />} />
             <Route path="/topup/:method" element={<Topup />} />
             <Route path="/admin" element={<Navigate to="/admin-v3" replace />} />

@@ -172,6 +172,9 @@ function topupFriendlyError(errorText) {
   if (errorText === 'already_paid') return 'รายการนี้ถูกเติมเครดิตแล้ว'
   if (errorText === 'topup_not_found') return 'ไม่พบรายการเติมเงินนี้'
   if (errorText === 'topup_method_disabled') return 'ช่องทาง PromptPay ถูกปิดชั่วคราว'
+  if (errorText === 'slip_not_verified') return 'ตรวจสอบกับธนาคารแล้วไม่พบธุรกรรมนี้ กรุณาตรวจสอบสลิปอีกครั้ง'
+  if (errorText === 'slip_receiver_mismatch') return 'สลิปนี้โอนเข้าบัญชีอื่น ไม่ใช่บัญชีของร้าน'
+  if (errorText === 'slip_verify_unavailable') return 'ระบบตรวจสอบสลิปขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่'
   if (errorText === 'rate_limit_exceeded') return 'คุณตรวจสอบสลิปถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'
   return friendlyError(errorText)
 }
@@ -337,11 +340,19 @@ export default function Topup() {
 
       setVerifyStatus('success')
       setStatus('success')
-      setPopup({
-        kind: 'success',
-        title: '🎉 เติมเงินสำเร็จ!',
-        message: `ระบบได้เพิ่มเครดิตจำนวน ${Number(result?.credited_points || 0).toLocaleString()} พ้อยท์ เข้าสู่บัญชีของคุณเรียบร้อยแล้ว`,
-      })
+      if (result?.status === 'pending_review') {
+        setPopup({
+          kind: 'success',
+          title: '📤 ส่งสลิปเรียบร้อย',
+          message: 'ทีมงานกำลังตรวจสอบสลิปของคุณ พ้อยท์จะเข้าบัญชีทันทีหลังตรวจสอบเสร็จ ดูสถานะได้ที่หน้าประวัติการเติมเงิน',
+        })
+      } else {
+        setPopup({
+          kind: 'success',
+          title: '🎉 เติมเงินสำเร็จ!',
+          message: `ระบบได้เพิ่มเครดิตจำนวน ${Number(result?.credited_points || 0).toLocaleString()} พ้อยท์ เข้าสู่บัญชีของคุณเรียบร้อยแล้ว`,
+        })
+      }
       triggerAppRefresh()
       reloadPageSoon()
       try {

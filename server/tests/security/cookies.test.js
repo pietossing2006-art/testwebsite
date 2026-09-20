@@ -47,3 +47,32 @@ test('normalizeConsentInput normalizes boolean preferences while keeping essenti
     personalization: true,
   })
 })
+
+test('trusted device cookie helpers set, clear, and extract token properly', async () => {
+  const { setTrustedDeviceCookie, clearTrustedDeviceCookie, getTrustedDeviceToken, COOKIE_TRUSTED_DEVICE } = await import('../../lib/cookies.js')
+
+  // Test set
+  const cookiesSet = []
+  const mockRes = {
+    req: { headers: { host: 'localhost:3001' } },
+    cookie: (name, val, opts) => cookiesSet.push({ name, val, opts }),
+    clearCookie: (name, opts) => cookiesSet.push({ cleared: true, name, opts }),
+  }
+  setTrustedDeviceCookie(mockRes, 'token123', { secure: false })
+  assert.equal(cookiesSet.length, 1)
+  assert.equal(cookiesSet[0].name, COOKIE_TRUSTED_DEVICE)
+  assert.equal(cookiesSet[0].val, 'token123')
+  assert.equal(cookiesSet[0].opts.httpOnly, true)
+
+  // Test clear
+  clearTrustedDeviceCookie(mockRes, { secure: false })
+  assert.equal(cookiesSet.length, 2)
+  assert.equal(cookiesSet[1].cleared, true)
+  assert.equal(cookiesSet[1].name, COOKIE_TRUSTED_DEVICE)
+
+  // Test getTrustedDeviceToken extraction from cookie, header, or body
+  assert.equal(getTrustedDeviceToken({ cookies: { [COOKIE_TRUSTED_DEVICE]: 'from-cookie' } }), 'from-cookie')
+  assert.equal(getTrustedDeviceToken({ headers: { 'x-trusted-device': 'from-header' } }), 'from-header')
+  assert.equal(getTrustedDeviceToken({ body: { trusted_device_token: 'from-body' } }), 'from-body')
+  assert.equal(getTrustedDeviceToken({}), null)
+})

@@ -173,6 +173,11 @@ export default function ProductDetail() {
   const [zoomModalOpen, setZoomModalOpen] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [relatedProducts, setRelatedProducts] = useState([])
+  const [backInStockSub, setBackInStockSub] = useState(null)
+  const [myPreorder, setMyPreorder] = useState(null)
+  const [stockAlertBusy, setStockAlertBusy] = useState(false)
+  const [preorderBusy, setPreorderBusy] = useState(false)
+  const [preorderError, setPreorderError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -294,6 +299,37 @@ export default function ProductDetail() {
     return () => {
       cancelled = true
     }
+  }, [isAuthed, product?.id])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadStockAlerts() {
+      if (isAuthed !== true || !product?.id) {
+        setBackInStockSub(null)
+        setMyPreorder(null)
+        return
+      }
+      try {
+        const [subData, preorderData] = await Promise.all([
+          fetchJson(`/api/me/back-in-stock`).catch(() => ({ subscriptions: [] })),
+          fetchJson(`/api/me/preorders`).catch(() => ({ preorders: [] })),
+        ])
+        if (cancelled) return
+        const subs = Array.isArray(subData?.subscriptions) ? subData.subscriptions : []
+        const sub = subs.find((s) => Number(s.product_id) === Number(product.id))
+        setBackInStockSub(sub || null)
+        const preorders = Array.isArray(preorderData?.preorders) ? preorderData.preorders : []
+        const po = preorders.find((p) => Number(p.product_id) === Number(product.id) && p.status === 'waiting')
+        setMyPreorder(po || null)
+      } catch {
+        if (!cancelled) {
+          setBackInStockSub(null)
+          setMyPreorder(null)
+        }
+      }
+    }
+    loadStockAlerts()
+    return () => { cancelled = true }
   }, [isAuthed, product?.id])
 
   useEffect(() => {
@@ -643,6 +679,62 @@ export default function ProductDetail() {
       setBuyStatus('error')
       if (isMystery) setMysteryUnboxOpen(false)
     }
+  }
+
+  async function toggleBackInStock() {
+    if (isAuthed === false || isAuthed === null) { nav('/login'); return }
+    setStockAlertBusy(true)
+    try {
+      if (backInStockSub) {
+        await fetchJson(`/api/me/back-in-stock/${product.id}`, { method: 'DELETE' })
+        setBackInStockSub(null)
+      } else {
+        const optId = selectedOptionId || null
+        const data = await fetchJson(`/api/me/back-in-stock/${product.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_option_id: optId, notify_inbox: true, notify_push: true }),
+        })
+        setBackInStockSub(data?.subscription || { id: 'temp' })
+      }
+    } catch { /* ignore */ }
+    setStockAlertBusy(false)
+  }
+
+  async function handlePreorder() {
+    if (isAuthed === false || isAuthed === null) { nav('/login'); return }
+    setPreorderBusy(true)
+    setPreorderError('')
+    try {
+      const optId = selectedOptionId || null
+      const data = await fetchJson(`/api/me/preorder/${product.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_option_id: optId,
+          qty: safeQty,
+          unit_price_points: displayUnitPoints,
+        }),
+      })
+      setMyPreorder(data?.preorder || { id: 'temp', queue_position: '?', total_reserved_points: displayUnitPoints * safeQty })
+    } catch (error) {
+      const code = error?.data?.error || ''
+      if (code === 'insufficient_points') setPreorderError('พ้อยท์ไม่เพียงพอสำหรับจองล่วงหน้า')
+      else if (code === 'preorder_exists') setPreorderError('คุณจองสินค้านี้ไว้แล้ว')
+      else setPreorderError('ไม่สามารถจองได้ กรุณาลองใหม่')
+    }
+    setPreorderBusy(false)
+  }
+
+  async function cancelPreorder() {
+    if (!myPreorder?.id) return
+    setPreorderBusy(true)
+    try {
+      await fetchJson(`/api/me/preorder/${myPreorder.id}`, { method: 'DELETE' })
+      setMyPreorder(null)
+      setPreorderError('')
+    } catch { /* ignore */ }
+    setPreorderBusy(false)
   }
 
   function openConfirm() {
@@ -1614,6 +1706,67 @@ export default function ProductDetail() {
             ) : null}
           </div>
           {buyError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700">{buyError}</div> : null}
+
+          {outOfStock || selectedOptionOut ? (
+            <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+              <div className="text-xs font-black text-amber-800">สินค้าหมดชั่วคราว</div>
+
+              <button
+                type="button"
+                onClick={toggleBackInStock}
+                disabled={stockAlertBusy}
+                className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-xs font-black transition disabled:opacity-50 ${
+                  backInStockSub
+                    ? 'border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'border border-amber-300 bg-white text-amber-800 hover:bg-amber-100'
+                }`}
+              >
+                {backInStockSub ? (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                    กำลังติดตาม — แจ้งเตือนเมื่อมีสต็อก
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                    แจ้งเตือนเมื่อมีสินค้า
+                  </>
+                )}
+              </button>
+
+              {!myPreorder ? (
+                <div>
+                  <button
+                    type="button"
+                    onClick={handlePreorder}
+                    disabled={preorderBusy}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-sky-300 bg-sky-50 px-4 py-3 text-xs font-black text-sky-800 transition hover:bg-sky-100 disabled:opacity-50"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    จองล่วงหน้า ({fmt(displayUnitPoints * safeQty)} พ้อยท์)
+                  </button>
+                  <div className="mt-1.5 text-[10px] text-amber-700">พ้อยท์จะถูกหักทันที และคืนให้หากยกเลิก</div>
+                  {preorderError ? <div className="mt-1.5 text-[11px] font-bold text-rose-600">{preorderError}</div> : null}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-sky-200 bg-white p-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="font-black text-sky-800">คุณจองไว้แล้ว</div>
+                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">คิวที่ {myPreorder.queue_position}</span>
+                  </div>
+                  <div className="mt-1 text-slate-500">หักพ้อยท์ {fmt(myPreorder.total_reserved_points)} — ระบบจะส่งมอบอัตโนมัติเมื่อมีสต็อก</div>
+                  <button
+                    type="button"
+                    onClick={cancelPreorder}
+                    disabled={preorderBusy}
+                    className="mt-2 text-[11px] font-bold text-rose-600 hover:underline disabled:opacity-50"
+                  >
+                    ยกเลิกจองและขอคืนพ้อยท์
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
         </aside>
       </section>
 

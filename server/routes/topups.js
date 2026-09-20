@@ -106,6 +106,7 @@ router.post('/api/topups/promptpay/verify-slip', requireAuth, rateLimitMiddlewar
     const result = await verifyPromptpaySlip({ userId: req.user.id, topupId, slipImage })
     res.json({
       ok: true,
+      status: result.status,
       topup_id: result.topupId,
       credited_points: result.creditedPoints,
       transaction_ref: result.transactionRef,
@@ -123,6 +124,9 @@ router.post('/api/topups/promptpay/verify-slip', requireAuth, rateLimitMiddlewar
     if (msg === 'invalid_slip_amount') return res.status(400).json({ error: 'invalid_slip_amount' })
     if (msg === 'slip_amount_mismatch') return res.status(409).json({ error: 'slip_amount_mismatch' })
     if (msg === 'duplicate_slip') return res.status(409).json({ error: 'duplicate_slip' })
+    if (msg === 'slip_not_verified') return res.status(409).json({ error: 'slip_not_verified' })
+    if (msg === 'slip_receiver_mismatch') return res.status(409).json({ error: 'slip_receiver_mismatch' })
+    if (msg === 'slip_verify_unavailable') return res.status(503).json({ error: 'slip_verify_unavailable' })
     if (msg === 'already_paid') return res.status(409).json({ error: 'already_paid' })
     if (msg === 'topup_expired') return res.status(409).json({ error: 'topup_expired' })
     if (msg === 'topup_not_found') return res.status(404).json({ error: 'topup_not_found' })

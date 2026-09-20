@@ -69,6 +69,27 @@ export async function initDbPg() {
   await query(`CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions (user_id)`)
 
   await query(
+    `CREATE TABLE IF NOT EXISTS trusted_devices (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      device_name TEXT,
+      ip_address TEXT,
+      user_agent TEXT,
+      last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+  )
+  await query(`ALTER TABLE trusted_devices ADD COLUMN IF NOT EXISTS device_name TEXT`)
+  await query(`ALTER TABLE trusted_devices ADD COLUMN IF NOT EXISTS ip_address TEXT`)
+  await query(`ALTER TABLE trusted_devices ADD COLUMN IF NOT EXISTS user_agent TEXT`)
+  await query(`ALTER TABLE trusted_devices ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
+  await query(`ALTER TABLE trusted_devices ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`)
+  await query(`CREATE INDEX IF NOT EXISTS trusted_devices_user_id_idx ON trusted_devices (user_id)`)
+  await query(`CREATE INDEX IF NOT EXISTS trusted_devices_token_hash_idx ON trusted_devices (token_hash)`)
+
+  await query(
     `CREATE TABLE IF NOT EXISTS audit_logs (
       id BIGSERIAL PRIMARY KEY,
       actor_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -119,6 +140,19 @@ export async function initDbPg() {
   )
   await query(`CREATE INDEX IF NOT EXISTS discord_account_links_user_id_idx ON discord_account_links (user_id)`)
   await query(`CREATE INDEX IF NOT EXISTS discord_account_links_discord_user_id_idx ON discord_account_links (discord_user_id)`)
+
+  await query(
+    `CREATE TABLE IF NOT EXISTS google_account_links (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      google_user_id TEXT NOT NULL UNIQUE,
+      google_email TEXT,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+  )
+  await query(`CREATE INDEX IF NOT EXISTS google_account_links_user_id_idx ON google_account_links (user_id)`)
+  await query(`CREATE INDEX IF NOT EXISTS google_account_links_google_user_id_idx ON google_account_links (google_user_id)`)
 
   await query(
     `CREATE TABLE IF NOT EXISTS discord_link_codes (
@@ -267,6 +301,10 @@ export async function initDbPg() {
       updated_at TIMESTAMPTZ
     )`,
   )
+
+  await query(`ALTER TABLE topups ADD COLUMN IF NOT EXISTS slip_image_url TEXT`)
+  await query(`ALTER TABLE topups ADD COLUMN IF NOT EXISTS slip_amount NUMERIC`)
+  await query(`CREATE INDEX IF NOT EXISTS topups_status_idx ON topups (status, created_at DESC)`)
 
   await query(
     `CREATE UNIQUE INDEX IF NOT EXISTS topups_method_reference_uq
@@ -955,6 +993,42 @@ export async function initDbPg() {
     )
   `)
   await query(`CREATE INDEX IF NOT EXISTS password_reset_tokens_expires_at_idx ON password_reset_tokens (expires_at)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS back_in_stock_subscriptions (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      product_option_id TEXT,
+      notify_inbox BOOLEAN NOT NULL DEFAULT true,
+      notify_push BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS back_in_stock_sub_unique_idx ON back_in_stock_subscriptions (user_id, product_id, COALESCE(product_option_id, ''))`)
+  await query(`CREATE INDEX IF NOT EXISTS back_in_stock_sub_product_idx ON back_in_stock_subscriptions (product_id)`)
+  await query(`CREATE INDEX IF NOT EXISTS back_in_stock_sub_user_idx ON back_in_stock_subscriptions (user_id)`)
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS preorder_queue (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+      product_option_id TEXT,
+      qty INTEGER NOT NULL DEFAULT 1,
+      unit_price_points INTEGER NOT NULL,
+      total_reserved_points INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      queue_position INTEGER NOT NULL DEFAULT 0,
+      order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+      fulfilled_at TIMESTAMPTZ,
+      cancelled_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `)
+  await query(`CREATE INDEX IF NOT EXISTS preorder_queue_product_idx ON preorder_queue (product_id, status, queue_position)`)
+  await query(`CREATE INDEX IF NOT EXISTS preorder_queue_user_idx ON preorder_queue (user_id, status)`)
 
   try {
     await migrateDigitalStockToPools()

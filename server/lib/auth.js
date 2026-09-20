@@ -190,9 +190,9 @@ export const requireSupportStaff = requireAnyRole(['support', 'admin', 'owner'])
 export const requireStaff = requireAnyRole(['booster', 'support', 'admin', 'owner'])
 
 export const ADMIN_ROLE_MODULE_ACCESS = {
-  owner: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'logs', 'settings', 'owner'],
-  admin: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'settings'],
-  finance: ['dashboard', 'users', 'orders', 'bundles', 'promotions'],
+  owner: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'topups', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'logs', 'settings', 'owner'],
+  admin: ['dashboard', 'users', 'support', 'catalog', 'stock', 'fulfillment', 'orders', 'topups', 'timesheet', 'automation', 'bundles', 'promotions', 'growth', 'announcements', 'messages', 'settings'],
+  finance: ['dashboard', 'users', 'orders', 'topups', 'bundles', 'promotions'],
   support: ['dashboard', 'support', 'timesheet', 'orders'],
   booster: ['dashboard', 'fulfillment', 'timesheet'],
 }
@@ -201,6 +201,7 @@ export const ADMIN_ROLE_ACTION_ACCESS = {
   'users.view': ['finance', 'admin', 'owner'],
   'users.edit': ['admin', 'owner'],
   'users.adjust_points': ['finance', 'admin', 'owner'],
+  'topups.manage': ['finance', 'admin', 'owner'],
   'support.manage': ['support', 'admin', 'owner'],
   'fulfillment.manage': ['booster', 'admin', 'owner'],
   'catalog.manage': ['admin', 'owner'],

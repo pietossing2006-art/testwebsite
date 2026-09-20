@@ -5,6 +5,7 @@ import { fetchJson } from '../api.js'
 import { applyUiBrandingToDocument, DEFAULT_UI_BRANDING_SETTINGS, normalizeUiBrandingSettings } from '../uiBrandingSettings.js'
 import { applyRouteSeo } from '../seo.js'
 import Navbar from './Navbar.jsx'
+import MobileBottomNav from './MobileBottomNav.jsx'
 import CookieConsent from './CookieConsent.jsx'
 import AnnIcon from './AnnIcon.jsx'
 import AnnRichText from './AnnRichText.jsx'
@@ -652,7 +653,7 @@ export default function Layout() {
                       <h4 style={{ fontWeight: 800, marginBottom: '1.25rem', fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#0284c7' }}>กฎหมาย</h4>
                       <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
                         <li><FooterLink to="/tos">ข้อกำหนดการใช้งาน</FooterLink></li>
-                        <li><FooterLink to="/tos">นโยบายความเป็นส่วนตัว</FooterLink></li>
+                        <li><FooterLink to="/privacy">นโยบายความเป็นส่วนตัว</FooterLink></li>
                         <li><FooterLink to="/tos">นโยบายคุกกี้</FooterLink></li>
                         {footerLinks.map((l, i) => {
                           const isExt = l.url.startsWith('http://') || l.url.startsWith('https://')
@@ -680,6 +681,8 @@ export default function Layout() {
           </div>
         </footer>
       ) : null}
+      <MobileBottomNav />
+      <div className="h-16 lg:hidden" />
       <CookieConsent />
     </div>
   )

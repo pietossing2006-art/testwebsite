@@ -167,6 +167,26 @@ export default function Navbar() {
     })()
   }, [me?.id])
 
+  async function handleLogout() {
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration('/sw-push.js').catch(() => null)
+        const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null
+        if (sub) {
+          await fetchJson('/api/me/push-unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          }).catch(() => {})
+          await sub.unsubscribe().catch(() => {})
+        }
+      }
+    } catch { /* ignore */ }
+    try { await fetchJson('/api/auth/logout', { method: 'POST' }) } catch { /* ignore */ }
+    setAuthToken(null)
+    window.location.assign('/')
+  }
+
   useEffect(() => {
     if (!open) return
 
@@ -414,15 +434,7 @@ export default function Navbar() {
                         type="button"
                         onClick={() => {
                           setOpen(false)
-                          ;(async () => {
-                            try {
-                              await fetchJson('/api/auth/logout', { method: 'POST' })
-                            } catch {
-                              // ignore
-                            }
-                            setAuthToken(null)
-                            window.location.assign('/')
-                          })()
+                          handleLogout()
                         }}
                         className="mt-1 block w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
                       >
@@ -551,15 +563,7 @@ export default function Navbar() {
                     type="button"
                     onClick={() => {
                       setMobileOpen(false)
-                      ;(async () => {
-                        try {
-                          await fetchJson('/api/auth/logout', { method: 'POST' })
-                        } catch {
-                          // ignore
-                        }
-                        setAuthToken(null)
-                        window.location.assign('/')
-                      })()
+                      handleLogout()
                     }}
                     className="ui-btn h-11 w-full justify-center text-rose-600 hover:bg-rose-50"
                   >

@@ -12,6 +12,12 @@ import {
   parseUnitNumber,
   serializeSession,
 } from './trackerHelpers.js'
+import {
+  INSPECTION_CATEGORIES,
+  INSPECTION_SCHEMA_SQL,
+  listInspections,
+  listIssues,
+} from './trackerInspections.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TRACKER2_DIR = path.join(__dirname, '..', '..', 'Tracker2')
@@ -96,6 +102,7 @@ export async function initTrackerStore() {
   if (!schemaReady) {
     schemaReady = (async () => {
       await pool.query(SCHEMA_SQL)
+      await pool.query(INSPECTION_SCHEMA_SQL)
       await seedFromJsonIfEmpty()
       await backfillLegacyRooms()
     })()
@@ -189,7 +196,11 @@ export async function listRooms() {
             s.created_by_user_id, s.created_by_guest_name, s.last_active_at,
             s.created_at, s.updated_at,
             count(us.id) filter (where us.status = 'checked')::int as checked_count,
-            count(us.id) filter (where us.status = 'marked')::int as marked_count
+            count(us.id) filter (where us.status = 'marked')::int as marked_count,
+            (select count(*)::int from public.tracker_inspections i
+              where i.session_id = s.id and i.result = 'issue') as issue_unit_count,
+            (select count(*)::int from public.tracker_issues t
+              where t.session_id = s.id and t.status <> 'done') as open_issue_count
      from public.tracker_sessions s
      left join public.tracker_unit_statuses us on us.session_id = s.id
      group by s.id
@@ -429,10 +440,12 @@ export async function getStatePayload() {
 export async function getRoomStatePayload(roomId) {
   const room = await getRoomById(roomId)
   if (!room) throw new TrackerError('Room not found', 404)
-  const [rooms, units, marked] = await Promise.all([
+  const [rooms, units, marked, inspections, issues] = await Promise.all([
     listRooms(),
     listUnitLabels(room, 'checked'),
     listUnitLabels(room, 'marked'),
+    listInspections(room),
+    listIssues(room),
   ])
   return {
     rooms,
@@ -441,5 +454,8 @@ export async function getRoomStatePayload(roomId) {
     active_session: room,
     units,
     marked,
+    inspections,
+    issues,
+    categories: INSPECTION_CATEGORIES,
   }
 }
