@@ -254,6 +254,7 @@ export async function listMyInbox(userId, { limit = 50, offset = 0 } = {}) {
   return all(
     `SELECT d.id, d.order_id, d.product_id,
             COALESCE(NULLIF(TRIM(d.delivery_name), ''), NULLIF(TRIM(mbp.prize_name), ''), p.name) AS product_name,
+            p.image_url AS image_url,
             p.fulfillment_type,
             d.delivery_kind,
             fr.status AS farm_status,

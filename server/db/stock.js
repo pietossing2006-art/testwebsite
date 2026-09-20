@@ -271,7 +271,14 @@ export async function adminDeleteStockPoolItem({ id }) {
       await client.query('ROLLBACK')
       throw new Error('locked')
     }
+    const poolId = Number(cur.pool_id)
     await client.query('DELETE FROM stock_pool_items WHERE id = $1', [sid])
+    const prodRow = await client.query(
+      `SELECT product_id FROM product_option_stock_bindings WHERE pool_id = $1 LIMIT 1`,
+      [poolId],
+    )
+    const prodId = prodRow.rows?.[0]?.product_id
+    if (prodId) await recountProductStockFromPools(client, prodId)
     await client.query('COMMIT')
     return { ok: true }
   } catch (e) {

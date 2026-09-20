@@ -472,7 +472,7 @@ export default function Inbox() {
                 : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
               }`}
           >
-            <span>💬 แชทตรงจากทีมงาน</span>
+            <span>💬 ข้อความตรง</span>
             {unreadDirectCount > 0 ? (
               <span className="rounded-full bg-amber-400 px-1.5 py-0.2 text-[10px] font-extrabold text-slate-900 animate-bounce">
                 {unreadDirectCount}
@@ -769,28 +769,16 @@ export default function Inbox() {
       {/* ───────────────────────────────────────────── */}
       {subTab === 'direct_chat' && (
         <section className="space-y-4">
-          {/* Header Banner */}
-          <div className="rounded-3xl border border-sky-200 bg-gradient-to-r from-sky-50 to-blue-50/50 p-4.5 text-xs">
-            <div className="flex items-start gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-sky-600 text-lg text-white shadow-xs">
-                🛡️
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="font-black text-slate-900">
-                  ช่องทางรับข้อมูลลับและรหัสผ่านจากทีมงาน (Direct Messages)
-                </div>
-                <p className="mt-0.5 text-[11px] text-slate-600 leading-relaxed">
-                  ข้อความในหน้านี้ถูกส่งตรงถึงคุณจากแอดมินอย่าง
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={loadDirectMessages}
-                className="rounded-xl border border-sky-200 bg-white px-3 py-1.5 text-[11px] font-bold text-sky-700 hover:bg-sky-50"
-              >
-                🔄 รีเฟรช
-              </button>
-            </div>
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-black text-slate-900">ข้อความตรง</h3>
+            <button
+              type="button"
+              onClick={loadDirectMessages}
+              className="rounded-xl border border-sky-200 bg-white px-3 py-1.5 text-[11px] font-bold text-sky-700 hover:bg-sky-50"
+            >
+              🔄 รีเฟรช
+            </button>
           </div>
 
           {/* Chat Stream Timeline */}
@@ -798,16 +786,16 @@ export default function Inbox() {
             <div className="grid min-h-[260px] place-items-center rounded-3xl border border-sky-100 bg-white p-8">
               <div className="flex flex-col items-center gap-2">
                 <div className="h-8 w-8 animate-spin rounded-full border-3 border-sky-200 border-t-sky-600" />
-                <div className="text-xs font-bold text-slate-500">กำลังโหลดแชทตรงจากทีมงาน...</div>
+                <div className="text-xs font-bold text-slate-500">กำลังโหลด...</div>
               </div>
             </div>
           ) : visibleDirectMessages.length === 0 ? (
             <div className="grid min-h-[260px] place-items-center rounded-3xl border border-dashed border-sky-200 bg-sky-50/20 p-8 text-center">
               <div>
                 <div className="text-4xl mb-2">💬</div>
-                <div className="text-base font-black text-slate-900">ยังไม่มีข้อความตรงจากทีมงาน</div>
+                <div className="text-base font-black text-slate-900">ยังไม่มีข้อความ</div>
                 <p className="mt-1 text-xs text-slate-500">
-                  เมื่อแอดมินหรือทีมงานส่งรหัสผ่าน ข้อมูลลับ หรือข้อความเฉพาะคุณ จะแสดงในแชทนี้ทันที
+                  ข้อความที่ส่งถึงคุณโดยตรงจะแสดงที่นี่
                 </p>
               </div>
             </div>
@@ -820,15 +808,8 @@ export default function Inbox() {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3 min-w-0">
-                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-sky-600 text-lg text-white shadow-xs">
-                        🛡️
-                      </div>
-
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full bg-sky-50 px-2.5 py-0.5 text-[10px] font-black text-sky-700 border border-sky-200">
-                            ทีมงาน VxperS Official
-                          </span>
                           <span className="text-[11px] text-slate-400 font-medium">
                             {formatDate(msg.created_at)}
                           </span>
@@ -879,19 +860,13 @@ export default function Inbox() {
             </div>
           )}
 
-          {/* Support Ticket Disclaimer Footer */}
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span>💡</span>
-              <span>
-                ต้องการส่งข้อความหาทีมงานหรือแจ้งปัญหา? กรุณาเปิดคำร้องผ่านระบบศูนย์ช่วยเหลือ
-              </span>
-            </div>
+          {/* Support Link */}
+          <div className="text-center">
             <Link
               to="/support"
-              className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-black text-white hover:bg-slate-800 shadow-xs shrink-0"
+              className="text-xs font-bold text-slate-500 hover:text-sky-600"
             >
-              เปิด Ticket ศูนย์ช่วยเหลือ
+              ต้องการความช่วยเหลือ? เปิด Ticket
             </Link>
           </div>
         </section>

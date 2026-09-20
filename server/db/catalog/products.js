@@ -516,10 +516,9 @@ export async function searchProductsPublic({
        LIMIT 1
      ) pr ON true
      LEFT JOIN (
-       SELECT b.product_id, COUNT(*)::int AS available_stock
-       FROM stock_pool_items spi
-       JOIN product_option_stock_bindings b ON b.pool_id = spi.pool_id
-       WHERE spi.status = 'available'
+       SELECT b.product_id, COUNT(spi.id)::int AS available_stock
+       FROM product_option_stock_bindings b
+       LEFT JOIN stock_pool_items spi ON spi.pool_id = b.pool_id AND spi.status = 'available'
        GROUP BY b.product_id
      ) s ON s.product_id = p.id
      ${MYSTERY_AVAILABLE_STOCK_JOIN}
@@ -654,10 +653,9 @@ export async function listProducts({ categorySlug, includeHidden } = {}) {
            LIMIT 1
          ) pr ON true
          LEFT JOIN (
-           SELECT b.product_id, COUNT(*)::int AS available_stock
-           FROM stock_pool_items spi
-           JOIN product_option_stock_bindings b ON b.pool_id = spi.pool_id
-           WHERE spi.status = 'available'
+           SELECT b.product_id, COUNT(spi.id)::int AS available_stock
+           FROM product_option_stock_bindings b
+           LEFT JOIN stock_pool_items spi ON spi.pool_id = b.pool_id AND spi.status = 'available'
            GROUP BY b.product_id
          ) s ON s.product_id = p.id
          ${MYSTERY_AVAILABLE_STOCK_JOIN}
@@ -730,10 +728,9 @@ export async function listProducts({ categorySlug, includeHidden } = {}) {
          LIMIT 1
        ) pr ON true
        LEFT JOIN (
-         SELECT b.product_id, COUNT(*)::int AS available_stock
-         FROM stock_pool_items spi
-         JOIN product_option_stock_bindings b ON b.pool_id = spi.pool_id
-         WHERE spi.status = 'available'
+         SELECT b.product_id, COUNT(spi.id)::int AS available_stock
+         FROM product_option_stock_bindings b
+         LEFT JOIN stock_pool_items spi ON spi.pool_id = b.pool_id AND spi.status = 'available'
          GROUP BY b.product_id
        ) s ON s.product_id = p.id
        ${MYSTERY_AVAILABLE_STOCK_JOIN}
@@ -818,10 +815,9 @@ export async function listProducts({ categorySlug, includeHidden } = {}) {
        LIMIT 1
      ) pr ON true
      LEFT JOIN (
-       SELECT b.product_id, COUNT(*)::int AS available_stock
-       FROM stock_pool_items spi
-       JOIN product_option_stock_bindings b ON b.pool_id = spi.pool_id
-       WHERE spi.status = 'available'
+       SELECT b.product_id, COUNT(spi.id)::int AS available_stock
+       FROM product_option_stock_bindings b
+       LEFT JOIN stock_pool_items spi ON spi.pool_id = b.pool_id AND spi.status = 'available'
        GROUP BY b.product_id
      ) s ON s.product_id = p.id
      ${MYSTERY_AVAILABLE_STOCK_JOIN}
@@ -897,10 +893,9 @@ export async function getProductById(idOrSlug, { includeHidden } = {}) {
        LIMIT 1
      ) pr ON true
      LEFT JOIN (
-       SELECT b.product_id, COUNT(*)::int AS available_stock
-       FROM stock_pool_items spi
-       JOIN product_option_stock_bindings b ON b.pool_id = spi.pool_id
-       WHERE spi.status = 'available'
+       SELECT b.product_id, COUNT(spi.id)::int AS available_stock
+       FROM product_option_stock_bindings b
+       LEFT JOIN stock_pool_items spi ON spi.pool_id = b.pool_id AND spi.status = 'available'
        GROUP BY b.product_id
      ) s ON s.product_id = p.id
      ${MYSTERY_AVAILABLE_STOCK_JOIN}
@@ -984,10 +979,9 @@ export async function listProductsByIds(ids) {
        LIMIT 1
      ) pr ON true
      LEFT JOIN (
-       SELECT b.product_id, COUNT(*)::int AS available_stock
-       FROM stock_pool_items spi
-       JOIN product_option_stock_bindings b ON b.pool_id = spi.pool_id
-       WHERE spi.status = 'available'
+       SELECT b.product_id, COUNT(spi.id)::int AS available_stock
+       FROM product_option_stock_bindings b
+       LEFT JOIN stock_pool_items spi ON spi.pool_id = b.pool_id AND spi.status = 'available'
        GROUP BY b.product_id
      ) s ON s.product_id = p.id
      ${MYSTERY_AVAILABLE_STOCK_JOIN}
